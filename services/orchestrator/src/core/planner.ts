@@ -47,7 +47,12 @@ export class VanessaPlanner {
     const llmOutput = await modelRouter.callLLM(command, PLANNER_SYSTEM_PROMPT);
     if (llmOutput) {
       try {
-        const parsed = JSON.parse(llmOutput);
+        let cleaned = llmOutput.trim();
+        const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (jsonMatch && jsonMatch[1]) {
+          cleaned = jsonMatch[1].trim();
+        }
+        const parsed = JSON.parse(cleaned);
         if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) {
           const plan: Plan = {
             id: planId,
@@ -258,7 +263,7 @@ export class VanessaPlanner {
     }
 
     // Claude Code
-    if (lower.includes("claude") || lower.includes("claude code")) {
+    if (lower.includes("claude") || lower.includes("claude code") || lower.includes("cloud code")) {
       let prompt = "build a landing page";
       const match = command.match(/(?:ask it to|build|to)\s+(.*)/i);
       if (match && match[1]) {

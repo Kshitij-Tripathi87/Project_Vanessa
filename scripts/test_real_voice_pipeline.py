@@ -128,5 +128,14 @@ async def run_voice_test(wav_path: str, expected_words: list[str]):
 
 if __name__ == "__main__":
     wav = sys.argv[1] if len(sys.argv) > 1 else "test_wifi.wav"
-    expected = ["wifi", "wi-fi", "restart"] if "wifi" in wav else ["bluetooth", "youtube"]
+    if "wifi" in wav:
+        expected = ["wifi", "wi-fi", "restart"]
+    elif "youtube" in wav:
+        expected = ["bluetooth", "youtube"]
+    elif "claude" in wav:
+        expected = ["claude", "landing", "page"]
+    elif "drive" in wav:
+        expected = ["drive", "upload", "link"]
+    else:
+        expected = []
     asyncio.run(run_voice_test(wav, expected))
