@@ -76,6 +76,10 @@ export class FishAsrAdapter implements AsrAdapter {
       });
 
       this.ws.on("open", () => {
+        if (!this.isSessionActive) {
+          this.ws?.close();
+          return;
+        }
         this.isConnected = true;
         this.isReconnecting = false;
         this.useFallback = false;
@@ -92,7 +96,7 @@ export class FishAsrAdapter implements AsrAdapter {
         );
 
         // Flush queued frames
-        while (this.queuedFrames.length > 0) {
+        while (this.isSessionActive && this.queuedFrames.length > 0) {
           const frame = this.queuedFrames.shift()!;
           this.ws?.send(frame);
         }
@@ -139,7 +143,7 @@ export class FishAsrAdapter implements AsrAdapter {
       this.ws.on("close", (code, reason) => {
         this.isConnected = false;
         console.log(`[FishAsrAdapter] Disconnected (code: ${code}, reason: ${reason || "none"}).`);
-        if (!this.useFallback && !this.isReconnecting) {
+        if (this.isSessionActive && !this.useFallback && !this.isReconnecting) {
           this.isReconnecting = true;
           setTimeout(() => this.initWebSocket(), 3000);
         }
@@ -157,11 +161,16 @@ export class FishAsrAdapter implements AsrAdapter {
       if (this.handlers) {
         this.fallbackAdapter.connect(this.handlers);
       }
+      if (this.isSessionActive) {
+        this.fallbackAdapter.activateStream?.();
+      }
       console.log("[FishAsrAdapter] Active ASR is now Local Voice ASR Fallback (faster-whisper).");
     }
   }
 
   sendAudioChunk(pcm: Int16Array): void {
+    if (!this.isSessionActive) return;
+
     if (this.useFallback && this.fallbackAdapter) {
       this.fallbackAdapter.sendAudioChunk(pcm);
       return;
@@ -192,6 +201,7 @@ export class FishAsrAdapter implements AsrAdapter {
 
   activateStream(durationMs = 25000): void {
     this.isSessionActive = true;
+    this.fallbackAdapter?.activateStream?.();
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -212,9 +222,11 @@ export class FishAsrAdapter implements AsrAdapter {
       this.idleTimer = null;
     }
     this.isSessionActive = false;
+    this.queuedFrames = [];
+    this.fallbackAdapter?.deactivateStream?.();
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log("[FishAsrAdapter] Idle timeout reached. Closing Fish Realtime ASR socket to prevent session charges ($0.36/hr).");
+    if (this.ws && this.ws.readyState < WebSocket.CLOSING) {
+      console.log("[FishAsrAdapter] Closing Fish Realtime ASR socket after the active capture window.");
       try {
         this.ws.close();
       } catch {}

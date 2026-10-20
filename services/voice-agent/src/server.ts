@@ -72,7 +72,8 @@ export async function createVoiceAgentServer() {
       chunkSamples: 320,
       chunkBytes: 640,
       bargeInEnabled: true,
-      wakeWord: "Hey Vanessa",
+      activationMode: "push_to_talk",
+      wakeWord: null,
       timestamp: Date.now(),
     });
 
@@ -91,10 +92,21 @@ export async function createVoiceAgentServer() {
           const json = JSON.parse(data.toString());
           if (json.type === "activate" || json.type === "reset") {
             accumulator.reset();
-            session.activateSession(25000);
-            sendJson(socket, { type: "state_change", state: "listening" });
+            try {
+              await session.activateSession(25000);
+              sendJson(socket, { type: "state_change", state: "listening" });
+            } catch (err: any) {
+              console.warn("[VoiceAgentServer] ASR activation failed:", err.message);
+              sendJson(socket, {
+                type: "voice_error",
+                message: "Speech recognition could not start. Check the configured ASR provider and try again.",
+              });
+            }
           } else if (json.type === "finalize") {
             session.finalizeTurn();
+          } else if (json.type === "deactivate") {
+            accumulator.reset();
+            session.stop();
           } else if (json.type === "barge_in" || json.type === "interrupt") {
             session.interrupt();
             sendJson(socket, { type: "barge_in_acknowledged" });

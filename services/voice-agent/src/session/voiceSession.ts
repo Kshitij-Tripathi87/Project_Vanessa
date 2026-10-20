@@ -1,8 +1,8 @@
 import { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
-import { SileroVadDetector, vadDetector } from "../audio/vad.js";
+import { SileroVadDetector } from "../audio/vad.js";
 import { BargeInDetector } from "./bargeIn.js";
-import { WakeWordDetector, wakeWordDetector } from "./wakeWord.js";
+import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
@@ -30,9 +30,9 @@ export interface VoiceSessionHandlers {
 
 export class VanessaVoiceSession {
   private turnDetector = new TurnDetector();
-  private vad = vadDetector;
+  private vad = new SileroVadDetector();
   private bargeIn = new BargeInDetector();
-  private wakeWord = wakeWordDetector;
+  private wakeWord = new WakeWordDetector();
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
 
@@ -40,6 +40,8 @@ export class VanessaVoiceSession {
   private partialTranscript = "";
   private isProcessing = false;
   private isSpeaking = false;
+  private isAsrConnected = false;
+  private asrConnectPromise?: Promise<void>;
   private handlers: VoiceSessionHandlers = {};
 
   constructor(options?: {
@@ -79,29 +81,42 @@ export class VanessaVoiceSession {
   }
 
   async start(): Promise<void> {
-    await this.asr.connect({
+    // Keep the ASR provider disconnected until an explicit push-to-talk action.
+    this.setState("idle");
+  }
+
+  private async ensureAsrConnected(): Promise<void> {
+    if (this.isAsrConnected) return;
+    if (this.asrConnectPromise) return this.asrConnectPromise;
+
+    this.asrConnectPromise = Promise.resolve(this.asr.connect({
       onPartial: (result) => {
         this.partialTranscript = result.text;
         this.handlers.onPartialTranscript?.(result.text);
-
-        // Check if wake word activated session
-        const wakeCheck = this.wakeWord.processTranscript(result.text);
-        if (wakeCheck.detected) {
-          this.activateSession(25000);
-          this.handlers.onHudUpdate?.({ state: "listening", transcript: wakeCheck.cleanedText });
-        }
       },
       onFinal: async (result) => {
         if (this.isProcessing) return;
         await this.handleFinalUtterance(result.text, result.language);
       },
+    })).then(() => {
+      this.isAsrConnected = true;
+    }).catch((err) => {
+      this.asrConnectPromise = undefined;
+      throw err;
     });
-
-    this.setState("idle");
+    return this.asrConnectPromise;
   }
 
-  activateSession(durationMs = 25000): void {
+  async activateSession(durationMs = 25000): Promise<void> {
     this.wakeWord.touchActiveSession(durationMs);
+    try {
+      await this.ensureAsrConnected();
+    } catch (err) {
+      this.wakeWord.resetSession();
+      this.asr.deactivateStream?.();
+      this.setState("idle");
+      throw err;
+    }
     this.asr.activateStream?.(durationMs);
     this.setState("listening");
     this.turnDetector.reset();
@@ -124,7 +139,9 @@ export class VanessaVoiceSession {
     }
 
     // 3. Stream audio chunk to ASR
-    this.asr.sendAudioChunk(chunk.pcm);
+    if (this.wakeWord.isSessionActive()) {
+      this.asr.sendAudioChunk(chunk.pcm);
+    }
 
     // 4. Turn detection: silence threshold + transcript completion
     const turnState = this.turnDetector.process({
@@ -155,7 +172,17 @@ export class VanessaVoiceSession {
 
     // Filter wake word prefix
     const wakeCheck = this.wakeWord.processTranscript(rawText);
-    const command = wakeCheck.cleanedText || rawText;
+    if (!wakeCheck.detected) {
+      // Ignore transcripts unless an explicit push-to-talk activation is active.
+      this.isProcessing = false;
+      this.turnDetector.reset();
+      return;
+    }
+    const command = wakeCheck.cleanedText;
+    // A committed transcript ends the capture window. Close provider streaming
+    // before planning/execution so command latency does not extend ASR billing.
+    this.wakeWord.resetSession();
+    this.asr.deactivateStream?.();
 
     if (!command.trim()) {
       if (wakeCheck.detected) {
@@ -164,9 +191,8 @@ export class VanessaVoiceSession {
         const greeting = "Hey boss, how are you? How can I help you?";
         this.handlers.onHudUpdate?.({ state: "responding", transcript: greeting });
         await this.speak(greeting);
-        this.wakeWord.touchActiveSession(15000);
-        this.setState("listening");
-        this.handlers.onHudUpdate?.({ state: "listening", transcript: "" });
+        this.setState("idle");
+        this.handlers.onHudUpdate?.({ state: "idle", transcript: "" });
       }
       this.isProcessing = false;
       this.turnDetector.reset();
@@ -205,6 +231,8 @@ export class VanessaVoiceSession {
       this.isProcessing = false;
       this.turnDetector.reset();
       this.bargeIn.reset();
+      this.wakeWord.resetSession();
+      this.asr.deactivateStream?.();
       if (this.state !== "listening") {
         this.setState("idle");
       }
@@ -248,6 +276,8 @@ export class VanessaVoiceSession {
     this.isSpeaking = false;
     this.tts.abort();
     this.asr.close();
+    this.isAsrConnected = false;
+    this.wakeWord.resetSession();
     this.turnDetector.reset();
     this.bargeIn.reset();
     this.setState("idle");

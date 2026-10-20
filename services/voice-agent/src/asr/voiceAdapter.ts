@@ -11,6 +11,7 @@ export class VoiceAdapter implements AsrAdapter {
   private shouldReconnect = true;
   private queue: Uint8Array[] = [];
   private pendingFinalize = false;
+  private streamActive = false;
 
   constructor(
     private readonly serverUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505"
@@ -30,6 +31,10 @@ export class VoiceAdapter implements AsrAdapter {
       this.websocket = new WebSocket(this.serverUrl);
 
       this.websocket.on("open", () => {
+        if (!this.streamActive) {
+          this.websocket?.close();
+          return;
+        }
         this.isConnected = true;
         console.log(`[VoiceAdapter] Connected to Voice ASR daemon at ${this.serverUrl}`);
 
@@ -81,6 +86,7 @@ export class VoiceAdapter implements AsrAdapter {
   }
 
   sendAudioChunk(pcm: Int16Array): void {
+    if (!this.streamActive) return;
     const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(bytes);
@@ -100,12 +106,26 @@ export class VoiceAdapter implements AsrAdapter {
     }
   }
 
-  close(): void {
-    this.shouldReconnect = false;
-    this.websocket?.close();
-    this.isConnected = false;
+  activateStream(): void {
+    this.streamActive = true;
+    this.shouldReconnect = true;
+    if (!this.websocket || this.websocket.readyState === WebSocket.CLOSED) {
+      this.initSocket();
+    }
+  }
+
+  deactivateStream(): void {
+    this.streamActive = false;
     this.queue = [];
     this.pendingFinalize = false;
+    this.shouldReconnect = false;
+    this.websocket?.close();
+    this.websocket = undefined;
+    this.isConnected = false;
+  }
+
+  close(): void {
+    this.deactivateStream();
   }
 
   isOpen(): boolean {
