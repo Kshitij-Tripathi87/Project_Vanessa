@@ -3,6 +3,7 @@ import { eventBus } from "./eventBus.js";
 import { permissionGuard } from "./permissionGuard.js";
 import { agentRegistry } from "../agents/registry.js";
 import { workingMemory } from "./workingMemory.js";
+import { memoryPalace } from "../memory/memoryPalace.js";
 
 // Active in-memory map of running and paused tasks
 export const activeTasks = new Map<string, Task>();
@@ -15,8 +16,10 @@ export function triggerKillSwitch() {
   for (const task of activeTasks.values()) {
     if (task.status === "running" || task.status === "pending" || task.status === "awaiting_approval") {
       task.status = "cancelled";
+      task.lifecycleState = "cancelled";
       task.error = "Operation cancelled by emergency kill-switch";
       task.completedAt = Date.now();
+      memoryPalace.recordTaskCheckpoint(task, task.parentId);
       eventBus.emitEvent("task:update", task);
     }
   }
@@ -64,7 +67,9 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   eventBus.emitEvent("approval:granted", { taskId });
   task.status = "running";
+  task.lifecycleState = "running";
   task.startedAt = Date.now();
+  memoryPalace.recordTaskCheckpoint(task, task.parentId);
   eventBus.emitEvent("task:update", task);
 
   try {
@@ -109,6 +114,12 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       agentTask,
     });
 
+    task.lifecycleState = "verifying";
+    eventBus.emitEvent("task:update", task);
+
+    let isVerified = true;
+    let postconditions: string[] = [];
+
     if (result && typeof result === "object") {
       task.result = result.data !== undefined ? result.data : result;
       if (result.spokenSummary) {
@@ -121,18 +132,59 @@ export async function approveTask(taskId: string): Promise<Task | null> {
         task.artifacts = result.artifacts;
       }
       if (result.verification) {
-        task.verification = result.verification;
+        task.verification = {
+          verified: result.verification.passed ?? true,
+          postconditions: [result.verification.details || "Verified postcondition assertions"],
+          exitCode: result.verification.exitCode ?? (result.verification.passed ? 0 : 1),
+          artifacts: result.artifacts,
+          outcome: result.verification.passed ? "succeeded" : "failed",
+        };
+        isVerified = result.verification.passed !== false;
+      } else {
+        postconditions.push("Approved action completed without unhandled exception");
+        if (result.success === false) {
+          isVerified = false;
+        }
+        task.verification = {
+          verified: isVerified,
+          postconditions,
+          exitCode: isVerified ? 0 : 1,
+          outcome: isVerified ? "succeeded" : "failed",
+        };
       }
     } else {
       task.result = result;
+      task.verification = {
+        verified: true,
+        postconditions: ["Direct result returned"],
+        exitCode: 0,
+        outcome: "succeeded",
+      };
     }
-    task.status = "success";
+
+    if (!isVerified) {
+      task.status = "failed";
+      task.lifecycleState = "failed";
+      task.error = task.error || "Verification postconditions failed.";
+    } else {
+      task.status = "success";
+      task.lifecycleState = "succeeded";
+    }
     task.completedAt = Date.now();
+    memoryPalace.recordTaskCheckpoint(task, plan.id);
     workingMemory.recordTaskResult(task);
   } catch (err) {
     task.status = "failed";
+    task.lifecycleState = "failed";
     task.error = (err as Error).message;
     task.completedAt = Date.now();
+    task.verification = {
+      verified: false,
+      postconditions: ["Approved task crashed during execution"],
+      exitCode: 1,
+      outcome: "failed",
+    };
+    memoryPalace.recordTaskCheckpoint(task, task.parentId);
   }
 
   eventBus.emitEvent("task:update", task);
@@ -145,8 +197,10 @@ export async function rejectTask(taskId: string): Promise<Task | null> {
     return null;
   }
   task.status = "failed";
+  task.lifecycleState = "blocked";
   task.error = "User declined confirmation.";
   task.completedAt = Date.now();
+  memoryPalace.recordTaskCheckpoint(task, task.parentId);
   eventBus.emitEvent("approval:rejected", { taskId });
   eventBus.emitEvent("task:update", task);
   return task;
@@ -176,7 +230,10 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
 
   const tasks = new Map<string, Task>(plan.tasks.map((t: Task) => [t.id, { ...t }]));
   for (const t of tasks.values()) {
+    t.lifecycleState = t.lifecycleState || "planning";
+    t.isIdempotent = t.isIdempotent ?? (t.action.startsWith("read") || t.action.includes("status") || t.action.includes("check") || t.action.includes("inspect"));
     activeTasks.set(t.id, t);
+    memoryPalace.recordTaskCheckpoint(t, plan.id);
   }
 
   const nextTasks = () =>
@@ -189,13 +246,17 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
   const runTask = async (task: Task) => {
     if (isKillSwitchEngaged) {
       task.status = "cancelled";
+      task.lifecycleState = "cancelled";
       task.error = "Cancelled by kill switch";
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("task:update", task);
       return;
     }
 
     task.status = "running";
+    task.lifecycleState = "running";
     task.startedAt = Date.now();
+    memoryPalace.recordTaskCheckpoint(task, plan.id);
     eventBus.emitEvent("task:update", task);
 
     // Resolve dynamic parameter dependencies from completed tasks: "$<taskId>.result.<path>"
@@ -206,14 +267,18 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     const permission = permissionGuard.check(task);
     if (permission === "blocked") {
       task.status = "failed";
+      task.lifecycleState = "blocked";
       task.error = "Blocked by safety policy.";
       task.completedAt = Date.now();
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("task:update", task);
       return;
     }
 
     if (permission === "confirm") {
       task.status = "awaiting_approval";
+      task.lifecycleState = "awaiting_approval";
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("approval:required", task);
       eventBus.emitEvent("task:update", task);
       return;
@@ -256,6 +321,12 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         agentTask,
       });
 
+      task.lifecycleState = "verifying";
+      eventBus.emitEvent("task:update", task);
+
+      let isVerified = true;
+      let postconditions: string[] = [];
+
       if (result && typeof result === "object") {
         task.result = result.data !== undefined ? result.data : result;
         if (result.spokenSummary) {
@@ -268,18 +339,59 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
           task.artifacts = result.artifacts;
         }
         if (result.verification) {
-          task.verification = result.verification;
+          task.verification = {
+            verified: result.verification.passed ?? true,
+            postconditions: [result.verification.details || "Verified postcondition assertions"],
+            exitCode: result.verification.exitCode ?? (result.verification.passed ? 0 : 1),
+            artifacts: result.artifacts,
+            outcome: result.verification.passed ? "succeeded" : "failed",
+          };
+          isVerified = result.verification.passed !== false;
+        } else {
+          postconditions.push("Task executed without unhandled exception");
+          if (result.success === false) {
+            isVerified = false;
+          }
+          task.verification = {
+            verified: isVerified,
+            postconditions,
+            exitCode: isVerified ? 0 : 1,
+            outcome: isVerified ? "succeeded" : "failed",
+          };
         }
       } else {
         task.result = result;
+        task.verification = {
+          verified: true,
+          postconditions: ["Direct result returned"],
+          exitCode: 0,
+          outcome: "succeeded",
+        };
       }
-      task.status = "success";
+
+      if (!isVerified) {
+        task.status = "failed";
+        task.lifecycleState = "failed";
+        task.error = task.error || "Verification postconditions failed.";
+      } else {
+        task.status = "success";
+        task.lifecycleState = "succeeded";
+      }
       task.completedAt = Date.now();
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
       workingMemory.recordTaskResult(task);
     } catch (err) {
       task.status = "failed";
+      task.lifecycleState = "failed";
       task.error = (err as Error).message;
       task.completedAt = Date.now();
+      task.verification = {
+        verified: false,
+        postconditions: ["Task crashed during execution"],
+        exitCode: 1,
+        outcome: "failed",
+      };
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
     }
 
     eventBus.emitEvent("task:update", task);

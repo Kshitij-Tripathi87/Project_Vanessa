@@ -1,34 +1,189 @@
+import WebSocket from "ws";
 import { AsrAdapter, TranscriptResult } from "./types.js";
+import { VoiceAdapter } from "./voiceAdapter.js";
+
+export interface FishAsrOptions {
+  apiKey?: string;
+  url?: string;
+  model?: string;
+  sampleRate?: number;
+}
 
 export class FishAsrAdapter implements AsrAdapter {
+  private ws: WebSocket | null = null;
   private handlers?: {
     onPartial: (result: TranscriptResult) => void;
     onFinal: (result: TranscriptResult) => void;
   };
-  private bufferChunks: Int16Array[] = [];
+  private isConnected = false;
+  private isReconnecting = false;
+  private fallbackAdapter: VoiceAdapter | null = null;
+  private useFallback = false;
+  private queuedFrames: Buffer[] = [];
+  private apiKey: string;
+  private url: string;
+  private model: string;
+  private sampleRate: number;
 
-  constructor(private apiKey = process.env.FISH_API_KEY) {}
+  constructor(options?: FishAsrOptions) {
+    this.apiKey = options?.apiKey || process.env.FISH_API_KEY || "";
+    this.url = options?.url || process.env.FISH_ASR_URL || "wss://api.fish.audio/v1/asr/realtime";
+    this.model = options?.model || process.env.FISH_ASR_MODEL || "transcribe-stream-1";
+    this.sampleRate = options?.sampleRate || 16000;
+  }
 
-  connect(handlers: {
+  async connect(handlers: {
     onPartial: (result: TranscriptResult) => void;
     onFinal: (result: TranscriptResult) => void;
-  }): void {
+  }): Promise<void> {
     this.handlers = handlers;
+
+    if (!this.apiKey || !this.apiKey.startsWith("sk-fish-")) {
+      console.warn("[FishAsrAdapter] Valid Fish API key not configured. Using local Voice ASR fallback.");
+      this.initFallback();
+      return;
+    }
+
+    this.initWebSocket();
+  }
+
+  private initWebSocket(): void {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    try {
+      this.ws = new WebSocket(this.url, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      });
+
+      this.ws.on("open", () => {
+        this.isConnected = true;
+        this.isReconnecting = false;
+        this.useFallback = false;
+        console.log(`[FishAsrAdapter] Connected to Fish Realtime ASR at ${this.url} (${this.model})`);
+
+        // Send initialization handshake
+        this.ws?.send(
+          JSON.stringify({
+            type: "start",
+            model: this.model,
+            sample_rate: this.sampleRate,
+            language: "en",
+          })
+        );
+
+        // Flush queued frames
+        while (this.queuedFrames.length > 0) {
+          const frame = this.queuedFrames.shift()!;
+          this.ws?.send(frame);
+        }
+      });
+
+      this.ws.on("message", (raw: WebSocket.Data) => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          // Fish Audio Realtime ASR events: draft vs committed
+          const eventType = msg.type || msg.event;
+          const text = (msg.text || msg.transcript || "").trim();
+
+          if (!text) return;
+
+          if (eventType === "draft" || msg.is_final === false) {
+            // Draft = HUD display only. INVARIANT: never triggers planning!
+            this.handlers?.onPartial({
+              text,
+              isFinal: false,
+              language: msg.language || "en",
+              confidence: msg.confidence ?? 0.88,
+            });
+          } else if (eventType === "committed" || msg.is_final === true) {
+            // Committed turn = Command ready for planner
+            console.log(`[FishAsrAdapter] Committed Turn: "${text}"`);
+            this.handlers?.onFinal({
+              text,
+              isFinal: true,
+              language: msg.language || "en",
+              confidence: msg.confidence ?? 0.98,
+            });
+          }
+        } catch {
+          // Binary message or non-json ping
+        }
+      });
+
+      this.ws.on("error", (err) => {
+        console.warn(`[FishAsrAdapter] WebSocket error: ${err.message}. Engaging local fallback.`);
+        this.isConnected = false;
+        this.initFallback();
+      });
+
+      this.ws.on("close", (code, reason) => {
+        this.isConnected = false;
+        console.log(`[FishAsrAdapter] Disconnected (code: ${code}, reason: ${reason || "none"}).`);
+        if (!this.useFallback && !this.isReconnecting) {
+          this.isReconnecting = true;
+          setTimeout(() => this.initWebSocket(), 3000);
+        }
+      });
+    } catch (err: any) {
+      console.warn(`[FishAsrAdapter] Init failed: ${err.message}. Switching to local ASR fallback.`);
+      this.initFallback();
+    }
+  }
+
+  private initFallback(): void {
+    if (!this.fallbackAdapter) {
+      this.useFallback = true;
+      this.fallbackAdapter = new VoiceAdapter();
+      if (this.handlers) {
+        this.fallbackAdapter.connect(this.handlers);
+      }
+      console.log("[FishAsrAdapter] Active ASR is now Local Voice ASR Fallback (faster-whisper).");
+    }
   }
 
   sendAudioChunk(pcm: Int16Array): void {
-    this.bufferChunks.push(pcm);
-    if (this.bufferChunks.length > 250) {
-      this.bufferChunks.shift();
+    if (this.useFallback && this.fallbackAdapter) {
+      this.fallbackAdapter.sendAudioChunk(pcm);
+      return;
+    }
+
+    const buffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(buffer);
+    } else {
+      this.queuedFrames.push(buffer);
+      if (this.queuedFrames.length > 100) {
+        this.queuedFrames.shift(); // retain max ~8-10 seconds
+      }
     }
   }
 
   finalizeTurn(): void {
-    // When turn completes, synthesize final transcript if Fish API is configured
-    this.bufferChunks = [];
+    if (this.useFallback && this.fallbackAdapter) {
+      this.fallbackAdapter.finalizeTurn?.();
+      return;
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "finish" }));
+    }
   }
 
   close(): void {
-    this.bufferChunks = [];
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+    this.isConnected = false;
+    this.fallbackAdapter?.close();
+    this.fallbackAdapter = null;
+    this.queuedFrames = [];
   }
 }

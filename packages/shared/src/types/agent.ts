@@ -22,13 +22,41 @@ export type AgentStatus =
   | "blocked"
   | "awaiting_approval";
 
+export type TaskLifecycleState =
+  | "received"
+  | "accepted"
+  | "planning"
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "verifying"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "blocked"
+  | "cancelled"
+  | "expired"
+  | "interrupted"
+  | "reconciling";
+
 export type TaskStatus =
   | "pending"
   | "running"
   | "awaiting_approval"
   | "success"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "received"
+  | "accepted"
+  | "planning"
+  | "queued"
+  | "verifying"
+  | "succeeded"
+  | "partial"
+  | "blocked"
+  | "expired"
+  | "interrupted"
+  | "reconciling";
 
 export type RiskLevel = "low" | "medium" | "high";
 
@@ -47,6 +75,15 @@ export interface AgentVerification {
   details: string;
 }
 
+export interface TaskVerificationResult {
+  verified: boolean;
+  postconditions: string[];
+  exitCode?: number;
+  artifacts?: string[];
+  outcome: "succeeded" | "partial" | "failed" | "blocked";
+  details?: string;
+}
+
 export interface AgentTask {
   taskId: string;
   parentTaskId?: string;
@@ -58,16 +95,21 @@ export interface AgentTask {
   dependsOn: string[];
   acceptanceCriteria: string[];
   deadlineMs?: number;
+  isIdempotent?: boolean;
 }
 
 export interface Task {
   id: string;
   parentId?: string;
+  idempotencyKey?: string;
   agent: AgentName;
   action: string;
   params: Record<string, any>;
   dependsOn: string[];
   status: TaskStatus;
+  lifecycleState?: TaskLifecycleState;
+  isIdempotent?: boolean;
+  verification?: TaskVerificationResult;
   risk?: RiskLevel;
   result?: any;
   error?: string;
@@ -77,7 +119,6 @@ export interface Task {
   acceptanceCriteria?: string[];
   evidence?: AgentEvidence[];
   artifacts?: string[];
-  verification?: AgentVerification;
   startedAt?: number;
   completedAt?: number;
 }

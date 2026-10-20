@@ -1,4 +1,5 @@
 import {
+  CommandEnvelope,
   ExecuteCommandPayload,
   ExecuteCommandResult,
   Plan,
@@ -18,9 +19,67 @@ import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
 
 export class VanessaOrchestrator {
+  constructor() {
+    // Reconcile interrupted tasks from prior crashes on startup
+    this.reconcileTasks();
+  }
+
+  reconcileTasks() {
+    try {
+      const summary = memoryPalace.reconcileInterruptedTasks();
+      if (summary.requiresResolution.length > 0) {
+        eventBus.emitEvent("audit:log", {
+          id: `audit-${Date.now()}`,
+          timestamp: Date.now(),
+          agent: "orchestrator",
+          action: "tasks.reconciliation_required",
+          status: "warn",
+          details: `Reconciliation: ${summary.requiresResolution.length} non-idempotent tasks require user resolution`,
+        });
+      }
+    } catch {
+      // ignore startup errors
+    }
+  }
+
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
-    const { command, language = "en", sentiment } = payload;
+    const { command, language = "en", sentiment, envelope } = payload;
     const startTime = Date.now();
+
+    // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
+    const idempotencyKey = payload.idempotencyKey || envelope?.idempotencyKey;
+    if (idempotencyKey) {
+      const envelopeRecord: CommandEnvelope = envelope || {
+        requestId: `req-${Date.now()}`,
+        idempotencyKey,
+        originDeviceId: "desktop",
+        command,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        schemaVersion: "0.3",
+        source: payload.source || "desktop",
+      };
+
+      if (envelopeRecord.expiresAt && envelopeRecord.expiresAt < Date.now()) {
+        return {
+          status: "failed",
+          spokenSummary: "Command rejected: Command envelope has expired.",
+        };
+      }
+
+      const idemCheck = memoryPalace.checkAndRecordIdempotency(envelopeRecord);
+      if (idemCheck.isDuplicate) {
+        if (idemCheck.cachedResult) {
+          return idemCheck.cachedResult;
+        }
+        if (idemCheck.isPending) {
+          return {
+            status: "accepted",
+            spokenSummary: "Command is already being processed.",
+          };
+        }
+      }
+    }
 
     eventBus.emitEvent("audit:log", {
       id: `audit-${Date.now()}`,
@@ -28,7 +87,7 @@ export class VanessaOrchestrator {
       agent: "orchestrator",
       action: "command_received",
       status: "info",
-      details: { command, language, sentiment },
+      details: { command, language, sentiment, idempotencyKey },
     });
 
     // 1. Generate task plan
@@ -80,7 +139,7 @@ export class VanessaOrchestrator {
       ttlDays: 30,
     });
 
-    return {
+    const finalResult: ExecuteCommandResult = {
       status,
       spokenSummary,
       planId: plan.id,
@@ -88,6 +147,12 @@ export class VanessaOrchestrator {
       pendingTasks: pendingApproval,
       sentiment,
     };
+
+    if (idempotencyKey) {
+      memoryPalace.completeIdempotentCommand(idempotencyKey, status, finalResult);
+    }
+
+    return finalResult;
   }
 
   async approve(taskId: string): Promise<Task | null> {

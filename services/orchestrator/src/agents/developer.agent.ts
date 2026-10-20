@@ -23,9 +23,29 @@ export class DeveloperAgent {
         if (!command) throw new Error("DeveloperAgent: 'command' param required");
         try {
           const { stdout, stderr } = await execAsync(command, { timeout: 30000 });
-          return { success: true, stdout, stderr };
+          return {
+            success: true,
+            exitCode: 0,
+            stdout,
+            stderr,
+            verification: {
+              passed: true,
+              details: "Command completed with exit code 0",
+              exitCode: 0,
+            },
+          };
         } catch (err: any) {
-          return { success: false, error: err.message };
+          const exitCode = err.code || 1;
+          return {
+            success: false,
+            exitCode,
+            error: err.message,
+            verification: {
+              passed: false,
+              details: `Command exited with non-zero exit code ${exitCode}`,
+              exitCode,
+            },
+          };
         }
       }
 
@@ -47,6 +67,10 @@ export class DeveloperAgent {
             status: "started",
             prompt,
             output: `Launched Claude Code in visible terminal with prompt: "${prompt}"`,
+            verification: {
+              passed: true,
+              details: "CLI process launched. Invariant: terminal launch is workspace initiation, not verified test completion.",
+            },
           };
         }
 
@@ -56,6 +80,10 @@ export class DeveloperAgent {
           status: "ready",
           prompt,
           output: `Prepared developer workspace headlessly for prompt: "${prompt}". No disruptive terminal window opened.`,
+          verification: {
+            passed: true,
+            details: "Developer workspace context prepared headlessly.",
+          },
         };
       }
 
@@ -63,9 +91,28 @@ export class DeveloperAgent {
         const testCmd = params.command || "pnpm test";
         try {
           const { stdout } = await execAsync(testCmd, { timeout: 20000 });
-          return { success: true, stdout };
+          return {
+            success: true,
+            exitCode: 0,
+            stdout,
+            verification: {
+              passed: true,
+              details: `Test suite passed: exit code 0 for '${testCmd}'`,
+              exitCode: 0,
+            },
+          };
         } catch (err: any) {
-          return { success: false, error: err.message };
+          const exitCode = err.code || 1;
+          return {
+            success: false,
+            exitCode,
+            error: err.message,
+            verification: {
+              passed: false,
+              details: `Test suite failed with exit code ${exitCode}`,
+              exitCode,
+            },
+          };
         }
       }
 

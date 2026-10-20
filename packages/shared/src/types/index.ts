@@ -16,20 +16,46 @@ export interface AuditEntry {
   details: Record<string, any> | string;
 }
 
-export interface ExecuteCommandPayload {
+export interface CommandEnvelope {
+  requestId: string;
+  idempotencyKey: string;
+  originDeviceId: string;
+  targetDeviceId?: string;
   command: string;
+  createdAt: number;
+  expiresAt: number;
+  schemaVersion: string;
+  source: "voice" | "desktop" | "phone" | "relay" | "desktop_hud" | "remote_pwa";
   language?: string;
-  source?: "voice" | "desktop" | "phone";
   sentiment?: any;
 }
 
+export interface RelaySequenceEvent<T = any> {
+  sequence: number;
+  eventId: string;
+  timestamp: number;
+  type: EventType;
+  payload: T;
+  cursor?: string;
+}
+
+export interface ExecuteCommandPayload {
+  command: string;
+  language?: string;
+  source?: "voice" | "desktop" | "phone" | "relay";
+  sentiment?: any;
+  envelope?: CommandEnvelope;
+  idempotencyKey?: string;
+}
+
 export interface ExecuteCommandResult {
-  status: "success" | "failed" | "awaiting_approval";
+  status: "success" | "failed" | "awaiting_approval" | "accepted";
   spokenSummary: string;
   planId?: string;
   plan?: import("./agent.js").Plan;
   pendingTasks?: import("./agent.js").Task[];
   sentiment?: any;
+  verification?: import("./agent.js").TaskVerificationResult;
 }
 
 export interface SystemStatus {

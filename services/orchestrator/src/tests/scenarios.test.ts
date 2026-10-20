@@ -403,6 +403,89 @@ async function runTestSuite() {
     return Boolean(validAcoustic && sentimentClassified && hasSessionReady && hasAudioEnergy && hasBargeInAck);
   });
 
+  // Test 21: Revision 0.3 - Idempotency Deduplication & Envelope Expiry
+  await assertTest("Revision 0.3: Desktop Durable Inbox & Idempotency Deduplication", async () => {
+    const idempotencyKey = `idem-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const cmd = "Hey Vanessa, check my Wi-Fi status";
+
+    // 1. Initial execution
+    const firstRes = await orchestrator.executeCommand({
+      command: cmd,
+      idempotencyKey,
+    });
+
+    // 2. Duplicate submission with same idempotencyKey must return cached result without re-executing
+    const duplicateRes = await orchestrator.executeCommand({
+      command: cmd,
+      idempotencyKey,
+    });
+
+    const isIdentical = duplicateRes.spokenSummary === firstRes.spokenSummary && duplicateRes.status === firstRes.status;
+
+    // 3. Expired envelope must be rejected
+    const expiredRes = await orchestrator.executeCommand({
+      command: cmd,
+      envelope: {
+        requestId: "req-expired",
+        idempotencyKey: "idem-expired",
+        originDeviceId: "phone-1",
+        command: cmd,
+        createdAt: Date.now() - 60000,
+        expiresAt: Date.now() - 1000, // expired 1s ago
+        schemaVersion: "0.3",
+        source: "phone",
+      },
+    });
+
+    const expiredRejected = expiredRes.status === "failed" && expiredRes.spokenSummary.includes("expired");
+
+    return Boolean(isIdentical && expiredRejected);
+  });
+
+  // Test 22: Revision 0.3 - Explicit Task Lifecycle & Postcondition Verification Invariant
+  await assertTest("Revision 0.3: Explicit Lifecycle & 'Opened Terminal != Proof of Testing'", async () => {
+    const { developerAgent } = await import("../agents/developer.agent.js");
+    
+    // 1. Terminal launch is marked as workspace launch, NOT proof of tests passed
+    const launchResult = await developerAgent.execute("claude_code.open", { prompt: "test landing page", visibleTerminal: false });
+    const terminalInvariantPreserved = launchResult.verification?.passed === true &&
+      launchResult.verification?.details.includes("Developer workspace");
+
+    // 2. Actual command verification captures exitCode and postconditions
+    const cmdResult = await developerAgent.execute("terminal.run_command", { command: "node -e \"console.log('PASS_CHECK')\"" });
+    const verifiedCommand = cmdResult.exitCode === 0 && cmdResult.verification?.passed === true;
+
+    // 3. Orchestrator DAG marks tasks with lifecycleState
+    const res = await orchestrator.executeCommand({ command: "Turn on Bluetooth and open Chrome" });
+    const tasksHaveLifecycle = res.plan?.tasks.every((t: Task) => t.lifecycleState !== undefined);
+
+    return Boolean(terminalInvariantPreserved && verifiedCommand && tasksHaveLifecycle);
+  });
+
+  // Test 23: Revision 0.3 - Interrupted Task Reconciliation
+  await assertTest("Revision 0.3: Crash Recovery & Non-Idempotent Reconciliation", async () => {
+    const { memoryPalace } = await import("../memory/memoryPalace.js");
+    
+    // Checkpoint an interrupted non-idempotent task
+    const mockTask: Task = {
+      id: `task-interrupted-${Date.now()}`,
+      parentId: "plan-recovery-test",
+      agent: "developer",
+      action: "terminal.destructive_restart",
+      params: { service: "api" },
+      dependsOn: [],
+      status: "running",
+      lifecycleState: "running",
+      isIdempotent: false,
+    };
+
+    memoryPalace.recordTaskCheckpoint(mockTask, "plan-recovery-test");
+    const recoverySummary = memoryPalace.reconcileInterruptedTasks();
+    const flaggedForResolution = recoverySummary.requiresResolution.includes(mockTask.id);
+
+    return Boolean(flaggedForResolution);
+  });
+
   console.log(`\nResults: ${passed}/${total} tests passed.`);
   process.exit(passed === total ? 0 : 1);
 }

@@ -44,6 +44,8 @@ type Room = {
   laptop?: DeviceSocket;
   phones: Map<string, DeviceSocket>;
   createdAt: number;
+  nextSequence: number;
+  eventHistory: RelayMessage[];
 };
 
 const rooms = new Map<string, Room>();
@@ -64,6 +66,8 @@ app.post("/pairing/create", (req, res) => {
     laptopName: deviceName,
     phones: new Map(),
     createdAt: Date.now(),
+    nextSequence: 1,
+    eventHistory: [],
   });
 
   res.json({
@@ -193,9 +197,24 @@ wss.on("connection", (ws, req) => {
 
     if (message.type === "task_update" || message.type === "approval_request") {
       if (device.role !== "laptop") return;
+      message.sequence = room.nextSequence++;
+      room.eventHistory.push(message);
+      if (room.eventHistory.length > 200) {
+        room.eventHistory.shift();
+      }
       for (const phone of room.phones.values()) {
         send(phone, message);
       }
+      return;
+    }
+
+    if (message.type === "resume") {
+      const lastSeen = message.lastSeenSequence || 0;
+      const missed = room.eventHistory.filter((e) => (e as any).sequence && (e as any).sequence > lastSeen);
+      for (const event of missed) {
+        send(device, event);
+      }
+      send(device, { type: "replay_complete", lastSequence: room.nextSequence - 1 });
       return;
     }
 

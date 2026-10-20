@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { CommandEnvelope, Task } from "@vanessa/shared";
 import { privacyGuard } from "../core/privacy.js";
 import { eventBus } from "../core/eventBus.js";
 
@@ -56,6 +57,34 @@ export class MemoryPalace {
       CREATE INDEX IF NOT EXISTS idx_mem_created ON memory_palace(created_at);
       CREATE INDEX IF NOT EXISTS idx_mem_expires ON memory_palace(expires_at);
       CREATE INDEX IF NOT EXISTS idx_mem_type ON memory_palace(type);
+
+      CREATE TABLE IF NOT EXISTS idempotency_ledger (
+        idempotency_key TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        status TEXT NOT NULL,
+        result_json TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_idem_expires ON idempotency_ledger(expires_at);
+
+      CREATE TABLE IF NOT EXISTS task_ledger (
+        task_id TEXT PRIMARY KEY,
+        plan_id TEXT,
+        agent TEXT NOT NULL,
+        action TEXT NOT NULL,
+        params_json TEXT,
+        lifecycle_state TEXT NOT NULL,
+        status TEXT NOT NULL,
+        is_idempotent INTEGER NOT NULL DEFAULT 0,
+        result_json TEXT,
+        verification_json TEXT,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_state ON task_ledger(lifecycle_state);
     `);
 
     // Seed default historical incident if empty
@@ -232,6 +261,124 @@ export class MemoryPalace {
       success: false,
       reason: "Memory Palace is immutable and cannot be manually deleted. Records are automatically retained for 30 days and pruned thereafter.",
     };
+  }
+
+  /**
+   * Idempotency ledger: checks and registers an incoming command envelope.
+   * If already executed, returns cached result. If already in flight, flags as pending.
+   * Otherwise registers as 'accepted' before ACK.
+   */
+  checkAndRecordIdempotency(envelope: CommandEnvelope): {
+    isDuplicate: boolean;
+    isPending?: boolean;
+    cachedResult?: any;
+  } {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      "SELECT * FROM idempotency_ledger WHERE idempotency_key = ?"
+    );
+    const existing = stmt.get(envelope.idempotencyKey) as any;
+
+    if (existing) {
+      if (existing.status === "success" || existing.status === "succeeded" || existing.status === "failed") {
+        let cachedResult: any = null;
+        try {
+          cachedResult = existing.result_json ? JSON.parse(existing.result_json) : null;
+        } catch {
+          // ignore parsing error
+        }
+        return { isDuplicate: true, cachedResult };
+      }
+      return { isDuplicate: true, isPending: true };
+    }
+
+    const expiresAt = envelope.expiresAt || (now + 24 * 60 * 60 * 1000);
+    const insert = this.db.prepare(`
+      INSERT INTO idempotency_ledger (idempotency_key, request_id, command, status, created_at, expires_at)
+      VALUES (?, ?, ?, 'accepted', ?, ?)
+    `);
+    insert.run(envelope.idempotencyKey, envelope.requestId, envelope.command, now, expiresAt);
+
+    return { isDuplicate: false };
+  }
+
+  completeIdempotentCommand(idempotencyKey: string, status: string, result: any): void {
+    const stmt = this.db.prepare(`
+      UPDATE idempotency_ledger
+      SET status = ?, result_json = ?
+      WHERE idempotency_key = ?
+    `);
+    const serialized = JSON.stringify(result ?? {});
+    stmt.run(status, serialized, idempotencyKey);
+  }
+
+  /**
+   * Persist task checkpoint to ledger so interrupted work is observable
+   */
+  recordTaskCheckpoint(task: Task, planId?: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO task_ledger
+      (task_id, plan_id, agent, action, params_json, lifecycle_state, status, is_idempotent, result_json, verification_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const paramsJson = JSON.stringify(task.params || {});
+    const resultJson = task.result ? JSON.stringify(task.result) : null;
+    const verifJson = task.verification ? JSON.stringify(task.verification) : null;
+    const isIdempotent = task.isIdempotent ? 1 : 0;
+    const lifecycleState = task.lifecycleState || (task.status === "success" ? "succeeded" : task.status);
+
+    stmt.run(
+      task.id,
+      planId || task.parentId || null,
+      task.agent,
+      task.action,
+      paramsJson,
+      lifecycleState,
+      task.status,
+      isIdempotent,
+      resultJson,
+      verifJson,
+      now
+    );
+  }
+
+  /**
+   * Reconcile interrupted tasks on startup:
+   * Inspect actual state before resuming. Non-idempotent actions require user resolution.
+   */
+  reconcileInterruptedTasks(): { reconciled: string[]; requiresResolution: string[] } {
+    const stmt = this.db.prepare(`
+      SELECT * FROM task_ledger
+      WHERE lifecycle_state IN ('running', 'planning', 'queued', 'reconciling')
+    `);
+    const activeRows = stmt.all() as any[];
+    const reconciled: string[] = [];
+    const requiresResolution: string[] = [];
+
+    const updateStmt = this.db.prepare(`
+      UPDATE task_ledger SET lifecycle_state = ?, updated_at = ? WHERE task_id = ?
+    `);
+
+    const now = Date.now();
+    for (const row of activeRows) {
+      if (row.is_idempotent === 1) {
+        // Idempotent actions can be safely reconciled
+        updateStmt.run("reconciling", now, row.task_id);
+        reconciled.push(row.task_id);
+      } else {
+        // Ambiguous non-idempotent side effects require explicit user resolution
+        updateStmt.run("interrupted", now, row.task_id);
+        requiresResolution.push(row.task_id);
+      }
+    }
+
+    if (activeRows.length > 0) {
+      console.log(`[MemoryPalace] Reconciled ${activeRows.length} interrupted tasks: ${reconciled.length} reconciling, ${requiresResolution.length} require resolution.`);
+    }
+
+    return { reconciled, requiresResolution };
   }
 
   close(): void {
