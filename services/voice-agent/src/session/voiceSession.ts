@@ -99,6 +99,8 @@ export class VanessaVoiceSession {
     console.log(`[VanessaVoiceSession] Session explicitly activated for ${durationMs}ms`);
   }
 
+  private isFinalizingTurn = false;
+
   /**
    * Process incoming continuous 20ms audio chunk (320 samples @ 16kHz)
    */
@@ -121,9 +123,13 @@ export class VanessaVoiceSession {
       partialTranscript: this.partialTranscript,
     });
 
-    if (turnState === "complete" && !this.isProcessing) {
+    if (turnState === "complete" && !this.isProcessing && !this.isFinalizingTurn) {
+      this.isFinalizingTurn = true;
       console.log("[VanessaVoiceSession] Turn complete detected by VAD, finalizing turn...");
       this.finalizeTurn();
+      setTimeout(() => {
+        this.isFinalizingTurn = false;
+      }, 1200);
     }
   }
 
@@ -134,6 +140,7 @@ export class VanessaVoiceSession {
 
   async handleFinalUtterance(rawText: string, language = "en"): Promise<void> {
     if (this.isProcessing) return;
+    this.isFinalizingTurn = false;
     console.log(`[VanessaVoiceSession] Processing utterance: "${rawText}"`);
     this.isProcessing = true;
 

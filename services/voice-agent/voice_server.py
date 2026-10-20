@@ -35,6 +35,7 @@ async def handle_client(websocket):
     last_partial_time = asyncio.get_event_loop().time()
     last_speech_time = asyncio.get_event_loop().time()
     last_emitted_text = ""
+    transcribe_lock = asyncio.Lock()
 
     try:
         async for message in websocket:
@@ -60,32 +61,33 @@ async def handle_client(websocket):
                 # Periodically transcribe partial audio only when speech was recent (< 0.5s)
                 has_enough = len(audio_buffer) >= int(0.5 * SAMPLE_RATE)
                 is_recent_speech = (now - last_speech_time) < 0.50
-                if has_enough and is_recent_speech and (now - last_partial_time) > 0.70:
-                    try:
-                        segments, info = model.transcribe(
-                            audio_buffer,
-                            beam_size=1,
-                            language="en",
-                            condition_on_previous_text=False,
-                            vad_filter=False,
-                        )
-                        text = " ".join([seg.text.strip() for seg in segments]).strip()
-                        if text and text != last_emitted_text:
-                            last_emitted_text = text
-                            logger.info(f"Partial Transcript: '{text}'")
-                            await websocket.send(json.dumps({
-                                "text": text,
-                                "is_final": False,
-                                "language": info.language,
-                                "confidence": 0.9,
-                            }))
-                    except Exception as err:
-                        logger.debug(f"Partial transcription error: {err}")
-                    finally:
-                        last_partial_time = asyncio.get_event_loop().time()
+                if has_enough and is_recent_speech and (now - last_partial_time) > 0.70 and not transcribe_lock.locked():
+                    async with transcribe_lock:
+                        try:
+                            segments, info = model.transcribe(
+                                audio_buffer,
+                                beam_size=1,
+                                language="en",
+                                condition_on_previous_text=False,
+                                vad_filter=False,
+                            )
+                            text = " ".join([seg.text.strip() for seg in segments]).strip()
+                            if text and text != last_emitted_text:
+                                last_emitted_text = text
+                                logger.info(f"Partial Transcript: '{text}'")
+                                await websocket.send(json.dumps({
+                                    "text": text,
+                                    "is_final": False,
+                                    "language": info.language,
+                                    "confidence": 0.9,
+                                }))
+                        except Exception as err:
+                            logger.debug(f"Partial transcription error: {err}")
+                        finally:
+                            last_partial_time = asyncio.get_event_loop().time()
 
                 # Auto-finalize turn if user spoke and then paused for > 850ms
-                if last_emitted_text and (now - last_speech_time) > 0.85:
+                if last_emitted_text and (now - last_speech_time) > 0.85 and not transcribe_lock.locked():
                     logger.info(f"Silence detected after speech ({now - last_speech_time:.2f}s). Auto-finalizing turn: '{last_emitted_text}'")
                     await websocket.send(json.dumps({
                         "text": last_emitted_text,
@@ -107,9 +109,15 @@ async def handle_client(websocket):
 
                     if msg_type in ("finalize", "final"):
                         dur = len(audio_buffer) / SAMPLE_RATE
+                        if dur < 0.35:
+                            # Skip empty or near-empty buffers without spamming logs
+                            audio_buffer = np.zeros(0, dtype=np.float32)
+                            last_emitted_text = ""
+                            continue
+
                         logger.info(f"Finalize received. Buffer duration: {dur:.2f}s")
                         final_text = ""
-                        if len(audio_buffer) >= int(0.3 * SAMPLE_RATE):
+                        async with transcribe_lock:
                             try:
                                 segments, info = model.transcribe(
                                     audio_buffer,
@@ -130,7 +138,6 @@ async def handle_client(websocket):
                                     "language": "en",
                                     "confidence": 0.95,
                                 }))
-                        # Clear buffer after turn finalization
                         audio_buffer = np.zeros(0, dtype=np.float32)
                         last_emitted_text = ""
 
@@ -145,15 +152,22 @@ async def handle_client(websocket):
     except websockets.exceptions.ConnectionClosed:
         logger.info(f"Client disconnected: {client_ip}")
     except Exception as e:
-        logger.error(f"Error handling client: {e}")
+        logger.error(f"Error handling client {client_ip}: {e}")
 
 async def main():
     logger.info(f"Starting Voice ASR WebSocket server on ws://{HOST}:{PORT}")
-    async with websockets.serve(handle_client, HOST, PORT, max_size=10 * 1024 * 1024):
-        await asyncio.Future()  # run forever
+    while True:
+        try:
+            async with websockets.serve(handle_client, HOST, PORT, max_size=10 * 1024 * 1024):
+                await asyncio.Future()  # run forever
+        except Exception as e:
+            logger.error(f"WebSocket server error: {e}, restarting in 2 seconds...")
+            await asyncio.sleep(2)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Voice server stopped by user.")
+    except Exception as err:
+        logger.error(f"Fatal error in voice server: {err}")
