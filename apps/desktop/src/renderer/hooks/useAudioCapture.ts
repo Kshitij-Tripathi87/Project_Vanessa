@@ -346,68 +346,7 @@ export function useAudioCapture() {
       };
       updateAudioMeter();
 
-      // Initialize Web Speech Recognition for live streaming transcription
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = "en-US";
-
-        recognition.onresult = (event: any) => {
-          let interim = "";
-          let final = "";
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              final += transcript;
-            } else {
-              interim += transcript;
-            }
-          }
-
-          if (interim) {
-            const lower = interim.toLowerCase();
-            // Wake word activation in background
-            if (lower.includes("hey vanessa") || lower.includes("vanessa")) {
-              setVoiceState("listening");
-            }
-            setPartialTranscript(interim);
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: "transcript_partial", text: interim }));
-            }
-          }
-
-          if (final.trim()) {
-            const lower = final.toLowerCase();
-            let commandText = final.trim();
-            // Clean wake word prefix
-            if (lower.startsWith("hey vanessa")) {
-              commandText = final.substring(11).replace(/^[,\s]+/, "").trim();
-            } else if (lower.startsWith("vanessa")) {
-              commandText = final.substring(7).replace(/^[,\s]+/, "").trim();
-            }
-
-            setPartialTranscript(commandText || final.trim());
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: "transcript_final", text: commandText || final.trim() }));
-            }
-          }
-        };
-
-        recognition.onerror = (e: any) => {
-          console.warn("[useAudioCapture] SpeechRecognition error:", e.error);
-        };
-
-        try {
-          recognition.start();
-        } catch {}
-      }
-
       setIsMicActive(true);
-      // Keep initial ambient state idle until 'Hey Vanessa' is spoken
       setVoiceState("idle");
     } catch (err: any) {
       console.error("[useAudioCapture] Failed to access microphone:", err);
@@ -415,20 +354,13 @@ export function useAudioCapture() {
       setIsMicActive(false);
       setVoiceState("idle");
     }
-  }, [connectVoiceWs, voiceState, setVoiceState, triggerBargeIn]);
+  }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
 
   // Stop microphone capture
   const stopRecording = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
-    }
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
     }
 
     if (processorRef.current) {
@@ -463,14 +395,27 @@ export function useAudioCapture() {
     }
   }, [isMicActive, startRecording]);
 
+  const finalizeListening = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "finalize" }));
+    }
+    setVoiceState("thinking");
+  }, [setVoiceState]);
+
   const toggleRecording = useCallback(async () => {
     await resumeAudio();
-    setVoiceState("listening");
-    setPartialTranscript("");
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "activate" }));
+    if (voiceState === "listening") {
+      // User tapped orb again to conclude speaking -> finalize turn immediately
+      finalizeListening();
+    } else {
+      // User tapped orb to start speaking -> activate listening
+      setVoiceState("listening");
+      setPartialTranscript("");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "activate" }));
+      }
     }
-  }, [resumeAudio, setVoiceState]);
+  }, [resumeAudio, voiceState, setVoiceState, finalizeListening]);
 
   useEffect(() => {
     connectVoiceWs();

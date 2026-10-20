@@ -36,6 +36,40 @@ def get_scheduler_store() -> SchedulerStore:
 
 
 def handle_run_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    # Normalize tool name
+    tool_map = {
+        "shell": "shell_exec",
+        "bash": "shell_exec",
+        "terminal": "shell_exec",
+        "powershell": "shell_exec",
+        "browser": "browser_navigate",
+        "search": "web_search",
+        "google": "web_search",
+        "patch": "apply_patch",
+        "git": "git_status",
+    }
+    tool_name = tool_map.get(tool_name, tool_name)
+
+    # Normalize parameters
+    normalized_params = dict(params)
+    if tool_name == "shell_exec":
+        if "cmd" in normalized_params and "command" not in normalized_params:
+            normalized_params["command"] = normalized_params.pop("cmd")
+        if "cwd" in normalized_params and "working_dir" not in normalized_params:
+            normalized_params["working_dir"] = normalized_params.pop("cwd")
+    elif tool_name == "browser_navigate":
+        if "query" in normalized_params and "url" not in normalized_params:
+            query = normalized_params.pop("query")
+            normalized_params["url"] = f"https://www.google.com/search?q={query}"
+    elif tool_name == "apply_patch":
+        if "patch" in normalized_params and "patch_text" not in normalized_params:
+            normalized_params["patch_text"] = normalized_params.pop("patch")
+        elif "diff" in normalized_params and "patch_text" not in normalized_params:
+            normalized_params["patch_text"] = normalized_params.pop("diff")
+    elif tool_name.startswith("git_"):
+        if "cwd" in normalized_params and "working_dir" not in normalized_params:
+            normalized_params["working_dir"] = normalized_params.pop("cwd")
+
     if not ToolRegistry.contains(tool_name):
         return {
             "success": False,
@@ -44,7 +78,7 @@ def handle_run_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         tool = ToolRegistry.create(tool_name)
-        result = tool.execute(**params)
+        result = tool.execute(**normalized_params)
         return {
             "success": getattr(result, "success", True),
             "tool": tool_name,

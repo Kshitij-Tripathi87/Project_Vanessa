@@ -92,12 +92,11 @@ export function App() {
     [currentCorner]
   );
 
-  // Orb click: Resumes AudioContext, Speaks "Activated" aloud and begins listening immediately
+  // Orb click: Resumes AudioContext, sets visual active cue, and toggles listening/finalize
   const handleOrbClick = async () => {
     if (resumeAudio) {
       await resumeAudio();
     }
-    speakText("Activated");
     setJustActivated(true);
     setTimeout(() => setJustActivated(false), 2000);
     toggleRecording();

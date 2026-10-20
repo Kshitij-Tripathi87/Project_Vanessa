@@ -133,7 +133,7 @@ export class VanessaVoiceSession {
     }
   }
 
-  private finalizeTurn(): void {
+  public finalizeTurn(): void {
     this.turnDetector.reset();
     this.asr.finalizeTurn?.();
   }

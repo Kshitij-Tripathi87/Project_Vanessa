@@ -297,7 +297,13 @@ export class MemoryPalace {
       INSERT INTO idempotency_ledger (idempotency_key, request_id, command, status, created_at, expires_at)
       VALUES (?, ?, ?, 'accepted', ?, ?)
     `);
-    insert.run(envelope.idempotencyKey, envelope.requestId, envelope.command, now, expiresAt);
+    insert.run(
+      envelope.idempotencyKey || `idem_${Date.now()}`,
+      envelope.requestId || `req_${Date.now()}`,
+      envelope.command || "",
+      now,
+      expiresAt
+    );
 
     return { isDuplicate: false };
   }
@@ -327,16 +333,17 @@ export class MemoryPalace {
     const resultJson = task.result ? JSON.stringify(task.result) : null;
     const verifJson = task.verification ? JSON.stringify(task.verification) : null;
     const isIdempotent = task.isIdempotent ? 1 : 0;
-    const lifecycleState = task.lifecycleState || (task.status === "success" ? "succeeded" : task.status);
+    const lifecycleState = task.lifecycleState || (task.status === "success" ? "succeeded" : (task.status || "queued"));
+    const statusVal = task.status || "pending";
 
     stmt.run(
-      task.id,
+      task.id || `task_${Date.now()}`,
       planId || task.parentId || null,
-      task.agent,
-      task.action,
+      task.agent || "system",
+      task.action || "unknown",
       paramsJson,
       lifecycleState,
-      task.status,
+      statusVal,
       isIdempotent,
       resultJson,
       verifJson,

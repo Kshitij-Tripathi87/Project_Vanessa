@@ -129,7 +129,10 @@ export class VanessaAgent {
         process.env.NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
       }
 
-      let cmd = `uv run python vanessa_bridge.py ${action}`;
+      const venvPy = path.join(this.openJarvisDir, ".venv", "Scripts", "python.exe");
+      const pythonExe = fs.existsSync(venvPy) ? `"${venvPy}"` : "uv run python";
+
+      let cmd = `${pythonExe} vanessa_bridge.py ${action}`;
       if (payload) {
         const b64 = Buffer.from(JSON.stringify(payload)).toString("base64");
         cmd += ` --b64 ${b64}`;

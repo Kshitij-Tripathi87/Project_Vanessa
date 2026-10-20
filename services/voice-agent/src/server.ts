@@ -3,7 +3,7 @@ import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
-import { AudioCapture } from "./audio/capture.js";
+import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
 
 dotenv.config();
 
@@ -68,22 +68,24 @@ export async function createVoiceAgentServer() {
     });
 
     console.log(`[VoiceAgentServer] Desktop client connected to /ws session`);
+    const accumulator = new PcmFrameAccumulator(320);
 
     socket.on("message", async (data: any, isBinary: boolean) => {
       try {
         if (isBinary || Buffer.isBuffer(data)) {
-          // Slice incoming buffer into exact 20ms chunks (320 samples @ 16kHz)
-          const chunks = AudioCapture.framePcmBuffer(Buffer.from(data));
+          // Slice incoming buffer into exact 20ms chunks without dropping unaligned bytes
+          const chunks = accumulator.feed(Buffer.from(data));
           for (const chunk of chunks) {
             await session.processAudioChunk(chunk);
           }
         } else {
           const json = JSON.parse(data.toString());
           if (json.type === "activate" || json.type === "reset") {
+            accumulator.reset();
             session.activateSession(25000);
             sendJson(socket, { type: "state_change", state: "listening" });
           } else if (json.type === "finalize") {
-            (session as any).finalizeTurn();
+            session.finalizeTurn();
           } else if (json.type === "barge_in" || json.type === "interrupt") {
             session.interrupt();
             sendJson(socket, { type: "barge_in_acknowledged" });

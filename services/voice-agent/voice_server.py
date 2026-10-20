@@ -49,19 +49,21 @@ async def handle_client(websocket):
                     pcm_chunk = np.frombuffer(message, dtype=np.int16).astype(np.float32) / 32768.0
                     audio_buffer = np.concatenate((audio_buffer, pcm_chunk))
 
-                    # Track active speech energy
-                    is_active_speech = np.max(np.abs(pcm_chunk)) >= 0.020
+                    # Track active speech using RMS energy and peak amplitude
+                    rms = float(np.sqrt(np.mean(pcm_chunk ** 2))) if len(pcm_chunk) > 0 else 0.0
+                    peak = float(np.max(np.abs(pcm_chunk))) if len(pcm_chunk) > 0 else 0.0
+                    is_active_speech = rms >= 0.003 or peak >= 0.008
                     if is_active_speech:
                         last_speech_time = now
 
-                    # Cap maximum buffer to 10 seconds
-                    if len(audio_buffer) > 10 * SAMPLE_RATE:
-                        audio_buffer = audio_buffer[-10 * SAMPLE_RATE:]
+                    # Cap maximum buffer to 12 seconds
+                    if len(audio_buffer) > 12 * SAMPLE_RATE:
+                        audio_buffer = audio_buffer[-12 * SAMPLE_RATE:]
 
-                # Periodically transcribe partial audio only when speech was recent (< 0.5s)
-                has_enough = len(audio_buffer) >= int(0.5 * SAMPLE_RATE)
-                is_recent_speech = (now - last_speech_time) < 0.50
-                if has_enough and is_recent_speech and (now - last_partial_time) > 0.70 and not transcribe_lock.locked():
+                # Periodically transcribe partial audio when speech is detected
+                has_enough = len(audio_buffer) >= int(0.4 * SAMPLE_RATE)
+                is_recent_speech = (now - last_speech_time) < 0.80
+                if has_enough and is_recent_speech and (now - last_partial_time) > 0.60 and not transcribe_lock.locked():
                     async with transcribe_lock:
                         try:
                             segments, info = model.transcribe(
@@ -88,18 +90,33 @@ async def handle_client(websocket):
 
                 # Auto-finalize turn if user spoke and then paused for > 850ms
                 if last_emitted_text and (now - last_speech_time) > 0.85 and not transcribe_lock.locked():
-                    logger.info(f"Silence detected after speech ({now - last_speech_time:.2f}s). Auto-finalizing turn: '{last_emitted_text}'")
-                    await websocket.send(json.dumps({
-                        "text": last_emitted_text,
-                        "is_final": True,
-                        "language": "en",
-                        "confidence": 0.95,
-                    }))
-                    audio_buffer = np.zeros(0, dtype=np.float32)
-                    last_emitted_text = ""
+                    async with transcribe_lock:
+                        try:
+                            # Final pass over full buffer for completeness
+                            segments, info = model.transcribe(
+                                audio_buffer,
+                                beam_size=2,
+                                language="en",
+                                condition_on_previous_text=False,
+                                vad_filter=False,
+                            )
+                            full_text = " ".join([seg.text.strip() for seg in segments]).strip()
+                            out_text = full_text or last_emitted_text
+                            logger.info(f"Silence detected. Auto-finalizing turn: '{out_text}'")
+                            await websocket.send(json.dumps({
+                                "text": out_text,
+                                "is_final": True,
+                                "language": "en",
+                                "confidence": 0.95,
+                            }))
+                        except Exception as err:
+                            logger.error(f"Error during auto-finalize: {err}")
+                        finally:
+                            audio_buffer = np.zeros(0, dtype=np.float32)
+                            last_emitted_text = ""
 
-                # Clear buffer if idle silence for > 1.8s
-                if len(audio_buffer) > 0 and (now - last_speech_time) > 1.80 and not last_emitted_text:
+                # Clear buffer if idle silence for > 3.0s and no transcript
+                if len(audio_buffer) > 0 and (now - last_speech_time) > 3.0 and not last_emitted_text:
                     audio_buffer = np.zeros(0, dtype=np.float32)
 
             elif isinstance(message, str):
@@ -109,31 +126,36 @@ async def handle_client(websocket):
 
                     if msg_type in ("finalize", "final"):
                         dur = len(audio_buffer) / SAMPLE_RATE
-                        if dur < 0.35:
-                            # Skip empty or near-empty buffers without spamming logs
+                        logger.info(f"Explicit finalize received. Buffer duration: {dur:.2f}s")
+                        if dur < 0.25 and not last_emitted_text:
+                            # Skip truly empty buffer
                             audio_buffer = np.zeros(0, dtype=np.float32)
                             last_emitted_text = ""
                             continue
 
-                        logger.info(f"Finalize received. Buffer duration: {dur:.2f}s")
                         final_text = ""
                         async with transcribe_lock:
                             try:
-                                segments, info = model.transcribe(
-                                    audio_buffer,
-                                    beam_size=1,
-                                    language="en",
-                                    condition_on_previous_text=False,
-                                    vad_filter=False,
-                                )
-                                final_text = " ".join([seg.text.strip() for seg in segments]).strip()
+                                if len(audio_buffer) >= int(0.25 * SAMPLE_RATE):
+                                    segments, info = model.transcribe(
+                                        audio_buffer,
+                                        beam_size=2,
+                                        language="en",
+                                        condition_on_previous_text=False,
+                                        vad_filter=False,
+                                    )
+                                    final_text = " ".join([seg.text.strip() for seg in segments]).strip()
+                                else:
+                                    final_text = last_emitted_text
                             except Exception as err:
                                 logger.error(f"Transcribe error on finalize: {err}")
+                                final_text = last_emitted_text
 
-                            logger.info(f"Final Transcript Result: '{final_text}'")
-                            if final_text:
+                            out_text = final_text or last_emitted_text
+                            logger.info(f"Final Transcript Result: '{out_text}'")
+                            if out_text:
                                 await websocket.send(json.dumps({
-                                    "text": final_text,
+                                    "text": out_text,
                                     "is_final": True,
                                     "language": "en",
                                     "confidence": 0.95,
