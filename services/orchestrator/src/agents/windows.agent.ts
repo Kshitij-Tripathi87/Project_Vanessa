@@ -192,6 +192,13 @@ export class WindowsAgent implements SpecialistAgent {
   }
 
   private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string }> {
+    if (process.env.FAKE === "1") {
+      return {
+        success: true,
+        adapter: "Wi-Fi (Fake)",
+        output: "Successfully restarted Wi-Fi network adapter (Wi-Fi (Fake)). Connection verified.",
+      };
+    }
     const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1 | ForEach-Object { Restart-NetAdapter -Name $_.Name -Confirm:$false; Write-Output ('Restarted ' + $_.Name) }"`;
     try {
       const { stdout } = await execAsync(psCommand, { timeout: 10000 });
@@ -230,6 +237,9 @@ export class WindowsAgent implements SpecialistAgent {
   }
 
   private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string }> {
+    if (process.env.FAKE === "1") {
+      return { success: true, state: enable ? "enabled" : "disabled" };
+    }
     const stateStr = enable ? "On" : "Off";
     try {
       const psCommand = `powershell -NoProfile -Command "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'}; if ($bt) { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::${stateStr}).GetAwaiter().GetResult(); 'Bluetooth state set to ${stateStr}' } else { 'Bluetooth radio ready' }"`;

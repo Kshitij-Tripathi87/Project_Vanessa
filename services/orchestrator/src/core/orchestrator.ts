@@ -17,6 +17,7 @@ import {
 } from "./taskRunner.js";
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
+import { narrator } from "./narrator.js";
 
 export class VanessaOrchestrator {
   constructor() {
@@ -107,18 +108,10 @@ export class VanessaOrchestrator {
 
     if (pendingApproval.length > 0) {
       status = "awaiting_approval";
-      const actionNames = pendingApproval.map((t) => t.action.replace("_", " ")).join(" and ");
-      spokenSummary =
-        language === "hi" || language === "hinglish"
-          ? `Yeh action risky hai: ${actionNames}. Kya main aage badhoon?`
-          : `This action requires confirmation: ${actionNames}. Do you want me to proceed?`;
+      spokenSummary = narrator.narrateOutcome(command, tasks, language, sentiment);
     } else if (failedTasks.length > 0) {
       status = "failed";
-      const err = failedTasks[0].error || "Action failed";
-      spokenSummary =
-        language === "hi" || language === "hinglish"
-          ? `Kuch tasks poore nahi ho paaye: ${err}`
-          : `Some tasks could not complete: ${err}`;
+      spokenSummary = narrator.narrateOutcome(command, tasks, language, sentiment);
     } else {
       status = "success";
       spokenSummary = this.generateSuccessSummary(command, successTasks, language, sentiment);

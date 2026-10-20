@@ -21,6 +21,19 @@ export class DeveloperAgent {
       case "terminal.run_command": {
         const command = params.command;
         if (!command) throw new Error("DeveloperAgent: 'command' param required");
+        if (process.env.FAKE === "1") {
+          return {
+            success: true,
+            exitCode: 0,
+            stdout: "Canned command execution output (FAKE=1)",
+            stderr: "",
+            verification: {
+              passed: true,
+              details: "Command completed with exit code 0 (FAKE=1)",
+              exitCode: 0,
+            },
+          };
+        }
         try {
           const { stdout, stderr } = await execAsync(command, { timeout: 30000 });
           return {
@@ -51,6 +64,18 @@ export class DeveloperAgent {
 
       case "claude_code.open": {
         const prompt = params.prompt || params.instruction || "build a landing page";
+        if (process.env.FAKE === "1") {
+          return {
+            success: true,
+            status: "ready",
+            prompt,
+            output: `Prepared developer workspace headlessly (FAKE=1) for prompt: "${prompt}".`,
+            verification: {
+              passed: true,
+              details: "Developer workspace context prepared headlessly (FAKE=1).",
+            },
+          };
+        }
         const visible = params.visibleTerminal === true;
 
         if (visible) {
@@ -89,6 +114,18 @@ export class DeveloperAgent {
 
       case "tests.run": {
         const testCmd = params.command || "pnpm test";
+        if (process.env.FAKE === "1") {
+          return {
+            success: true,
+            exitCode: 0,
+            stdout: "ALL REGRESSION TESTS PASSED (FAKE=1)",
+            verification: {
+              passed: true,
+              details: `Test suite passed: exit code 0 for '${testCmd}' (FAKE=1)`,
+              exitCode: 0,
+            },
+          };
+        }
         try {
           const { stdout } = await execAsync(testCmd, { timeout: 20000 });
           return {

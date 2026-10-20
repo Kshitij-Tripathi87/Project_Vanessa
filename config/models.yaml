@@ -1,0 +1,25 @@
+# Vanessa Multi-Model Router & Fallback Chain
+# Model-agnostic brain per Strategy Brief
+
+planner:
+  primary: "nvidia/nemotron-3-ultra-550b"
+  fallbacks:
+    - "openai/gpt-4o"
+    - "anthropic/claude-3-5-sonnet-20241022"
+    - "deepseek/deepseek-chat"
+    - "heuristic/offline_fast"
+  timeout_ms: 4500
+  temperature: 0.1
+
+replies:
+  primary: "fast-conversational"
+  model: "openai/gpt-4o-mini"
+  fallbacks:
+    - "meta-llama/llama-3.1-8b-instruct"
+    - "template/narrator"
+  timeout_ms: 2000
+
+router:
+  track_usage: true
+  cooldown_sec: 60
+  retry_on_failure: 1

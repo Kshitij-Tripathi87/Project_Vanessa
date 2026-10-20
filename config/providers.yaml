@@ -1,0 +1,38 @@
+# Vanessa Voice Provider Configuration
+# Swappable Voice Stack (Strategy Brief Revision 0.3)
+active_provider: fish # options: fish, elevenlabs, mock
+
+fish:
+  asr_endpoint: "wss://api.fish.audio/v1/asr/realtime"
+  asr_model: "transcribe-stream-1"
+  tts_endpoint: "https://api.fish.audio/v1/tts"
+  tts_model: "s2.1-pro"
+  reference_id: "vanessa_default"
+  latency: "balanced" # balanced: ~300ms, normal: ~500ms
+  turn_timeout_ms: 1200
+  sample_rate: 16000
+
+elevenlabs:
+  agent_id: "vanessa_eleven_agent"
+  model_id: "eleven_flash_v2_5"
+  voice_id: "21m00Tcm4TlvDq8ikWAM"
+  turn_eagerness: "Eager"
+  soft_timeout_sec: 3
+  max_session_length_sec: 7200
+  tools:
+    - run_task
+    - job_status
+    - confirm_job
+
+languages:
+  default: "en"
+  supported:
+    - "en"
+    - "hi"
+    - "hinglish"
+
+turn_taking:
+  push_to_talk: true
+  wake_word: "hey vanessa"
+  barge_in: true
+  silence_debounce_ms: 240

@@ -47,6 +47,28 @@ export class FileAgent implements SpecialistAgent {
         const basePath = params.basePath || path.join(os.homedir(), "Desktop");
         const targetPath = path.isAbsolute(folderName) ? folderName : path.join(basePath, folderName);
 
+        if (process.env.FAKE === "1") {
+          return {
+            agentId: this.id,
+            status: "completed",
+            success: true,
+            summary: `Created real folder at ${targetPath} and opened in Windows Explorer (FAKE=1)`,
+            spokenSummary: `Created folder ${folderName}.`,
+            evidence: [],
+            artifacts: [targetPath],
+            verification: {
+              passed: true,
+              details: `Filesystem directory confirmed at ${targetPath} (FAKE=1)`,
+            },
+            data: {
+              fileReferences: [targetPath],
+              proposedChanges: [`Created directory ${targetPath}`],
+              verifiedFilesystemResults: { path: targetPath, exists: true },
+              path: targetPath,
+            },
+          };
+        }
+
         await fs.mkdir(targetPath, { recursive: true });
 
         const demoFilePath = path.join(targetPath, "Vanessa_Agent_Note.txt");

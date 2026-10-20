@@ -1,0 +1,41 @@
+# Vanessa Safety Policy & Permission Tiers
+# Every action carries a permission tier per Strategy Brief: allowed, ask_first, blocked
+
+version: "0.3"
+
+tiers:
+  allowed:
+    - "system.bluetooth_set"
+    - "system.system_info"
+    - "browser.open_url"
+    - "browser.search"
+    - "browser.play_youtube"
+    - "ide.open_project"
+    - "ide.open_file"
+    - "ide.show_diff"
+    - "memory.remember"
+    - "memory.recall"
+    - "memory.recent_jobs"
+
+  ask_first:
+    - "system.wifi_restart" # Wi-Fi restart needs admin rights
+    - "system.open_app"
+    - "system.close_app"
+    - "files.upload_to_drive" # Uploading project files asks first
+    - "files.email_forward"
+    - "coding.start_coding_task" # Claude Code CLI launch asks first
+    - "ide.run_tests"
+    - "developer.terminal_command"
+
+  blocked:
+    - "browser.sign_in" # Sign-in pages are strictly blocked
+    - "coding.deploy_production" # Automated production deployment blocked per policy
+    - "system.delete_system_root"
+    - "system.rm_rf"
+    - "system.format_drive"
+    - "memory.store_api_keys" # Secrets/keys never stored in memory
+
+injection_defense:
+  treat_web_as_data: true
+  treat_file_as_data: true
+  strip_secret_tokens_from_logs: true

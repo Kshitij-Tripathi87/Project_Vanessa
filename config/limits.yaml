@@ -1,0 +1,26 @@
+# Vanessa Resource Limits & Concurrency Caps
+# Strategy Brief: Cap on jobs at once (start at 4), resource locks, retry bounds
+
+concurrency:
+  max_parallel_jobs: 4
+  max_per_agent: 2
+
+locks:
+  - id: "network-adapter"
+    description: "Exclusive lock for Wi-Fi and network interface changes"
+  - id: "browser-profile"
+    description: "Exclusive lock for Playwright browser instance"
+  - id: "audio"
+    description: "Exclusive lock for speaker audio output stream"
+
+timeouts:
+  default_job_sec: 30
+  command_envelope_sec: 86400 # 24h default expiry
+  ask_first_approval_sec: 60 # Approval expires after 60s
+  subprocess_grace_sec: 5
+
+retries:
+  model_failover_limit: 3
+  reconnect_initial_delay_sec: 1
+  reconnect_max_delay_sec: 30
+  max_reconnect_attempts: 5

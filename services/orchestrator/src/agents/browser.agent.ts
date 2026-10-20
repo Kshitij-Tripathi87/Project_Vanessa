@@ -134,6 +134,9 @@ export class BrowserAgent implements SpecialistAgent {
   }
 
   private async openUrl(url: string): Promise<{ success: boolean; url: string }> {
+    if (process.env.FAKE === "1") {
+      return { success: true, url };
+    }
     const psCommand = `powershell -NoProfile -Command "Start-Process '${this.edgePath}' -ArgumentList '${url}'"`;
     try {
       await execAsync(psCommand, { timeout: 10000 });

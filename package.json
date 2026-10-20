@@ -10,6 +10,8 @@
     "dev:desktop": "pnpm --filter @vanessa/desktop dev",
     "build": "pnpm -r run build",
     "test:scenarios": "pnpm --filter @vanessa/orchestrator test:scenarios",
+    "test:drills": "tsx evals/drills/failureDrills.test.ts",
+    "test:all": "pnpm test:scenarios && pnpm test:drills && pnpm --filter @vanessa/voice-agent test",
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {

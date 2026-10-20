@@ -4,12 +4,27 @@ import { permissionGuard } from "./permissionGuard.js";
 import { agentRegistry } from "../agents/registry.js";
 import { workingMemory } from "./workingMemory.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
+import { resourceLockManager } from "./resourceLocks.js";
 
 // Active in-memory map of running and paused tasks
 export const activeTasks = new Map<string, Task>();
 export const activePlanMap = new Map<string, Plan>();
 
 let isKillSwitchEngaged = false;
+
+export function getDeclaredLock(action: string): string | null {
+  const lower = action.toLowerCase();
+  if (lower.includes("wifi") || lower.includes("adapter") || lower.includes("network")) {
+    return "network-adapter";
+  }
+  if (lower.includes("youtube") || lower.includes("browser") || lower.includes("chrome")) {
+    return "browser-profile";
+  }
+  if (lower.includes("audio") || lower.includes("tts") || lower.includes("voice.speak")) {
+    return "audio";
+  }
+  return null;
+}
 
 export function triggerKillSwitch() {
   isKillSwitchEngaged = true;
@@ -19,6 +34,7 @@ export function triggerKillSwitch() {
       task.lifecycleState = "cancelled";
       task.error = "Operation cancelled by emergency kill-switch";
       task.completedAt = Date.now();
+      resourceLockManager.releaseAllForTask(task.id);
       memoryPalace.recordTaskCheckpoint(task, task.parentId);
       eventBus.emitEvent("task:update", task);
     }
@@ -72,6 +88,8 @@ export async function approveTask(taskId: string): Promise<Task | null> {
   memoryPalace.recordTaskCheckpoint(task, task.parentId);
   eventBus.emitEvent("task:update", task);
 
+  const lock = getDeclaredLock(task.action);
+
   try {
     const agent = agentRegistry[task.agent];
     if (!agent) {
@@ -106,16 +124,20 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       context: [workingMemory.getSnapshot()],
     };
 
-    const result = await agent.execute(task.action, resolvedParams, {
-      planId: plan.id,
-      command: plan.command,
-      workingMemory: workingMemory.getSnapshot(),
-      task,
-      agentTask,
-    });
+    if (lock) {
+      await resourceLockManager.acquireLock(lock, task.id);
+    }
 
-    task.lifecycleState = "verifying";
-    eventBus.emitEvent("task:update", task);
+    const result = await agent.execute(task.action, resolvedParams, {
+        planId: plan.id,
+        command: plan.command,
+        workingMemory: workingMemory.getSnapshot(),
+        task,
+        agentTask,
+      });
+
+      task.lifecycleState = "verifying";
+      eventBus.emitEvent("task:update", task);
 
     let isVerified = true;
     let postconditions: string[] = [];
@@ -185,6 +207,10 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       outcome: "failed",
     };
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
+  } finally {
+    if (lock) {
+      resourceLockManager.releaseLock(lock, task.id);
+    }
   }
 
   eventBus.emitEvent("task:update", task);
@@ -282,6 +308,12 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       eventBus.emitEvent("approval:required", task);
       eventBus.emitEvent("task:update", task);
       return;
+    }
+
+    await resourceLockManager.acquireSlot();
+    const lock = getDeclaredLock(task.action);
+    if (lock) {
+      await resourceLockManager.acquireLock(lock, task.id);
     }
 
     try {
@@ -392,6 +424,11 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         outcome: "failed",
       };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
+    } finally {
+      if (lock) {
+        resourceLockManager.releaseLock(lock, task.id);
+      }
+      resourceLockManager.releaseSlot();
     }
 
     eventBus.emitEvent("task:update", task);

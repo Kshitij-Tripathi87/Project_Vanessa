@@ -1,0 +1,66 @@
+# Vanessa Specialist Agents Registry & Cards
+# Strategy Brief: 9 Agents, one plan each
+
+agents:
+  orchestrator:
+    id: "orchestrator"
+    purpose: "Turns spoken requests into JSON task graphs, assigns agents, replans on failure"
+    actions: ["plan", "replan", "answer"]
+    max_concurrent: 1
+    tools: [] # Models only, cannot call native OS tools directly
+
+  voice:
+    id: "voice"
+    purpose: "Dedicated session and transport layer for speech capture, ASR, and TTS playback"
+    actions: ["start", "stop", "speak", "interrupt"]
+    max_concurrent: 1
+
+  narrator:
+    id: "narrator"
+    purpose: "Synthesizes task progress into concise one-sentence summaries without leaking secrets"
+    actions: ["summarize_progress", "summarize_outcome", "report_failure"]
+    max_concurrent: 1
+
+  system:
+    id: "system"
+    purpose: "Controls Windows Wi-Fi adapter, Bluetooth radio, and application launch"
+    actions: ["wifi_restart", "bluetooth_set", "open_app", "folder_setup"]
+    locks: ["network-adapter"]
+    max_concurrent: 1
+    timeout_sec: 25
+
+  browser:
+    id: "browser"
+    purpose: "Automates browser navigation, YouTube media playback, and web search"
+    actions: ["open_url", "search", "play_youtube", "fill_form"]
+    locks: ["browser-profile"]
+    max_concurrent: 2
+    timeout_sec: 30
+
+  files_drive:
+    id: "files"
+    purpose: "Finds files, archives projects into zip files, and uploads to Google Drive"
+    actions: ["find_file", "zip_project", "upload_to_drive"]
+    max_concurrent: 2
+    timeout_sec: 45
+
+  coding:
+    id: "coding"
+    purpose: "Orchestrates Claude Code CLI, OpenHands, and OpenCode coding sessions"
+    actions: ["start_coding_task", "status", "cancel"]
+    max_concurrent: 1
+    timeout_sec: 60
+
+  ide:
+    id: "ide"
+    purpose: "Drives VS Code workspace, views file diffs, and executes test suites"
+    actions: ["open_project", "open_file", "show_diff", "run_tests"]
+    max_concurrent: 1
+    timeout_sec: 30
+
+  memory:
+    id: "memory"
+    purpose: "Manages persistent 30-day SQLite Memory Palace, recall, and preferences"
+    actions: ["remember", "recall", "recent_jobs", "forget"]
+    max_concurrent: 2
+    timeout_sec: 5
