@@ -98,6 +98,28 @@ export interface AgentTask {
   isIdempotent?: boolean;
 }
 
+export interface CriticVerdict {
+  passed: boolean;
+  score: number;
+  feedback: string;
+  proof?: string;
+  invariantsPreserved?: boolean;
+}
+
+export interface SkillDefinition {
+  name: string;
+  description: string;
+  agent: AgentName | string;
+  locks?: string[];
+  allowedTools?: string[];
+  jobType?: "action" | "goal";
+  invariants?: string[];
+  instructions?: string;
+  objective?: string;
+  steps?: string[];
+  filePath?: string;
+}
+
 export interface Task {
   id: string;
   parentId?: string;
@@ -109,6 +131,9 @@ export interface Task {
   status: TaskStatus;
   lifecycleState?: TaskLifecycleState;
   isIdempotent?: boolean;
+  jobType?: "action" | "goal";
+  skillName?: string;
+  critic?: CriticVerdict;
   verification?: TaskVerificationResult;
   risk?: RiskLevel;
   result?: any;

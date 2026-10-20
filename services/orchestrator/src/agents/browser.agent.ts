@@ -89,6 +89,23 @@ export class BrowserAgent implements SpecialistAgent {
         };
       }
 
+      case "browser.research":
+      case "vanessa.run_goal": {
+        const query = params.goal || params.query || params.prompt || "web research";
+        const { vanessaAgent } = await import("./openjarvis.agent.js");
+        const goalRes = await vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
+        return {
+          agentId: this.id,
+          status: "completed",
+          success: goalRes.success ?? true,
+          summary: goalRes.final_answer || `Research completed for ${query}`,
+          spokenSummary: `Finished research on ${query}.`,
+          evidence: goalRes.steps ? goalRes.steps.map((s: any) => ({ description: `${s.thought}: ${s.action}` })) : [],
+          artifacts: [],
+          data: goalRes,
+        };
+      }
+
       case "youtube.search_and_play": {
         const query = params.query || "Bolna Buildathon";
         const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;

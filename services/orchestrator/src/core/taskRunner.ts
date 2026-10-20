@@ -5,6 +5,8 @@ import { agentRegistry } from "../agents/registry.js";
 import { workingMemory } from "./workingMemory.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
 import { resourceLockManager } from "./resourceLocks.js";
+import { skillsRuntime } from "../skills/skillsRuntime.js";
+import { criticEngine } from "./critic.js";
 
 // Active in-memory map of running and paused tasks
 export const activeTasks = new Map<string, Task>();
@@ -24,6 +26,22 @@ export function getDeclaredLock(action: string): string | null {
     return "audio";
   }
   return null;
+}
+
+export function resolveTaskLocks(task: Task): string[] {
+  const locks: string[] = [];
+  const decl = getDeclaredLock(task.action);
+  if (decl) locks.push(decl);
+
+  if (task.skillName) {
+    const skill = skillsRuntime.getSkill(task.skillName);
+    if (skill?.locks) {
+      for (const l of skill.locks) {
+        if (!locks.includes(l)) locks.push(l);
+      }
+    }
+  }
+  return locks;
 }
 
 export function triggerKillSwitch() {
@@ -88,7 +106,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
   memoryPalace.recordTaskCheckpoint(task, task.parentId);
   eventBus.emitEvent("task:update", task);
 
-  const lock = getDeclaredLock(task.action);
+  const locks = resolveTaskLocks(task);
 
   try {
     const agent = agentRegistry[task.agent];
@@ -111,6 +129,8 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     const resolvedParams = resolveParams(task.params, allTaskList);
     task.params = resolvedParams;
 
+    const skill = task.skillName ? skillsRuntime.getSkill(task.skillName) : skillsRuntime.matchSkill(task.action);
+
     const agentTask: AgentTask = {
       taskId: task.id,
       parentTaskId: task.parentId,
@@ -119,13 +139,16 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       params: resolvedParams,
       allowedTools: task.allowedTools || agent.allowedTools || [],
       dependsOn: task.dependsOn || [],
-      acceptanceCriteria: task.acceptanceCriteria || [],
+      acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
       deadlineMs: 30000,
-      context: [workingMemory.getSnapshot()],
+      context: [
+        workingMemory.getSnapshot(),
+        ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
+      ],
     };
 
-    if (lock) {
-      await resourceLockManager.acquireLock(lock, task.id);
+    for (const l of locks) {
+      await resourceLockManager.acquireLock(l, task.id);
     }
 
     const result = await agent.execute(task.action, resolvedParams, {
@@ -184,6 +207,17 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       };
     }
 
+    // Critic Evaluation
+    const verdict = criticEngine.evaluate(task, skill);
+    task.critic = verdict;
+    if (!verdict.passed) {
+      isVerified = false;
+      task.error = task.error || verdict.feedback;
+    }
+    if (verdict.proof) {
+      task.evidence = [...(task.evidence || []), { description: verdict.proof }];
+    }
+
     if (!isVerified) {
       task.status = "failed";
       task.lifecycleState = "failed";
@@ -208,8 +242,8 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     };
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
   } finally {
-    if (lock) {
-      resourceLockManager.releaseLock(lock, task.id);
+    for (const l of locks) {
+      resourceLockManager.releaseLock(l, task.id);
     }
   }
 
@@ -311,9 +345,9 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     }
 
     await resourceLockManager.acquireSlot();
-    const lock = getDeclaredLock(task.action);
-    if (lock) {
-      await resourceLockManager.acquireLock(lock, task.id);
+    const locks = resolveTaskLocks(task);
+    for (const l of locks) {
+      await resourceLockManager.acquireLock(l, task.id);
     }
 
     try {
@@ -332,6 +366,8 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         }
       }
 
+      const skill = task.skillName ? skillsRuntime.getSkill(task.skillName) : skillsRuntime.matchSkill(task.action);
+
       const agentTask: AgentTask = {
         taskId: task.id,
         parentTaskId: task.parentId,
@@ -340,9 +376,12 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         params: resolvedParams,
         allowedTools: task.allowedTools || agent.allowedTools || [],
         dependsOn: task.dependsOn || [],
-        acceptanceCriteria: task.acceptanceCriteria || [],
+        acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
         deadlineMs: 30000,
-        context: [workingMemory.getSnapshot()],
+        context: [
+          workingMemory.getSnapshot(),
+          ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
+        ],
       };
 
       const result = await agent.execute(task.action, resolvedParams, {
@@ -401,6 +440,17 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         };
       }
 
+      // Critic Evaluation
+      const verdict = criticEngine.evaluate(task, skill);
+      task.critic = verdict;
+      if (!verdict.passed) {
+        isVerified = false;
+        task.error = task.error || verdict.feedback;
+      }
+      if (verdict.proof) {
+        task.evidence = [...(task.evidence || []), { description: verdict.proof }];
+      }
+
       if (!isVerified) {
         task.status = "failed";
         task.lifecycleState = "failed";
@@ -425,8 +475,8 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
     } finally {
-      if (lock) {
-        resourceLockManager.releaseLock(lock, task.id);
+      for (const l of locks) {
+        resourceLockManager.releaseLock(l, task.id);
       }
       resourceLockManager.releaseSlot();
     }

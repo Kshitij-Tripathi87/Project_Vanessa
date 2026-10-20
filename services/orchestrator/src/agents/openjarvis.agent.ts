@@ -103,6 +103,17 @@ export class VanessaAgent {
         return this.getStatus();
       }
 
+      case "vanessa.run_goal":
+      case "tools.run_goal":
+      case "connector.run_goal":
+      case "jarvis.run_goal":
+      case "openjarvis.run_goal": {
+        const goal = params.goal || params.objective || params.query || "Perform system goal";
+        const tools = params.tools;
+        const maxSteps = params.maxSteps || params.max_steps || 5;
+        return this.runGoal(goal, tools, maxSteps);
+      }
+
       default:
         // Default to asking Vanessa or running tool
         if (action.startsWith("vanessa.tool.")) {
@@ -172,6 +183,10 @@ export class VanessaAgent {
 
   async scheduleList(): Promise<any> {
     return this.runBridge("schedule_list");
+  }
+
+  async runGoal(goal: string, tools?: string[], maxSteps: number = 5): Promise<any> {
+    return this.runBridge("run_goal", { goal, tools, max_steps: maxSteps });
   }
 }
 

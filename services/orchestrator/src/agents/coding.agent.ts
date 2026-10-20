@@ -166,16 +166,12 @@ export class CodingAgent implements SpecialistAgent {
     const checkoutFile = path.resolve(this.incidentLabDir, "src", "checkout.ts");
     const originalContent = fs.readFileSync(checkoutFile, "utf-8");
 
-    // 1. Create and switch to isolated branch
+    // 1. Create and prepare isolated branch
     let branchName = params.branch || "fix/checkout-incident";
     try {
-      await execAsync(`git checkout -b ${branchName}`, { cwd: this.workspaceRoot });
+      await execAsync(`git branch ${branchName}`, { cwd: this.workspaceRoot });
     } catch {
-      try {
-        await execAsync(`git checkout ${branchName}`, { cwd: this.workspaceRoot });
-      } catch {
-        branchName = "fix/checkout-incident-isolated";
-      }
+      // Branch may already exist
     }
 
     // 2. Prepare and apply defensive patch

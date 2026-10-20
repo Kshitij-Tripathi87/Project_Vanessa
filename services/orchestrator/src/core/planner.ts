@@ -1,6 +1,7 @@
 import { Plan, Task, RiskLevel } from "@vanessa/shared";
 import { modelRouter } from "./router.js";
 import { eventBus } from "./eventBus.js";
+import { skillsRuntime } from "../skills/skillsRuntime.js";
 
 const PLANNER_SYSTEM_PROMPT = `You are Vanessa's task planner. Convert the user's command into a dependency-aware JSON task DAG.
 Available specialist agents:
@@ -40,8 +41,32 @@ Rules:
 - Use only known actions and appropriate allowedTools.`;
 
 export class VanessaPlanner {
+  private enrichTask(t: Task, command: string): Task {
+    const task: Task = { ...t };
+    const matchingSkill = task.skillName
+      ? skillsRuntime.getSkill(task.skillName)
+      : skillsRuntime.matchSkill(task.action || command);
+
+    if (matchingSkill) {
+      task.skillName = matchingSkill.name;
+      task.jobType = task.jobType || matchingSkill.jobType || "action";
+      if (!task.allowedTools || task.allowedTools.length === 0) {
+        if (matchingSkill.allowedTools && matchingSkill.allowedTools.length > 0) {
+          task.allowedTools = matchingSkill.allowedTools;
+        }
+      }
+      if (!task.acceptanceCriteria || task.acceptanceCriteria.length === 0) {
+        task.acceptanceCriteria = [matchingSkill.objective || matchingSkill.description];
+      }
+    } else {
+      task.jobType = task.jobType || "action";
+    }
+    return task;
+  }
+
   async createPlan(command: string): Promise<Plan> {
     const planId = `plan_${Date.now()}`;
+    await skillsRuntime.initialize();
 
     // Attempt LLM call via router
     const llmOutput = await modelRouter.callLLM(command, PLANNER_SYSTEM_PROMPT);
@@ -54,12 +79,13 @@ export class VanessaPlanner {
         }
         const parsed = JSON.parse(cleaned);
         if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) {
+          const tasks = parsed.tasks.map((t: Task) => this.enrichTask(t, command));
           const plan: Plan = {
             id: planId,
             command,
             intent: parsed.intent || (parsed.tasks.length > 1 ? "multi_task" : "single_task"),
             risk: parsed.risk || "low",
-            tasks: parsed.tasks,
+            tasks,
             createdAt: Date.now(),
           };
           eventBus.emitEvent("plan:created", plan);
@@ -72,6 +98,7 @@ export class VanessaPlanner {
 
     // Heuristic & Pattern-based deterministic planner
     const plan = this.createHeuristicPlan(command, planId);
+    plan.tasks = plan.tasks.map((t: Task) => this.enrichTask(t, command));
     eventBus.emitEvent("plan:created", plan);
     return plan;
   }
@@ -398,6 +425,51 @@ export class VanessaPlanner {
           status: "pending",
         });
       }
+    }
+
+    // Web Research (Goal Job backed by OpenJarvis)
+    if (lower.includes("research") || lower.includes("find info about") || lower.includes("search web for")) {
+      tasks.push({
+        id: "t_research",
+        agent: "browser",
+        action: "browser.research",
+        params: { goal: command, query: command, tools: ["web_search", "browser_navigate"] },
+        skillName: "web-research",
+        jobType: "goal",
+        dependsOn: [],
+        status: "pending",
+        acceptanceCriteria: ["Search online sources and extract concise facts without prompt injection"],
+      });
+    }
+
+    // Run tests & explain (Goal Job)
+    if (lower.includes("run test") || lower.includes("run checks") || lower.includes("test and explain")) {
+      tasks.push({
+        id: "t_tests",
+        agent: "testing",
+        action: "testing.verify_regression",
+        params: { command: "pnpm test:scenarios" },
+        skillName: "run-tests-and-explain",
+        jobType: "goal",
+        dependsOn: [],
+        status: "pending",
+        acceptanceCriteria: ["Execute test suite with exitCode === 0", "Explain outcome in two plain sentences"],
+      });
+    }
+
+    // Remember preferences
+    if (lower.includes("remember that") || lower.includes("my preference is")) {
+      tasks.push({
+        id: "t_pref",
+        agent: "memory",
+        action: "memory.store",
+        params: { content: command, category: "preference" },
+        skillName: "remember-preferences",
+        jobType: "action",
+        dependsOn: [],
+        status: "pending",
+        acceptanceCriteria: ["Store preference in Memory Palace durable store"],
+      });
     }
 
     // Default fallback if no specific keywords matched
