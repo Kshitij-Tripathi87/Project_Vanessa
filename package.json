@@ -21,6 +21,8 @@
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/ws": "^8.5.13",
     "concurrently": "^9.1.2",
     "typescript": "^5.7.3"
   },

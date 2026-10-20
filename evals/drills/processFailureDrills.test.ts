@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import * as net from "node:net";
 import { orchestrator } from "../../services/orchestrator/src/core/orchestrator.js";
 import { memoryPalace } from "../../services/orchestrator/src/memory/memoryPalace.js";
 import { triggerKillSwitch, activeTasks, runPlan, rejectTask } from "../../services/orchestrator/src/core/taskRunner.js";
@@ -188,7 +189,6 @@ async function runProcessFailureDrills() {
   await assertDrill(7, "Health Monitoring: Offline dependency detected truthfully, not masked as ready", async () => {
     // Probe a non-existent port
     const testOfflineCheck = await new Promise<boolean>((resolve) => {
-      const net = require("node:net");
       const client = net.connect({ port: 59999, host: "127.0.0.1" }, () => {
         client.destroy();
         resolve(false);

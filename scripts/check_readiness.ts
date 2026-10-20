@@ -28,9 +28,9 @@ interface ServiceCheck {
 async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
   const start = Date.now();
   return new Promise((resolve) => {
-    const req = http.get(url, { timeout: timeoutMs }, (res) => {
+    const req = http.get(url, { timeout: timeoutMs }, (res: http.IncomingMessage) => {
       let data = "";
-      res.on("data", (chunk) => (data += chunk));
+      res.on("data", (chunk: Buffer | string) => (data += chunk));
       res.on("end", () => {
         resolve({
           ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426, // 426 upgrade required is ok for WS endpoint
@@ -45,7 +45,7 @@ async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; 
       resolve({ ok: false, statusText: "TIMEOUT", latencyMs: Date.now() - start });
     });
 
-    req.on("error", (err) => {
+    req.on("error", (err: Error) => {
       resolve({ ok: false, statusText: err.message, latencyMs: Date.now() - start });
     });
   });
@@ -67,7 +67,7 @@ async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; st
     };
 
     socket.on("open", () => finish(true, "CONNECTED"));
-    socket.on("error", (err) => finish(false, err.message));
+    socket.on("error", (err: Error) => finish(false, err.message));
     setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
   });
 }

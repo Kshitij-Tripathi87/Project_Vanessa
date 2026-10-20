@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@vanessa/shared": ["./packages/shared/dist/index.d.ts"]
+    }
+  },
+  "include": ["scripts/**/*", "evals/**/*"]
+}

@@ -13,7 +13,7 @@ export interface AsrAdapter {
   }): Promise<void> | void;
   sendAudioChunk(pcm: Int16Array): void;
   finalizeTurn?(): void;
-  activateStream?(): void;
+  activateStream?(durationMs?: number): void;
   deactivateStream?(): void;
   close(): void;
 }
