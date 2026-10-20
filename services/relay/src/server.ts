@@ -13,30 +13,51 @@ import {
 import type { DeviceRole, RelayMessage } from "./types.js";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "32kb" }));
 
-// Enable CORS for web apps & PWA
+const pairingRateLimits = new Map<string, { count: number; resetAt: number }>();
+function rateLimitPairing(scope: string, maximum: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const now = Date.now();
+    const key = `${scope}:${req.ip || req.socket.remoteAddress || "unknown"}`;
+    let state = pairingRateLimits.get(key);
+    if (!state || state.resetAt <= now) {
+      state = { count: 0, resetAt: now + windowMs };
+      pairingRateLimits.set(key, state);
+    }
+    state.count++;
+    if (state.count > maximum) {
+      return res.status(429).json({ error: "Too many pairing requests. Try again later." });
+    }
+    next();
+  };
+}
+
+const allowedOrigins = new Set(
+  (process.env.RELAY_ALLOWED_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+// Allow only explicitly configured browser clients. Native clients without an
+// Origin header still authenticate with their signed device token.
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.has(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Vary", "Origin");
+  }
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
+    return origin && !allowedOrigins.has(origin) ? res.sendStatus(403) : res.sendStatus(204);
   }
   next();
 });
 
-app.get("/health", (req, res) => {
-  res.json({
-    status: "online",
-    service: "vanessa-relay",
-    port: Number(process.env.PORT ?? 4400),
-    timestamp: Date.now(),
-  });
-});
-
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
 
 type DeviceSocket = {
   ws: WebSocket;
@@ -64,8 +85,12 @@ app.get("/health", (_req, res) => {
 });
 
 // Laptop requests pairing initiation
-app.post("/pairing/create", (req, res) => {
-  const deviceName = (req.body as any)?.deviceName || "Kshitij-Laptop";
+app.post("/pairing/create", rateLimitPairing("create", 5, 60 * 60 * 1000), (req, res) => {
+  const requestedName = (req.body as any)?.deviceName;
+  if (typeof requestedName !== "undefined" && (typeof requestedName !== "string" || requestedName.length > 80)) {
+    return res.status(400).json({ error: "Invalid device name" });
+  }
+  const deviceName = requestedName || "Vanessa Laptop";
   const pairingCode = createPairingCode();
   const totpSecret = createTotpSecret();
 
@@ -92,13 +117,23 @@ app.post("/pairing/create", (req, res) => {
 });
 
 // Phone or Laptop claims pairing code
-app.post("/pairing/claim", (req, res) => {
+app.post("/pairing/claim", rateLimitPairing("claim", 10, 15 * 60 * 1000), (req, res) => {
   const { pairingCode, deviceName, role, totpCode } = req.body as {
     pairingCode: string;
     deviceName: string;
     role: DeviceRole;
     totpCode?: string;
   };
+
+  if (
+    typeof pairingCode !== "string" ||
+    !/^\d{6}$/.test(pairingCode) ||
+    (role !== "phone" && role !== "laptop") ||
+    (typeof deviceName !== "undefined" && (typeof deviceName !== "string" || deviceName.length > 80)) ||
+    (typeof totpCode !== "undefined" && (typeof totpCode !== "string" || !/^\d{6}$/.test(totpCode)))
+  ) {
+    return res.status(400).json({ error: "Invalid pairing request" });
+  }
 
   const room = rooms.get(pairingCode);
   if (!room) {
@@ -135,14 +170,6 @@ app.post("/pairing/claim", (req, res) => {
   });
 });
 
-function getRoom(pairingCode: string) {
-  const room = rooms.get(pairingCode);
-  if (!room) {
-    throw new Error("Room not found");
-  }
-  return room;
-}
-
 function send(device: DeviceSocket, message: RelayMessage) {
   if (device.ws.readyState === WebSocket.OPEN) {
     device.ws.send(JSON.stringify(message));
@@ -150,6 +177,11 @@ function send(device: DeviceSocket, message: RelayMessage) {
 }
 
 wss.on("connection", (ws, req) => {
+  const origin = req.headers.origin;
+  if (origin && !allowedOrigins.has(origin)) {
+    ws.close(1008, "Origin not allowed");
+    return;
+  }
   const url = new URL(req.url ?? "/", "http://localhost");
   const token = url.searchParams.get("token");
 
@@ -166,7 +198,11 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  const room = getRoom(payload.pairingCode);
+  const room = rooms.get(payload.pairingCode);
+  if (!room) {
+    ws.close(4004, "Pairing room no longer exists");
+    return;
+  }
   const device: DeviceSocket = {
     ws,
     deviceId: payload.sub,

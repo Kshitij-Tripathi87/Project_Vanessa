@@ -27,7 +27,9 @@ const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
 const fastify = Fastify({ logger: false });
 
 await fastify.register(cors, {
-  origin: "*",
+  // Only the local desktop development renderer needs browser access. The
+  // packaged Electron app calls this API from its main process.
+  origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
 });
 
 await fastify.register(websocket);
@@ -57,6 +59,11 @@ import { voiceStreamServer } from "./voice/voiceStreamServer.js";
 
 // WebSocket endpoint for real-time HUD streaming
 fastify.get("/events", { websocket: true }, (socket, req) => {
+  const origin = req.headers.origin;
+  if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
+    socket.close(1008, "Origin not allowed");
+    return;
+  }
   connectedClients.add(socket);
 
   // Send current status immediately
@@ -75,6 +82,11 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
 
 // Dedicated full-duplex WebSocket endpoint for live voice streaming & sentiment
 fastify.get("/voice/stream", { websocket: true }, (socket, req) => {
+  const origin = req.headers.origin;
+  if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
+    socket.close(1008, "Origin not allowed");
+    return;
+  }
   voiceStreamServer.handleConnection(socket);
 });
 

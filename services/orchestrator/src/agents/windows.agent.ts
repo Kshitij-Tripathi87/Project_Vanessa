@@ -1,5 +1,8 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { runPowerShell } from "./powershell.js";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   AgentEvidence,
   AgentResult,
@@ -253,8 +256,13 @@ export class WindowsAgent implements SpecialistAgent {
 
   private async setVolume(level: number): Promise<{ success: boolean; level: number }> {
     try {
-      const psCommand = `powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; 1..50 | ForEach-Object { $wsh.SendKeys([char]174) }; $steps = [math]::Round(${level} / 2); 1..$steps | ForEach-Object { $wsh.SendKeys([char]175) }"`;
-      await execAsync(psCommand, { timeout: 5000 });
+      const numericLevel = Number(level);
+      if (!Number.isFinite(numericLevel)) throw new Error("Volume level must be numeric");
+      await runPowerShell(
+        "$wsh = New-Object -ComObject WScript.Shell; 1..50 | ForEach-Object { $wsh.SendKeys([char]174) }; $steps = [math]::Round([double]$env:VANESSA_VOLUME / 2); 1..$steps | ForEach-Object { $wsh.SendKeys([char]175) }",
+        { VANESSA_VOLUME: String(Math.max(0, Math.min(100, numericLevel))) },
+        5000
+      );
     } catch {}
     return { success: true, level };
   }
@@ -273,7 +281,7 @@ export class WindowsAgent implements SpecialistAgent {
     };
     const executable = appMap[appName.toLowerCase()] || appName;
     try {
-      await execAsync(`powershell -NoProfile -Command "Start-Process '${executable}'"`, { timeout: 5000 });
+      await runPowerShell("Start-Process -FilePath $env:VANESSA_APP", { VANESSA_APP: executable }, 5000);
       return { success: true, output: `Launched ${executable}` };
     } catch (err: any) {
       return { success: false, output: `Could not launch ${appName}: ${err.message}` };
@@ -282,7 +290,7 @@ export class WindowsAgent implements SpecialistAgent {
 
   private async closeApp(appName: string): Promise<{ success: boolean; output: string }> {
     try {
-      await execAsync(`powershell -NoProfile -Command "Stop-Process -Name '${appName}' -Force -ErrorAction SilentlyContinue"`, { timeout: 5000 });
+      await runPowerShell("Stop-Process -Name $env:VANESSA_APP -Force -ErrorAction SilentlyContinue", { VANESSA_APP: appName }, 5000);
       return { success: true, output: `Stopped process ${appName}` };
     } catch {
       return { success: true, output: `Process ${appName} closed` };
@@ -290,12 +298,14 @@ export class WindowsAgent implements SpecialistAgent {
   }
 
   private async captureScreenshot(): Promise<{ success: boolean; path: string }> {
-    const screenshotPath = `C:\\Users\\21330\\AppData\\Local\\Temp\\screenshot_${Date.now()}.png`;
-    const psCommand = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{PRTSC}'); Start-Sleep -Milliseconds 250"`;
+    const screenshotPath = path.join(os.tmpdir(), `vanessa_screenshot_${Date.now()}.png`);
+    const psCommand = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height); $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); $bitmap.Save($env:VANESSA_SCREENSHOT); $graphics.Dispose(); $bitmap.Dispose()";
     try {
-      await execAsync(psCommand, { timeout: 5000 });
-    } catch {}
-    return { success: true, path: screenshotPath };
+      await runPowerShell(psCommand, { VANESSA_SCREENSHOT: screenshotPath }, 10000);
+      return { success: true, path: screenshotPath };
+    } catch {
+      return { success: false, path: "" };
+    }
   }
 }
 

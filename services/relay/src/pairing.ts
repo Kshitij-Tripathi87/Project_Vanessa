@@ -1,9 +1,12 @@
 import { customAlphabet } from "nanoid";
 import jwt from "jsonwebtoken";
 import { authenticator } from "otplib";
+import { randomBytes } from "node:crypto";
 import type { DeviceRole } from "./types.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "vanessa_default_jwt_secret_buildathon";
+// Never sign device credentials with a published, predictable fallback. An
+// ephemeral key keeps local development usable and invalidates tokens on restart.
+const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString("hex");
 const TOKEN_TTL = process.env.TOKEN_TTL_SECONDS ?? "900";
 const codeGenerator = customAlphabet("23456789", 6);
 

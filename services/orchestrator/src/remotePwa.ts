@@ -357,13 +357,20 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
         const item = document.createElement("div");
         item.className = "timeline-item";
         const isSuccess = t.status === "success";
-        item.innerHTML = \`
-          <div class="timeline-dot" style="background: \${isSuccess ? 'var(--green)' : 'var(--cyan)'}"></div>
-          <div>
-            <div style="font-weight: 600; color: #fff;">\${t.action}</div>
-            <div style="font-size: 11px; color: var(--text-muted);">Status: \${t.status}</div>
-          </div>
-        \`;
+        const dot = document.createElement("div");
+        dot.className = "timeline-dot";
+        dot.style.background = isSuccess ? "var(--green)" : "var(--cyan)";
+        const details = document.createElement("div");
+        const action = document.createElement("div");
+        action.style.fontWeight = "600";
+        action.style.color = "#fff";
+        action.textContent = String(t.action ?? "Task");
+        const status = document.createElement("div");
+        status.style.fontSize = "11px";
+        status.style.color = "var(--text-muted)";
+        status.textContent = "Status: " + String(t.status ?? "unknown");
+        details.append(action, status);
+        item.append(dot, details);
         container.appendChild(item);
       });
     }

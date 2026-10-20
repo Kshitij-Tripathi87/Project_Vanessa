@@ -3,7 +3,8 @@ import { eventBus } from "./eventBus.js";
 import { privacyGuard } from "./privacy.js";
 
 export class PermissionGuard {
-  public autonomousMode: boolean = process.env.AUTONOMOUS_MODE !== "false";
+  // High-risk actions require confirmation unless autonomy is explicitly enabled.
+  public autonomousMode: boolean = process.env.AUTONOMOUS_MODE === "true";
 
   // Actions that require explicit user confirmation before executing
   private confirmActions = new Set<string>([
@@ -14,6 +15,9 @@ export class PermissionGuard {
     "system.reboot",
     "file.delete",
     "developer.claude_code.open_autonomous",
+    "terminal.run_command",
+    "tests.run",
+    "claude_code.open",
   ]);
 
   // Session-level granted permissions

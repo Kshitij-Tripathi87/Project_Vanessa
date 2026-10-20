@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { runPowerShell } from "./powershell.js";
 import {
   AgentEvidence,
   AgentResult,
@@ -175,10 +176,14 @@ export class FileAgent implements SpecialistAgent {
       case "file.zip":
       case "project.zip": {
         const sourceDir = params.sourceDir || process.cwd();
-        const zipName = params.zipName || `project_${Date.now()}.zip`;
+        const requestedZipName = path.basename(String(params.zipName || `project_${Date.now()}.zip`));
+        const zipName = requestedZipName.toLowerCase().endsWith(".zip") ? requestedZipName : `${requestedZipName}.zip`;
         const destZip = path.join(os.tmpdir(), zipName);
-        const psCommand = `powershell -NoProfile -Command "Compress-Archive -Path '${sourceDir}\\*' -DestinationPath '${destZip}' -Force"`;
-        await execAsync(psCommand, { timeout: 15000 });
+        await runPowerShell(
+          "Compress-Archive -Path (Join-Path $env:VANESSA_SOURCE '*') -DestinationPath $env:VANESSA_DESTINATION -Force",
+          { VANESSA_SOURCE: sourceDir, VANESSA_DESTINATION: destZip },
+          15000
+        );
         return {
           agentId: this.id,
           status: "completed",

@@ -1,7 +1,4 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-
-const execAsync = promisify(exec);
+import { runPowerShell } from "./powershell.js";
 
 export class SystemAgent {
   async execute(action: string, params: Record<string, any> = {}): Promise<any> {
@@ -46,10 +43,8 @@ export class SystemAgent {
   private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string }> {
     // Windows PowerShell command to restart Wi-Fi adapter
     // Note: requires administrative privileges on Windows 11. If not elevated, falls back gracefully with status.
-    const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1 | ForEach-Object { Restart-NetAdapter -Name $_.Name -Confirm:$false; Write-Output ('Restarted ' + $_.Name) }"`;
-    
     try {
-      const { stdout } = await execAsync(psCommand, { timeout: 10000 });
+      const { stdout } = await runPowerShell("Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1 | ForEach-Object { Restart-NetAdapter -Name $_.Name -Confirm:$false; Write-Output ('Restarted ' + $_.Name) }", {}, 10000);
       const adapterName = stdout.trim() || "Wi-Fi";
       return {
         success: true,
@@ -68,8 +63,7 @@ export class SystemAgent {
 
   private async wifiStatus(): Promise<{ success: boolean; status: string; spokenSummary: string }> {
     try {
-      const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -ExpandProperty Status -First 1"`;
-      const { stdout } = await execAsync(psCommand, { timeout: 4000 });
+      const { stdout } = await runPowerShell("Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -ExpandProperty Status -First 1", {}, 4000);
       const status = stdout.trim() || "Up";
       return {
         success: true,
@@ -89,8 +83,7 @@ export class SystemAgent {
     const stateStr = enable ? "On" : "Off";
     try {
       // Toggle Windows radio API or device service
-      const psCommand = `powershell -NoProfile -Command "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'}; if ($bt) { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::${stateStr}).GetAwaiter().GetResult(); 'Bluetooth state set to ${stateStr}' } else { 'Bluetooth radio ready' }"`;
-      await execAsync(psCommand, { timeout: 5000 });
+      await runPowerShell(`[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'}; if ($bt) { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::${stateStr}).GetAwaiter().GetResult(); 'Bluetooth state set to ${stateStr}' } else { 'Bluetooth radio ready' }`, {}, 5000);
     } catch {
       // Graceful fallback for non-WinRT or environments without Bluetooth radio
     }
@@ -104,8 +97,7 @@ export class SystemAgent {
     // Windows volume setting via PowerShell NirCmd or COM
     const clampedLevel = Math.max(0, Math.min(100, level));
     try {
-      const psCommand = `powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; 1..5 | ForEach-Object { $wsh.SendKeys([char]175) }"`;
-      await execAsync(psCommand, { timeout: 3000 });
+      await runPowerShell("$wsh = New-Object -ComObject WScript.Shell; 1..5 | ForEach-Object { $wsh.SendKeys([char]175) }", {}, 3000);
     } catch {
       // Silent fail
     }
@@ -113,9 +105,8 @@ export class SystemAgent {
   }
 
   private async openApp(appName: string): Promise<{ success: boolean; appName: string; error?: string }> {
-    const cmd = `powershell -NoProfile -Command "Start-Process '${appName}'"`;
     try {
-      await execAsync(cmd, { timeout: 5000 });
+      await runPowerShell("Start-Process -FilePath $env:VANESSA_APP", { VANESSA_APP: appName }, 5000);
       return { success: true, appName };
     } catch (err: any) {
       return { success: false, appName, error: err.message };
@@ -123,9 +114,8 @@ export class SystemAgent {
   }
 
   private async closeApp(appName: string): Promise<{ success: boolean; appName: string; error?: string }> {
-    const cmd = `powershell -NoProfile -Command "Stop-Process -Name '${appName}' -Force -ErrorAction SilentlyContinue"`;
     try {
-      await execAsync(cmd, { timeout: 5000 });
+      await runPowerShell("Stop-Process -Name $env:VANESSA_APP -Force -ErrorAction SilentlyContinue", { VANESSA_APP: appName }, 5000);
       return { success: true, appName };
     } catch (err: any) {
       return { success: false, appName, error: err.message };

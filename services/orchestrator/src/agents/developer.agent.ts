@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { runPowerShell } from "./powershell.js";
 
 const execAsync = promisify(exec);
 
@@ -11,7 +12,10 @@ export class DeveloperAgent {
       case "vscode.open_project": {
         const projectPath = params.path || process.cwd();
         try {
-          await execAsync(`powershell -NoProfile -Command "Start-Process '${this.vsCodePath}' -ArgumentList '${projectPath}'"`);
+          await runPowerShell(
+            "Start-Process -FilePath $env:VANESSA_VSCODE -ArgumentList $env:VANESSA_PROJECT",
+            { VANESSA_VSCODE: this.vsCodePath, VANESSA_PROJECT: projectPath }
+          );
           return { success: true, message: `Opened VS Code at ${projectPath}` };
         } catch (err: any) {
           return { success: false, error: `Could not launch VS Code: ${err.message}` };

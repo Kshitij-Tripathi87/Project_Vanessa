@@ -13,7 +13,9 @@ const HOST = process.env.HOST || "127.0.0.1";
 export async function createVoiceAgentServer() {
   const fastify = Fastify({ logger: false });
 
-  await fastify.register(cors, { origin: true });
+  await fastify.register(cors, {
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+  });
   await fastify.register(websocket);
 
   // Health check
@@ -33,6 +35,11 @@ export async function createVoiceAgentServer() {
 
   // WhisperFlow-compatible Real-time WebSocket streaming endpoint
   fastify.get("/ws", { websocket: true }, (socket, req) => {
+    const origin = req.headers.origin;
+    if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
+      socket.close(1008, "Origin not allowed");
+      return;
+    }
     const session = new VanessaVoiceSession({
       handlers: {
         onStateChange: (state) => {

@@ -1,5 +1,4 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { runPowerShell } from "./powershell.js";
 import {
   AgentEvidence,
   AgentResult,
@@ -7,8 +6,6 @@ import {
   AgentTask,
   SpecialistAgent,
 } from "@vanessa/shared";
-
-const execAsync = promisify(exec);
 
 export class BrowserAgent implements SpecialistAgent {
   id = "browser";
@@ -154,12 +151,12 @@ export class BrowserAgent implements SpecialistAgent {
     if (process.env.FAKE === "1") {
       return { success: true, url };
     }
-    const psCommand = `powershell -NoProfile -Command "Start-Process '${this.edgePath}' -ArgumentList '${url}'"`;
+    const psCommand = "$url = $env:VANESSA_URL; Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList $url";
     try {
-      await execAsync(psCommand, { timeout: 10000 });
+      await runPowerShell(psCommand, { VANESSA_BROWSER: this.edgePath, VANESSA_URL: url }, 10000);
       return { success: true, url };
     } catch {
-      await execAsync(`powershell -NoProfile -Command "Start-Process '${url}'"`);
+      await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: url }, 10000);
       return { success: true, url };
     }
   }

@@ -1,8 +1,5 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { runPowerShell } from "./powershell.js";
 import { fileAgent } from "./file.agent.js";
-
-const execAsync = promisify(exec);
 
 export class CloudAgent {
   async execute(action: string, params: Record<string, any> = {}): Promise<any> {
@@ -13,7 +10,7 @@ export class CloudAgent {
         const body = params.body || "";
         const composeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipient)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         try {
-          await execAsync(`powershell -NoProfile -Command "Start-Process '${composeUrl}'"`);
+          await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: composeUrl });
         } catch {
           // Graceful fallback
         }
@@ -50,7 +47,7 @@ export class CloudAgent {
           ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
           : `https://wa.me/?text=${encodeURIComponent(text)}`;
         try {
-          await execAsync(`powershell -NoProfile -Command "Start-Process '${waUrl}'"`);
+          await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: waUrl });
         } catch {
           // Graceful fallback
         }
