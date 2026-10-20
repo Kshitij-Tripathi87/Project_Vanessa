@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 # Ensure src is on sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent
