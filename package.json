@@ -1,0 +1,20 @@
+{
+  "name": "vanessa-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vanessa: Voice-native AI control layer for personal computers",
+  "scripts": {
+    "dev": "concurrently -n \"RELAY,ORCHESTRATOR,DESKTOP\" -c \"blue,cyan,magenta\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/desktop dev\"",
+    "dev:relay": "pnpm --filter @vanessa/relay dev",
+    "dev:orchestrator": "pnpm --filter @vanessa/orchestrator dev",
+    "dev:desktop": "pnpm --filter @vanessa/desktop dev",
+    "build": "pnpm -r run build",
+    "test:scenarios": "pnpm --filter @vanessa/orchestrator test:scenarios",
+    "lint": "pnpm -r run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "packageManager": "pnpm@11.24.0"
+}

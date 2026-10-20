@@ -1,0 +1,12 @@
+{
+  "venvPath": "c:\\Users\\21330\\Documents\\Project_Vanessa",
+  "venv": ".venv-voice",
+  "include": [
+    "services/voice-agent",
+    "OpenJarvis"
+  ],
+  "extraPaths": [
+    "c:\\Users\\21330\\Documents\\Project_Vanessa\\.venv-voice\\Lib\\site-packages",
+    "./.venv-voice/Lib/site-packages"
+  ]
+}

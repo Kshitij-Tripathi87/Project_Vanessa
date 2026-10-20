@@ -1,0 +1,66 @@
+# OpenJarvis Configuration — NVIDIA NIM Brain with Full System Access
+
+# ═══════════════════════════════════════════════════════════════
+# PILLAR 1: Intelligence — The Model (NVIDIA NIM)
+# ═══════════════════════════════════════════════════════════════
+[intelligence]
+default_model = "meta/llama-3.3-70b-instruct"
+fallback_model = "nvidia/llama-3.1-nemotron-70b-instruct"
+preferred_engine = "cloud"
+provider = "cloud"
+temperature = 0.2
+max_tokens = 4096
+top_p = 0.9
+
+[engine]
+default = "cloud"
+
+# ═══════════════════════════════════════════════════════════════
+# PILLAR 2: Agent — Autonomous Execution Harness
+# ═══════════════════════════════════════════════════════════════
+[agent]
+default_agent = "native_openhands"
+max_turns = 30
+tools = "shell_exec,file_read,file_write,apply_patch,git_status,git_diff,git_commit,git_log,browser,repl,code_interpreter,web_search,http_request,memory_store,memory_retrieve,memory_manage,think,queue_action,execute_pending_actions,get_weather"
+objective = "Autonomous agent with full access to Windows system, files, git, browser, and scheduled daily tasks"
+context_from_memory = true
+
+# ═══════════════════════════════════════════════════════════════
+# PILLAR 3: Security & Permissions — Full System Access
+# ═══════════════════════════════════════════════════════════════
+[security]
+enabled = false
+enforce_tool_confirmation = false
+local_tool_bypass = true
+ssrf_protection = false
+
+# ═══════════════════════════════════════════════════════════════
+# PILLAR 4: Tools & Browser Control
+# ═══════════════════════════════════════════════════════════════
+[tools.browser]
+headless = false
+timeout_ms = 30000
+
+[tools.storage]
+default_backend = "sqlite"
+db_path = "~/.openjarvis/memory.db"
+
+[tools.mcp]
+enabled = true
+
+# ═══════════════════════════════════════════════════════════════
+# PILLAR 5: Everyday Scheduled Tasks
+# ═══════════════════════════════════════════════════════════════
+[scheduler]
+enabled = true
+poll_interval = 30
+db_path = "~/.openjarvis/scheduler.db"
+
+[proactive]
+enabled = true
+schedule = "0 9 * * *"    # Everyday at 9:00 AM
+timezone = "auto"
+
+[server]
+host = "127.0.0.1"
+port = 8000

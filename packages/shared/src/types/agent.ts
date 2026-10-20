@@ -1,0 +1,151 @@
+export type AgentName =
+  | "memory"
+  | "coding"
+  | "it_ops"
+  | "knowledge"
+  | "testing"
+  | "windows"
+  | "browser"
+  | "files"
+  | "system"
+  | "developer"
+  | "cloud"
+  | "vanessa"
+  | "jarvis"
+  | "openjarvis"
+  | "incident";
+
+export type AgentStatus =
+  | "completed"
+  | "partial"
+  | "failed"
+  | "blocked"
+  | "awaiting_approval";
+
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "awaiting_approval"
+  | "success"
+  | "failed"
+  | "cancelled";
+
+export type RiskLevel = "low" | "medium" | "high";
+
+export type PermissionStatus = "allowed" | "confirm" | "blocked";
+
+export interface AgentEvidence {
+  description: string;
+  source?: string;
+  timestamp?: string;
+  confidence?: number;
+  data?: unknown;
+}
+
+export interface AgentVerification {
+  passed: boolean;
+  details: string;
+}
+
+export interface AgentTask {
+  taskId: string;
+  parentTaskId?: string;
+  objective: string;
+  action?: string;
+  params?: Record<string, any>;
+  context?: unknown[];
+  allowedTools: string[];
+  dependsOn: string[];
+  acceptanceCriteria: string[];
+  deadlineMs?: number;
+}
+
+export interface Task {
+  id: string;
+  parentId?: string;
+  agent: AgentName;
+  action: string;
+  params: Record<string, any>;
+  dependsOn: string[];
+  status: TaskStatus;
+  risk?: RiskLevel;
+  result?: any;
+  error?: string;
+  requestId?: string;
+  spokenSummary?: string;
+  allowedTools?: string[];
+  acceptanceCriteria?: string[];
+  evidence?: AgentEvidence[];
+  artifacts?: string[];
+  verification?: AgentVerification;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface Plan {
+  id: string;
+  command: string;
+  source?: "voice" | "desktop" | "phone";
+  intent?: "single_task" | "multi_task" | string;
+  risk: RiskLevel;
+  tasks: Task[];
+  createdAt?: number;
+  completedAt?: number;
+}
+
+export interface AgentMessage {
+  from: AgentName;
+  to: AgentName | "orchestrator";
+  type: "task_result" | "request_context" | "request_permission" | "handoff" | "error";
+  taskId: string;
+  payload: unknown;
+}
+
+export interface AgentRunContext {
+  planId?: string;
+  command?: string;
+  workingMemory?: Record<string, any>;
+  task?: Task;
+}
+
+export interface AgentResult {
+  taskId?: string;
+  agentId?: string;
+  status?: AgentStatus;
+  success: boolean;
+  summary?: string;
+  spokenSummary: string;
+  evidence?: AgentEvidence[];
+  artifacts?: string[];
+  verification?: AgentVerification;
+  error?: string;
+  data?: unknown;
+  needsContext?: {
+    from: "memory" | "browser" | "files" | "system";
+    query: string;
+  };
+  requiresApproval?: {
+    title: string;
+    detail: string;
+  };
+}
+
+export interface SpecialistAgent {
+  id: string;
+  capabilities: string[];
+  allowedTools: string[];
+  execute(
+    actionOrTask: string | AgentTask,
+    paramsOrContext?: Record<string, any> | AgentRunContext,
+    context?: AgentRunContext
+  ): Promise<AgentResult>;
+}
+
+export interface CapabilityAgent {
+  name: string;
+  execute: (
+    action: string,
+    params: Record<string, any>,
+    context?: AgentRunContext
+  ) => Promise<AgentResult | any>;
+}

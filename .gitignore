@@ -1,0 +1,60 @@
+# Environment files - NEVER commit secrets
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!.env.example
+
+# Credentials and keys
+*.pem
+*.key
+*.cert
+
+# Dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Builds & Outputs
+dist/
+**/dist/
+build/
+**/build/
+out/
+**/out/
+.cache/
+
+# Logs
+*.log
+**/logs/
+logs/
+
+# Python & Rust virtual environments and artifacts
+.venv/
+.venv*/
+**/.venv/
+**/.venv*/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+target/
+**/target/
+
+# Media, database and temporary artifacts
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.sqlite
+*.sqlite3
+*.db
+**/data/*.db
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp

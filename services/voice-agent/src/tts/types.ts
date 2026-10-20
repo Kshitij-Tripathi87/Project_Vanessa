@@ -1,0 +1,16 @@
+export interface TtsOutputChunk {
+  chunkIndex: number;
+  text: string;
+  isFinal: boolean;
+  audioBase64?: string;
+  format?: "mp3" | "pcm_s16le";
+}
+
+export interface VoiceTtsAdapter {
+  streamSpeech(
+    text: string,
+    onAudioChunk: (chunk: TtsOutputChunk) => void,
+    signal?: AbortSignal
+  ): Promise<void>;
+  abort(): void;
+}

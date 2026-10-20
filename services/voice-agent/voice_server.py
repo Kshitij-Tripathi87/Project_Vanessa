@@ -1,0 +1,159 @@
+import asyncio
+import json
+import logging
+import os
+import sys
+import numpy as np
+import websockets  # type: ignore
+from faster_whisper import WhisperModel  # type: ignore
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [VoiceServer] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("VoiceServer")
+
+HOST = os.getenv("VOICE_HOST", os.getenv("WHISPER_HOST", "127.0.0.1"))
+PORT = int(os.getenv("VOICE_PORT", os.getenv("WHISPER_PORT", "4505")))
+MODEL_SIZE = os.getenv("VOICE_MODEL", os.getenv("WHISPER_MODEL", "tiny.en"))
+DEVICE = os.getenv("VOICE_DEVICE", os.getenv("WHISPER_DEVICE", "cpu"))
+COMPUTE_TYPE = os.getenv("VOICE_COMPUTE_TYPE", os.getenv("WHISPER_COMPUTE_TYPE", "int8"))
+
+logger.info(f"Loading voice ASR model '{MODEL_SIZE}' on {DEVICE} ({COMPUTE_TYPE})...")
+model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+logger.info("Voice ASR model loaded successfully and ready.")
+
+SAMPLE_RATE = 16000
+MIN_TRANSCRIBE_SAMPLES = int(0.4 * SAMPLE_RATE)  # at least 400ms to transcribe
+
+async def handle_client(websocket):
+    client_ip = websocket.remote_address
+    logger.info(f"New client connected: {client_ip}")
+
+    audio_buffer = np.zeros(0, dtype=np.float32)
+    last_partial_time = asyncio.get_event_loop().time()
+    last_speech_time = asyncio.get_event_loop().time()
+    last_emitted_text = ""
+
+    try:
+        async for message in websocket:
+            now = asyncio.get_event_loop().time()
+
+            if isinstance(message, bytes):
+                # Incoming 16-bit 16kHz PCM audio chunk
+                if len(message) % 2 != 0:
+                    message = message[:-1]
+                if len(message) > 0:
+                    pcm_chunk = np.frombuffer(message, dtype=np.int16).astype(np.float32) / 32768.0
+                    audio_buffer = np.concatenate((audio_buffer, pcm_chunk))
+
+                    # Track active speech energy
+                    is_active_speech = np.max(np.abs(pcm_chunk)) >= 0.020
+                    if is_active_speech:
+                        last_speech_time = now
+
+                    # Cap maximum buffer to 10 seconds
+                    if len(audio_buffer) > 10 * SAMPLE_RATE:
+                        audio_buffer = audio_buffer[-10 * SAMPLE_RATE:]
+
+                # Periodically transcribe partial audio only when speech was recent (< 0.5s)
+                has_enough = len(audio_buffer) >= int(0.5 * SAMPLE_RATE)
+                is_recent_speech = (now - last_speech_time) < 0.50
+                if has_enough and is_recent_speech and (now - last_partial_time) > 0.70:
+                    try:
+                        segments, info = model.transcribe(
+                            audio_buffer,
+                            beam_size=1,
+                            language="en",
+                            condition_on_previous_text=False,
+                            vad_filter=False,
+                        )
+                        text = " ".join([seg.text.strip() for seg in segments]).strip()
+                        if text and text != last_emitted_text:
+                            last_emitted_text = text
+                            logger.info(f"Partial Transcript: '{text}'")
+                            await websocket.send(json.dumps({
+                                "text": text,
+                                "is_final": False,
+                                "language": info.language,
+                                "confidence": 0.9,
+                            }))
+                    except Exception as err:
+                        logger.debug(f"Partial transcription error: {err}")
+                    finally:
+                        last_partial_time = asyncio.get_event_loop().time()
+
+                # Auto-finalize turn if user spoke and then paused for > 850ms
+                if last_emitted_text and (now - last_speech_time) > 0.85:
+                    logger.info(f"Silence detected after speech ({now - last_speech_time:.2f}s). Auto-finalizing turn: '{last_emitted_text}'")
+                    await websocket.send(json.dumps({
+                        "text": last_emitted_text,
+                        "is_final": True,
+                        "language": "en",
+                        "confidence": 0.95,
+                    }))
+                    audio_buffer = np.zeros(0, dtype=np.float32)
+                    last_emitted_text = ""
+
+                # Clear buffer if idle silence for > 1.8s
+                if len(audio_buffer) > 0 and (now - last_speech_time) > 1.80 and not last_emitted_text:
+                    audio_buffer = np.zeros(0, dtype=np.float32)
+
+            elif isinstance(message, str):
+                try:
+                    data = json.loads(message)
+                    msg_type = data.get("type")
+
+                    if msg_type in ("finalize", "final"):
+                        dur = len(audio_buffer) / SAMPLE_RATE
+                        logger.info(f"Finalize received. Buffer duration: {dur:.2f}s")
+                        final_text = ""
+                        if len(audio_buffer) >= int(0.3 * SAMPLE_RATE):
+                            try:
+                                segments, info = model.transcribe(
+                                    audio_buffer,
+                                    beam_size=1,
+                                    language="en",
+                                    condition_on_previous_text=False,
+                                    vad_filter=False,
+                                )
+                                final_text = " ".join([seg.text.strip() for seg in segments]).strip()
+                            except Exception as err:
+                                logger.error(f"Transcribe error on finalize: {err}")
+
+                            logger.info(f"Final Transcript Result: '{final_text}'")
+                            if final_text:
+                                await websocket.send(json.dumps({
+                                    "text": final_text,
+                                    "is_final": True,
+                                    "language": "en",
+                                    "confidence": 0.95,
+                                }))
+                        # Clear buffer after turn finalization
+                        audio_buffer = np.zeros(0, dtype=np.float32)
+                        last_emitted_text = ""
+
+                    elif msg_type in ("reset", "activate"):
+                        logger.info("Session reset/activate received.")
+                        audio_buffer = np.zeros(0, dtype=np.float32)
+                        last_emitted_text = ""
+
+                except json.JSONDecodeError:
+                    pass
+
+    except websockets.exceptions.ConnectionClosed:
+        logger.info(f"Client disconnected: {client_ip}")
+    except Exception as e:
+        logger.error(f"Error handling client: {e}")
+
+async def main():
+    logger.info(f"Starting Voice ASR WebSocket server on ws://{HOST}:{PORT}")
+    async with websockets.serve(handle_client, HOST, PORT, max_size=10 * 1024 * 1024):
+        await asyncio.Future()  # run forever
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Voice server stopped by user.")
