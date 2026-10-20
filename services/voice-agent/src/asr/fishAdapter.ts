@@ -7,9 +7,11 @@ export interface FishAsrOptions {
   url?: string;
   model?: string;
   sampleRate?: number;
+  allowFallback?: boolean;
 }
 
 export class FishAsrAdapter implements AsrAdapter {
+  name = "fish";
   private ws: WebSocket | null = null;
   private handlers?: {
     onPartial: (result: TranscriptResult) => void;
@@ -19,17 +21,21 @@ export class FishAsrAdapter implements AsrAdapter {
   private isReconnecting = false;
   private fallbackAdapter: VoiceAdapter | null = null;
   private useFallback = false;
+  private allowFallback = true;
   private queuedFrames: Buffer[] = [];
   private apiKey: string;
   private url: string;
   private model: string;
   private sampleRate: number;
+  private isSessionActive = false;
+  private idleTimer: NodeJS.Timeout | null = null;
 
   constructor(options?: FishAsrOptions) {
     this.apiKey = options?.apiKey || process.env.FISH_API_KEY || "";
     this.url = options?.url || process.env.FISH_ASR_URL || "wss://api.fish.audio/v1/asr/realtime";
     this.model = options?.model || process.env.FISH_ASR_MODEL || "transcribe-stream-1";
     this.sampleRate = options?.sampleRate || 16000;
+    this.allowFallback = options?.allowFallback ?? (process.env.VOICE_ALLOW_FALLBACK !== "false");
   }
 
   async connect(handlers: {
@@ -39,9 +45,19 @@ export class FishAsrAdapter implements AsrAdapter {
     this.handlers = handlers;
 
     if (!this.apiKey || !this.apiKey.startsWith("sk-fish-")) {
-      console.warn("[FishAsrAdapter] Valid Fish API key not configured. Using local Voice ASR fallback.");
-      this.initFallback();
-      return;
+      if (this.allowFallback) {
+        this.name = "faster-whisper (fallback)";
+        console.warn(
+          "[FishAsrAdapter] Fish Audio ASR requested, but FISH_API_KEY is not configured or invalid (must start with 'sk-fish-'). " +
+          "Fallback policy permits local ASR: engaging faster-whisper. Active provider: " + this.name
+        );
+        this.initFallback();
+        return;
+      } else {
+        const errorMsg = "[FishAsrAdapter] Configuration Error: Fish Audio is the designated ASR provider, but FISH_API_KEY is missing or invalid. Fallback is disabled.";
+        console.error(errorMsg);
+        throw new Error(errorMsg);
+      }
     }
 
     this.initWebSocket();
@@ -174,7 +190,44 @@ export class FishAsrAdapter implements AsrAdapter {
     }
   }
 
+  activateStream(durationMs = 25000): void {
+    this.isSessionActive = true;
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+
+    if (!this.useFallback && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) {
+      this.initWebSocket();
+    }
+
+    this.idleTimer = setTimeout(() => {
+      this.deactivateStream();
+    }, durationMs);
+  }
+
+  deactivateStream(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    this.isSessionActive = false;
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log("[FishAsrAdapter] Idle timeout reached. Closing Fish Realtime ASR socket to prevent session charges ($0.36/hr).");
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+  }
+
   close(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    this.isSessionActive = false;
     if (this.ws) {
       try {
         this.ws.close();

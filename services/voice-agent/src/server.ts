@@ -25,6 +25,8 @@ export async function createVoiceAgentServer() {
       sampleRate: 16000,
       chunkDurationMs: 20,
       chunkSamples: 320,
+      defaultAsr: process.env.VOICE_ASR_PROVIDER || "fish",
+      defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish",
       timestamp: Date.now(),
     };
   });

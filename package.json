@@ -4,16 +4,20 @@
   "private": true,
   "description": "Vanessa: Voice-native AI control layer for personal computers",
   "scripts": {
-    "dev": "concurrently -n \"RELAY,ORCHESTRATOR,DESKTOP\" -c \"blue,cyan,magenta\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/desktop dev\"",
+    "dev": "concurrently -n \"RELAY,ORCHESTRATOR,VOICE,DESKTOP\" -c \"blue,cyan,yellow,magenta\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/voice-agent dev\" \"pnpm --filter @vanessa/desktop dev\"",
     "dev:relay": "pnpm --filter @vanessa/relay dev",
     "dev:orchestrator": "pnpm --filter @vanessa/orchestrator dev",
+    "dev:voice": "pnpm --filter @vanessa/voice-agent dev",
     "dev:desktop": "pnpm --filter @vanessa/desktop dev",
+    "readiness": "pnpm --filter @vanessa/orchestrator exec tsx ../../scripts/check_readiness.ts",
     "build": "pnpm -r run build",
     "test:scenarios": "pnpm --filter @vanessa/orchestrator test:scenarios",
     "test:skills": "pnpm --filter @vanessa/orchestrator test:skills",
     "test:drills": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/failureDrills.test.ts",
+    "test:drills:process": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/processFailureDrills.test.ts",
+    "test:checkout:gate": "pnpm --filter @vanessa/orchestrator exec tsx src/tests/checkoutIncidentGate.test.ts",
     "test:voice:real": ".venv-voice\\Scripts\\python.exe scripts/test_real_voice_pipeline.py test_wifi.wav",
-    "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm --filter @vanessa/voice-agent test",
+    "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm test:drills:process && pnpm --filter @vanessa/voice-agent test",
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {

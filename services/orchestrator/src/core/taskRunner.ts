@@ -54,6 +54,7 @@ export function triggerKillSwitch() {
       task.completedAt = Date.now();
       resourceLockManager.releaseAllForTask(task.id);
       memoryPalace.recordTaskCheckpoint(task, task.parentId);
+      eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
       eventBus.emitEvent("task:update", task);
     }
   }
@@ -309,6 +310,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       task.lifecycleState = "cancelled";
       task.error = "Cancelled by kill switch";
       memoryPalace.recordTaskCheckpoint(task, plan.id);
+      eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
       eventBus.emitEvent("task:update", task);
       return;
     }
@@ -318,11 +320,13 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     task.startedAt = Date.now();
     memoryPalace.recordTaskCheckpoint(task, plan.id);
     eventBus.emitEvent("task:update", task);
+    eventBus.emitEvent("agent.started", { taskId: task.id, agentId: task.agent, action: task.action, startedAt: task.startedAt });
 
     // Resolve dynamic parameter dependencies from completed tasks: "$<taskId>.result.<path>"
     const allTaskList = [...tasks.values()];
     const resolvedParams = resolveParams(task.params, allTaskList);
     task.params = resolvedParams;
+    eventBus.emitEvent("tool.started", { taskId: task.id, agentId: task.agent, tool: task.action, params: resolvedParams });
 
     const permission = permissionGuard.check(task);
     if (permission === "blocked") {
@@ -451,13 +455,35 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         task.evidence = [...(task.evidence || []), { description: verdict.proof }];
       }
 
+      // Structured execution events
+      eventBus.emitEvent("tool.completed", {
+        taskId: task.id,
+        agentId: task.agent,
+        tool: task.action,
+        exitCode: task.verification?.exitCode ?? (isVerified ? 0 : 1),
+      });
+
+      eventBus.emitEvent("verification.completed", {
+        taskId: task.id,
+        agentId: task.agent,
+        verification: task.verification,
+        passed: isVerified,
+      });
+
       if (!isVerified) {
         task.status = "failed";
         task.lifecycleState = "failed";
         task.error = task.error || "Verification postconditions failed.";
+        eventBus.emitEvent("task.failed", { taskId: task.id, agentId: task.agent, error: task.error });
       } else {
         task.status = "success";
         task.lifecycleState = "succeeded";
+        eventBus.emitEvent("agent.completed", {
+          taskId: task.id,
+          agentId: task.agent,
+          outcome: "succeeded",
+          spokenSummary: task.spokenSummary,
+        });
       }
       task.completedAt = Date.now();
       memoryPalace.recordTaskCheckpoint(task, plan.id);
@@ -473,6 +499,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         exitCode: 1,
         outcome: "failed",
       };
+      eventBus.emitEvent("task.failed", { taskId: task.id, agentId: task.agent, error: task.error });
       memoryPalace.recordTaskCheckpoint(task, plan.id);
     } finally {
       for (const l of locks) {

@@ -77,7 +77,14 @@ export type EventType =
   | "audit:log"
   | "system:status"
   | "voice:state"
-  | "agent:message";
+  | "agent:message"
+  | "agent.started"
+  | "tool.started"
+  | "tool.completed"
+  | "agent.completed"
+  | "verification.completed"
+  | "task.failed"
+  | "task.cancelled";
 
 export interface VanessaEvent<T = any> {
   type: EventType;

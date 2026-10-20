@@ -6,11 +6,14 @@ export type TranscriptResult = {
 };
 
 export interface AsrAdapter {
+  name?: string;
   connect(handlers: {
     onPartial: (result: TranscriptResult) => void;
     onFinal: (result: TranscriptResult) => void;
   }): Promise<void> | void;
   sendAudioChunk(pcm: Int16Array): void;
   finalizeTurn?(): void;
+  activateStream?(): void;
+  deactivateStream?(): void;
   close(): void;
 }

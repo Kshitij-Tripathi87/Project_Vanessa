@@ -78,6 +78,17 @@ fastify.get("/voice/stream", { websocket: true }, (socket, req) => {
   voiceStreamServer.handleConnection(socket);
 });
 
+// Health check endpoint
+fastify.get("/health", async () => {
+  return {
+    status: "online",
+    service: "vanessa-orchestrator",
+    version: "0.3.0",
+    system: orchestrator.getSystemStatus(),
+    timestamp: Date.now(),
+  };
+});
+
 // REST Endpoints
 fastify.post("/api/execute", async (request, reply) => {
   const body = request.body as { command: string; language?: string };

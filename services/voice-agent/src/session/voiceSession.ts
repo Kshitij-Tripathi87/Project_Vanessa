@@ -49,7 +49,7 @@ export class VanessaVoiceSession {
   }) {
     this.handlers = options?.handlers || {};
 
-    const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "voice";
+    const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
     if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
@@ -58,16 +58,24 @@ export class VanessaVoiceSession {
       this.asr = new VoiceAdapter();
     }
 
-    const ttsType = options?.ttsProvider || (process.env.VOICE_PROVIDER as any) || "elevenlabs";
+    const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
     if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
     } else {
       this.tts = new ElevenLabsTtsAdapter();
     }
+    console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
   }
 
   setHandlers(handlers: VoiceSessionHandlers): void {
     this.handlers = { ...this.handlers, ...handlers };
+  }
+
+  getProviderInfo(): { asr: string; tts: string } {
+    return {
+      asr: (this.asr as any).name || (this.asr instanceof FishAsrAdapter ? "fish" : "voice"),
+      tts: this.tts instanceof FishTtsAdapter ? "fish" : "elevenlabs",
+    };
   }
 
   async start(): Promise<void> {
@@ -79,7 +87,7 @@ export class VanessaVoiceSession {
         // Check if wake word activated session
         const wakeCheck = this.wakeWord.processTranscript(result.text);
         if (wakeCheck.detected) {
-          this.setState("listening");
+          this.activateSession(25000);
           this.handlers.onHudUpdate?.({ state: "listening", transcript: wakeCheck.cleanedText });
         }
       },
@@ -94,6 +102,7 @@ export class VanessaVoiceSession {
 
   activateSession(durationMs = 25000): void {
     this.wakeWord.touchActiveSession(durationMs);
+    this.asr.activateStream?.(durationMs);
     this.setState("listening");
     this.turnDetector.reset();
     console.log(`[VanessaVoiceSession] Session explicitly activated for ${durationMs}ms`);

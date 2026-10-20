@@ -26,6 +26,15 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/health", (req, res) => {
+  res.json({
+    status: "online",
+    service: "vanessa-relay",
+    port: Number(process.env.PORT ?? 4400),
+    timestamp: Date.now(),
+  });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
