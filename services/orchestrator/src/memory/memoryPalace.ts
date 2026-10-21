@@ -41,6 +41,10 @@ export class MemoryPalace {
   }
 
   private initSchema(): void {
+    try {
+      this.db.exec("PRAGMA journal_mode = WAL;");
+      this.db.exec("PRAGMA busy_timeout = 5000;");
+    } catch {}
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS memory_palace (
         id TEXT PRIMARY KEY,

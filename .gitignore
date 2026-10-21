@@ -51,7 +51,8 @@ target/
 *.sqlite
 *.sqlite3
 *.db
-**/data/*.db
+**/data/
+data/
 
 # OS & Editor
 .DS_Store

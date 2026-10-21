@@ -12,7 +12,7 @@ async function runDemo() {
   // 1. Health check
   console.log("⚡ [1/5] Checking Vanessa Orchestrator Status...");
   const statusRes = await fetch(`${BASE_URL}/api/status`);
-  const status = await statusRes.json();
+  const status: any = await statusRes.json();
   console.log("  • Status: ONLINE (Port 4319)");
   console.log(`  • Platform: ${status.platform}`);
   console.log(`  • Active Voice Provider: ${status.activeVoiceProvider}\n`);
@@ -30,7 +30,7 @@ async function runDemo() {
       command: "Turn on Bluetooth, open Chrome, and create a Buildathon Demo folder.",
     }),
   });
-  const sc2Data = await sc2Res.json();
+  const sc2Data: any = await sc2Res.json();
   console.log(`  • Spoken Response: "${sc2Data.spokenSummary}"`);
   console.log(`  • Plan ID: ${sc2Data.planId} (${sc2Data.plan.tasks.length} Parallel Tasks)`);
   sc2Data.plan.tasks.forEach((t: any) => {
@@ -50,7 +50,7 @@ async function runDemo() {
       command: "Open Claude Code and ask it to build a landing page.",
     }),
   });
-  const sc3Data = await sc3Res.json();
+  const sc3Data: any = await sc3Res.json();
   console.log(`  • Spoken Response: "${sc3Data.spokenSummary}"`);
   sc3Data.plan.tasks.forEach((t: any) => {
     console.log(`    - [${t.agent.toUpperCase()}] ${t.action} (Prompt: "${t.params.prompt}") -> ${t.status}`);
@@ -69,7 +69,7 @@ async function runDemo() {
       command: "Hey Vanessa, my Wi-Fi isn't working—restart the adapter.",
     }),
   });
-  const sc1Data = await sc1Res.json();
+  const sc1Data: any = await sc1Res.json();
   console.log(`  • Safety Gate Interception: Status = ${sc1Data.status}`);
   console.log(`  • Spoken Confirmation Request: "${sc1Data.spokenSummary}"`);
   console.log(`  • Pending Approval Task: ${sc1Data.pendingTasks[0]?.action} (ID: ${sc1Data.pendingTasks[0]?.id})`);
@@ -82,7 +82,7 @@ async function runDemo() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ taskId: sc1Data.pendingTasks[0]?.id }),
   });
-  const approveData = await approveRes.json();
+  const approveData: any = await approveRes.json();
   console.log(`  • Approval Granted! Execution Result:`);
   console.log(`    - Adapter: ${approveData.task.result.adapter}`);
   console.log(`    - Output: ${approveData.task.result.output}`);
@@ -100,7 +100,7 @@ async function runDemo() {
       command: "Upload the report to Drive and send me the link.",
     }),
   });
-  const sc4Data = await sc4Res.json();
+  const sc4Data: any = await sc4Res.json();
   console.log(`  • Intercepted by Safety Gate: ${sc4Data.spokenSummary}`);
   if (sc4Data.pendingTasks.length > 0) {
     const driveApprove = await fetch(`${BASE_URL}/api/approve`, {
@@ -108,14 +108,14 @@ async function runDemo() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ taskId: sc4Data.pendingTasks[0]?.id }),
     });
-    const driveApprovedData = await driveApprove.json();
+    const driveApprovedData: any = await driveApprove.json();
     console.log(`  • Upload Approved -> Result: ${driveApprovedData.task.result.shareLink}`);
   }
 
   // 6. Security Audit Log
   console.log("\n🔒 [Audit Log Stream]:");
   const auditRes = await fetch(`${BASE_URL}/api/audit?limit=5`);
-  const auditEntries = await auditRes.json();
+  const auditEntries: any = await auditRes.json();
   auditEntries.forEach((entry: any) => {
     const time = new Date(entry.timestamp).toLocaleTimeString();
     console.log(`  [${time}] [${entry.payload?.agent || entry.type}] ${entry.payload?.action || ""} (${entry.payload?.status || "event"})`);
