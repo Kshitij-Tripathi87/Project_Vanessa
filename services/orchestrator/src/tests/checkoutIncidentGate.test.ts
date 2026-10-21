@@ -62,6 +62,9 @@ async function runReleaseGate() {
 
       if (res.status !== "success" || !res.plan) {
         console.error(`❌ FAILED (Status: ${res.status})`);
+        if (res.plan) {
+          console.error("Plan tasks:", res.plan.tasks.map((t) => ({ id: t.id, action: t.action, status: t.status, error: t.error })));
+        }
         process.exit(1);
       }
 

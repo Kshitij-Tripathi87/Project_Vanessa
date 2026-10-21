@@ -1,23 +1,12 @@
-import { VoiceProvider } from "./types.js";
 import { fishConfig } from "./fish/fishConfig.js";
-import { ELEVENLABS_CONFIG, ELEVENLABS_TOOLS } from "./elevenlabs/clientTools.js";
 
+/**
+ * Voice service configuration - Fish Audio is the selected provider
+ * ElevenLabs integration has been moved to the dedicated voice-agent service
+ */
 export class VanessaVoiceService {
-  private activeProviderName: string;
-
-  constructor() {
-    this.activeProviderName = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
-  }
-
   getProviderName(): string {
-    return this.activeProviderName;
-  }
-
-  getElevenLabsConfig() {
-    return {
-      config: ELEVENLABS_CONFIG,
-      tools: ELEVENLABS_TOOLS,
-    };
+    return "fish";
   }
 
   getFishConfig() {

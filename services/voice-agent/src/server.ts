@@ -36,8 +36,82 @@ function getProviderReadiness() {
   } as const;
 }
 
+// Fish configuration validation at startup
+function validateFishConfiguration(): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const fishApiKey = process.env.FISH_API_KEY || "";
+  const fishAsrModel = process.env.FISH_ASR_MODEL || "transcribe-stream-1";
+  const fishTtsModel = process.env.FISH_TTS_MODEL || "s2.1-pro-free";
+  const fishTtsVoiceId = process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID || "";
+  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
+  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
+  const allowFallback = process.env.VOICE_ALLOW_FALLBACK === "true";
+  const ttsFallback = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
+
+  if (asrProvider === "fish") {
+    if (!fishApiKey || !fishApiKey.startsWith("sk-fish-")) {
+      if (allowFallback) {
+        warnings.push("Fish ASR: FISH_API_KEY missing or invalid; VOICE_ALLOW_FALLBACK=true enables local Whisper fallback");
+      } else {
+        errors.push("Fish ASR: FISH_API_KEY is required (must start with 'sk-fish-'). Set VOICE_ALLOW_FALLBACK=true to enable local Whisper fallback instead.");
+      }
+    }
+  }
+
+  if (ttsProvider === "fish") {
+    if (!fishApiKey || !fishApiKey.startsWith("sk-fish-")) {
+      if (ttsFallback) {
+        warnings.push("Fish TTS: FISH_API_KEY missing or invalid; VOICE_TTS_FALLBACK_PROVIDER=browser enables browser SpeechSynthesis fallback");
+      } else {
+        errors.push("Fish TTS: FISH_API_KEY is required (must start with 'sk-fish-'). Set VOICE_TTS_FALLBACK_PROVIDER=browser to enable browser SpeechSynthesis fallback instead.");
+      }
+    }
+    if (!fishTtsVoiceId) {
+      if (ttsFallback) {
+        warnings.push("Fish TTS: FISH_TTS_VOICE_ID (or FISH_VANESSA_VOICE_ID) not configured; browser SpeechSynthesis fallback will be used");
+      } else {
+        errors.push("Fish TTS: FISH_TTS_VOICE_ID (or FISH_VANESSA_VOICE_ID) is required for Fish Audio TTS. Set VOICE_TTS_FALLBACK_PROVIDER=browser to use browser fallback instead.");
+      }
+    }
+  }
+
+  // Validate model names
+  if (asrProvider === "fish" && fishAsrModel !== "transcribe-stream-1") {
+    warnings.push(`Fish ASR: FISH_ASR_MODEL="${fishAsrModel}" may not be a valid realtime model. Recommended: "transcribe-stream-1"`);
+  }
+
+  if (ttsProvider === "fish" && !["s2.1-pro", "s2.1-pro-free", "s2.1", "s2.1-free"].includes(fishTtsModel)) {
+    warnings.push(`Fish TTS: FISH_TTS_MODEL="${fishTtsModel}" may not be a valid model. Recommended: "s2.1-pro-free" or "s2.1-pro"`);
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// Export for testing
+export { validateFishConfiguration };
+
 export async function createVoiceAgentServer() {
   const fastify = Fastify({ logger: false });
+
+  // Validate configuration at startup
+  const configValidation = validateFishConfiguration();
+  if (configValidation.errors.length > 0) {
+    console.error("========================================================");
+    console.error("[Vanessa Voice Agent] CONFIGURATION ERRORS:");
+    configValidation.errors.forEach((e) => console.error(`  ✗ ${e}`));
+    console.error("========================================================");
+    if (process.env.VOICE_STRICT_CONFIG === "true") {
+      process.exit(1);
+    }
+  }
+  if (configValidation.warnings.length > 0) {
+    console.warn("========================================================");
+    console.warn("[Vanessa Voice Agent] CONFIGURATION WARNINGS:");
+    configValidation.warnings.forEach((w) => console.warn(`  ⚠ ${w}`));
+    console.warn("========================================================");
+  }
 
   await fastify.register(cors, {
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -47,6 +121,7 @@ export async function createVoiceAgentServer() {
   // Health check
   fastify.get("/health", async () => {
     const readiness = getProviderReadiness();
+    const configValidation = validateFishConfiguration();
     return {
       status: "online",
       service: "vanessa-voice-agent",
@@ -58,6 +133,11 @@ export async function createVoiceAgentServer() {
       defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish",
       readiness: readiness.state,
       providers: readiness.providers,
+      configValidation: {
+        valid: configValidation.valid,
+        errors: configValidation.errors,
+        warnings: configValidation.warnings,
+      },
       timestamp: Date.now(),
     };
   });

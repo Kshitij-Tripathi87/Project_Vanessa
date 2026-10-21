@@ -138,7 +138,7 @@ export class VoiceAdapter implements AsrAdapter {
     }
   }
 
-  activateStream(): void {
+  activateStream(_durationMs?: number): void {
     this.streamActive = true;
     this.shouldReconnect = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

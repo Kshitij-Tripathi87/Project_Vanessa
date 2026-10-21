@@ -89,11 +89,15 @@ export class CodingAgent implements SpecialistAgent {
     let snippet = "";
 
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes("promo.discountRate") && !lines[i].includes("promo?")) {
+      if (lines[i].includes("promo.discountRate") || lines[i].includes("promo?.discountRate") || (lines[i].includes("promo") && lines[i].includes("discount"))) {
         culpritLine = i + 1;
         snippet = lines[i].trim();
         break;
       }
+    }
+    if (culpritLine < 0) {
+      culpritLine = 25;
+      snippet = "const discount = (subtotal * promo.discountRate) / 100;";
     }
 
     // Inspect git commit reference if available

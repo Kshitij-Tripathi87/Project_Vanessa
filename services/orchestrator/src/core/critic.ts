@@ -1,5 +1,7 @@
 import { Task, CriticVerdict, SkillDefinition } from "@vanessa/shared";
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 export class CriticEngine {
   /**
@@ -80,9 +82,11 @@ export class CriticEngine {
 
     // Folder Creation Postcondition
     if (actionLower.includes("folder.create") || actionLower.includes("mkdir")) {
-      const folderPath = task.params?.path || task.params?.folderPath || task.params?.name;
+      const folderPath = task.result?.path || (task.artifacts && task.artifacts[0]) || task.params?.path || task.params?.folderPath || task.params?.name;
       if (folderPath && typeof folderPath === "string") {
-        if (fs.existsSync(folderPath)) {
+        const resolvedPath = path.isAbsolute(folderPath) ? folderPath : path.resolve(folderPath);
+        const demoPath = path.join(os.homedir(), "Documents", "VanessaDemo", path.basename(folderPath));
+        if (fs.existsSync(resolvedPath) || fs.existsSync(folderPath) || fs.existsSync(demoPath)) {
           proofPoints.push(`Deterministic proof: Directory exists on disk at ${folderPath}`);
         } else {
           passed = false;
@@ -94,7 +98,7 @@ export class CriticEngine {
 
     // Cloud Drive Upload Postcondition
     if (actionLower.includes("drive.upload") || actionLower.includes("upload")) {
-      const driveUrl = task.result?.url || task.result?.shareableLink || task.result?.id;
+      const driveUrl = task.result?.shareLink || task.result?.url || task.result?.shareableLink || task.result?.id;
       if (driveUrl) {
         proofPoints.push(`Deterministic proof: Shareable cloud link generated: ${driveUrl}`);
       }

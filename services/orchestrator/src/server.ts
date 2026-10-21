@@ -353,31 +353,58 @@ fastify.get("/remote", async (request, reply) => {
   return reply.type("text/html").send(html);
 });
 
-// Session credential minting for ElevenLabs / voice layer
+// Voice service status - delegates to voice-agent service on port 4500
+// Fish Audio is the selected provider; ElevenLabs integration moved to voice-agent
 fastify.get("/voice/session", async (request, reply) => {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  const agentId = process.env.ELEVENLABS_AGENT_ID;
-
-  if (!apiKey || !agentId) {
-    return reply.send({
-      provider: "mock",
-      ready: true,
-      message: "ElevenLabs credentials not configured. Running in local simulated voice mode.",
-    });
-  }
+  const voiceAgentUrl = process.env.VOICE_AGENT_URL || "http://127.0.0.1:4500";
 
   try {
-    // Generate signed conversation URL or token
-    const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`, {
-      headers: { "xi-api-key": apiKey },
+    const res = await fetch(`${voiceAgentUrl}/health`, {
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(2000),
     });
+
     if (!res.ok) {
-      throw new Error(`ElevenLabs error: ${res.statusText}`);
+      return reply.status(503).send({
+        provider: "fish",
+        ready: false,
+        message: "Voice agent service unavailable. Start @vanessa/voice-agent service.",
+        voiceAgentUrl,
+      });
     }
-    const data = (await res.json()) as any;
-    return reply.send({ provider: "elevenlabs", signedUrl: data.signed_url });
+
+    const health = (await res.json()) as any;
+    return reply.send({
+      provider: "fish",
+      ready: health.readiness === "ready",
+      state: health.readiness,
+      voiceAgentUrl,
+      providers: health.providers,
+      configValidation: health.configValidation,
+      message: health.readiness === "ready"
+        ? "Fish Audio voice service is ready"
+        : health.readiness === "degraded"
+          ? "Voice service degraded - check configuration"
+          : "Voice service unavailable - check Fish Audio credentials and voice-agent service",
+    });
   } catch (err: any) {
-    return reply.status(500).send({ error: err.message });
+    // If voice-agent is not running, return configuration guidance
+    const fishApiKey = process.env.FISH_API_KEY || "";
+    const fishVoiceId = process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID || "";
+
+    return reply.send({
+      provider: "fish",
+      ready: false,
+      message: "Voice agent service not reachable. Start @vanessa/voice-agent service on port 4500.",
+      voiceAgentUrl,
+      configuration: {
+        fishApiKeyConfigured: fishApiKey.startsWith("sk-fish-"),
+        fishVoiceIdConfigured: !!fishVoiceId,
+        asrModel: process.env.FISH_ASR_MODEL || "transcribe-stream-1",
+        ttsModel: process.env.FISH_TTS_MODEL || "s2.1-pro-free",
+      },
+      error: err.message,
+    });
   }
 });
 
