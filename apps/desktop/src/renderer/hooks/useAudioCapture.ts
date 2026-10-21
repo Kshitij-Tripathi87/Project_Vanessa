@@ -59,9 +59,11 @@ export function useAudioCapture() {
   const wsRef = useRef<WebSocket | null>(null);
   const recognitionRef = useRef<any>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const voiceStateRef = useRef(voiceState);
+  voiceStateRef.current = voiceState;
   const pttActiveRef = useRef(false);
   const activatedSocketRef = useRef<WebSocket | null>(null);
-  const stopCaptureRef = useRef<(() => void) | null>(null);
+  const stopCaptureRef = useRef<((preservePlaybackContext?: boolean) => void) | null>(null);
 
   // Audio Playback Queue for low-latency streaming TTS chunks
   const audioQueueRef = useRef<Array<{
@@ -73,6 +75,7 @@ export function useAudioCapture() {
   }>>([]);
   const isPlayingQueueRef = useRef<boolean>(false);
   const activeSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const playbackGenerationRef = useRef(0);
 
   const playNextInQueue = useCallback(async () => {
     if (isPlayingQueueRef.current || audioQueueRef.current.length === 0) {
@@ -80,6 +83,7 @@ export function useAudioCapture() {
     }
 
     const item = audioQueueRef.current.shift()!;
+    const playbackGeneration = playbackGenerationRef.current;
     isPlayingQueueRef.current = true;
 
     // 1. Play synthesized audio buffer if base64 provided
@@ -105,10 +109,12 @@ export function useAudioCapture() {
         source.connect(audioCtx.destination);
 
         source.onended = () => {
+          if (playbackGeneration !== playbackGenerationRef.current) return;
           isPlayingQueueRef.current = false;
           activeSourceNodeRef.current = null;
           if (item.isFinal) {
             setVoiceState("idle");
+            if (!pttActiveRef.current) stopCaptureRef.current?.(true);
           }
           playNextInQueue();
         };
@@ -126,24 +132,30 @@ export function useAudioCapture() {
       utterance.pitch = item.speechPitch || 1.02;
 
       utterance.onend = () => {
+        if (playbackGeneration !== playbackGenerationRef.current) return;
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
+          if (!pttActiveRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
       utterance.onerror = () => {
+        if (playbackGeneration !== playbackGenerationRef.current) return;
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
+          if (!pttActiveRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
       window.speechSynthesis.speak(utterance);
     } else {
+      if (playbackGeneration !== playbackGenerationRef.current) return;
       isPlayingQueueRef.current = false;
       if (item.isFinal) {
         setVoiceState("idle");
+        if (!pttActiveRef.current) stopCaptureRef.current?.(true);
       }
       playNextInQueue();
     }
@@ -151,6 +163,8 @@ export function useAudioCapture() {
 
   // Barge-In interrupt handler: cancels playback immediately and notifies server
   const triggerBargeIn = useCallback(() => {
+    if (pttActiveRef.current) return;
+    playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
     if (activeSourceNodeRef.current) {
@@ -165,6 +179,7 @@ export function useAudioCapture() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: Date.now() }));
     }
+    pttActiveRef.current = true;
     setVoiceState("listening");
   }, [setVoiceState]);
 
@@ -246,6 +261,10 @@ export function useAudioCapture() {
 
           if (msg.type === "transcript_final") {
             setPartialTranscript(msg.text);
+            // Fish may commit before PTT release. Stop cloud streaming while
+            // retaining local capture for an interruption during TTS playback.
+            pttActiveRef.current = false;
+            activatedSocketRef.current = null;
           }
 
           // Low-latency streaming TTS sentence chunk
@@ -324,6 +343,10 @@ export function useAudioCapture() {
       mediaStreamRef.current = stream;
 
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (audioContextRef.current) {
+        await audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
       const audioCtx = new AudioCtx();
       if (audioCtx.state === "suspended") {
         await audioCtx.resume();
@@ -375,7 +398,7 @@ export function useAudioCapture() {
         setAudioLevel(normalized);
 
         // Barge-In: if user starts speaking (level > 0.35) while Vanessa is speaking, interrupt!
-        if (normalized > 0.35 && voiceState === "speaking") {
+        if (normalized > 0.35 && voiceStateRef.current === "speaking") {
           triggerBargeIn();
         }
 
@@ -394,7 +417,7 @@ export function useAudioCapture() {
   }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
 
   // Stop microphone capture
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback((preservePlaybackContext = false) => {
     pttActiveRef.current = false;
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -411,7 +434,7 @@ export function useAudioCapture() {
       mediaStreamRef.current = null;
     }
 
-    if (audioContextRef.current) {
+    if (audioContextRef.current && !preservePlaybackContext) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
@@ -440,17 +463,22 @@ export function useAudioCapture() {
       pttActiveRef.current = false;
       activatedSocketRef.current = null;
       finalizeListening();
-      stopRecording();
+      // Keep audio local while Vanessa responds so onset detection can support
+      // barge-in; PCM is sent to ASR only while PTT is active.
     } else {
       // Acquire the microphone only after an explicit PTT action.
       await startRecording();
       if (!mediaStreamRef.current) return;
+      if (voiceStateRef.current === "speaking") {
+        triggerBargeIn();
+        return;
+      }
       pttActiveRef.current = true;
       setVoiceState("listening");
       setPartialTranscript("");
       if (wsRef.current) activateConnectedSocket(wsRef.current);
     }
-  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket]);
+  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
 
   useEffect(() => {
     connectVoiceWs();

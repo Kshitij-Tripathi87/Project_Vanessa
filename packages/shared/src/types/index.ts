@@ -44,8 +44,14 @@ export interface ExecuteCommandPayload {
   language?: string;
   source?: "voice" | "desktop" | "phone" | "relay";
   sentiment?: any;
+  conversationContext?: ConversationTurn[];
   envelope?: CommandEnvelope;
   idempotencyKey?: string;
+}
+
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface ExecuteCommandResult {

@@ -1,10 +1,15 @@
 import assert from "node:assert";
+import { once } from "node:events";
+import { decode, encode } from "@msgpack/msgpack";
+import { WebSocketServer } from "ws";
 import { AudioCapture, AudioChunk } from "../audio/capture.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { BargeInDetector } from "../session/bargeIn.js";
 import { WakeWordDetector } from "../session/wakeWord.js";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
+import { FishAsrAdapter } from "../asr/fishAdapter.js";
+import { FishTtsAdapter } from "../tts/fishTts.js";
 
 async function runTests() {
   console.log("==================================================");
@@ -20,6 +25,83 @@ async function runTests() {
   assert.strictEqual(chunks[0].pcm.length, 320, "Each chunk must have 320 samples");
   assert.strictEqual(chunks[0].durationMs, 20, "Each chunk duration must be 20ms");
   console.log("✅ [PASS] 20ms PCM Audio Framing verified.\n");
+
+  // Fish realtime ASR wire protocol and audio batching regression test.
+  console.log("🧪 Test 1b: Fish realtime ASR MessagePack session and committed user turns...");
+  const fishServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(fishServer, "listening");
+  const fishAddress = fishServer.address();
+  assert(typeof fishAddress !== "string" && fishAddress, "Fish test server should bind an ephemeral TCP port");
+  const clientMessages: any[] = [];
+  let resolveFishReady!: () => void;
+  let resolveFishFinal!: (text: string) => void;
+  const fishReady = new Promise<void>((resolve) => { resolveFishReady = resolve; });
+  const fishFinal = new Promise<string>((resolve) => { resolveFishFinal = resolve; });
+  fishServer.on("connection", (socket) => {
+    socket.on("message", (data) => {
+      const message = decode(data as Buffer) as any;
+      clientMessages.push(message);
+      if (message.type === "config") {
+        assert.deepStrictEqual(message.audio, { format: "pcm_s16le", sample_rate: 16000, channels: 1 });
+        assert.deepStrictEqual(message.turn_detection, { mode: "auto", eager: true });
+        socket.send(encode({ type: "session_started", session_id: "test-session" }));
+        resolveFishReady();
+      } else if (message.type === "audio_done") {
+        socket.send(encode({ type: "committed", text: "background audio", user_turn: false, language_code: "en" }));
+        socket.send(encode({ type: "committed", text: "open the project", user_turn: true, language_code: "en" }));
+        socket.send(encode({ type: "session_done", stats: { audio_ms: 100, turns: 2 } }));
+        socket.close();
+      }
+    });
+  });
+  const fishAsr = new FishAsrAdapter({
+    apiKey: "sk-fish-test-key",
+    url: `ws://127.0.0.1:${fishAddress.port}`,
+    allowFallback: false,
+  });
+  fishAsr.connect({ onPartial: () => {}, onFinal: (result) => resolveFishFinal(result.text) });
+  fishAsr.activateStream(5000);
+  await fishReady;
+  const hundredMsPcm = new Int16Array(320);
+  for (let frame = 0; frame < 5; frame++) fishAsr.sendAudioChunk(hundredMsPcm);
+  fishAsr.finalizeTurn();
+  assert.strictEqual(await fishFinal, "open the project", "Non-user committed turns must not be dispatched");
+  const audioMessage = clientMessages.find((message) => message.type === "audio");
+  assert.strictEqual(audioMessage.data.length, 3200, "Fish ASR audio messages must batch 100ms of 16kHz mono PCM");
+  assert(clientMessages.some((message) => message.type === "audio_done"), "Fish ASR session must end with audio_done");
+  fishAsr.close();
+  await new Promise<void>((resolve) => fishServer.close(() => resolve()));
+  console.log("✅ [PASS] Fish ASR MessagePack handshake, audio framing and turn filtering verified.\n");
+
+  // Fish TTS contract, voice configuration, clause order and honest fallback.
+  console.log("🧪 Test 1c: Fish TTS clause delivery and configured voice...");
+  const originalFetch = globalThis.fetch;
+  const ttsRequests: Array<{ url: string; body: any }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    ttsRequests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+    return new Response(new Uint8Array([73, 68, 51, 0]), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const tts = new FishTtsAdapter("sk-fish-test-key", "vanessa-test-voice", "s2.1-pro-free");
+    const spokenChunks: any[] = [];
+    await tts.streamSpeech("Hello there. How are you?", (chunk) => spokenChunks.push(chunk));
+    assert.strictEqual(ttsRequests.length, 2, "TTS should synthesize each sentence in order");
+    assert(ttsRequests.every((request) => request.url.endsWith("/v1/tts")));
+    assert(ttsRequests.every((request) => request.body.reference_id === "vanessa-test-voice"));
+    assert.strictEqual(spokenChunks.length, 2);
+    assert.strictEqual(spokenChunks[0].isFinal, false);
+    assert.strictEqual(spokenChunks[1].isFinal, true);
+    assert(spokenChunks.every((chunk) => chunk.audioBase64 && chunk.format === "mp3"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const missingVoiceTts = new FishTtsAdapter("sk-fish-test-key", "", "s2.1-pro-free");
+  const fallbackChunks: any[] = [];
+  await missingVoiceTts.streamSpeech("Fallback is ready.", (chunk) => fallbackChunks.push(chunk));
+  assert.strictEqual(missingVoiceTts.getProviderStatus()?.state, "fallback");
+  assert.match(missingVoiceTts.getProviderStatus()?.detail || "", /voice ID/i);
+  assert.strictEqual(fallbackChunks[0].audioBase64, undefined, "Missing voice must not silently synthesize with an arbitrary voice");
+  console.log("✅ [PASS] Fish TTS voice selection and explicit fallback verified.\n");
 
   // 2. VAD Detection test
   console.log("🧪 Test 2: VAD Speech & Energy Detection...");

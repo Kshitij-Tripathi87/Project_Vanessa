@@ -13,6 +13,7 @@
     "build": "pnpm -r run build",
     "test:scenarios": "pnpm --filter @vanessa/orchestrator test:scenarios",
     "test:skills": "pnpm --filter @vanessa/orchestrator test:skills",
+    "test:voice:planning": "pnpm --filter @vanessa/orchestrator test:voice-planning",
     "test:drills": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/failureDrills.test.ts",
     "test:drills:process": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/processFailureDrills.test.ts",
     "test:checkout:gate": "pnpm --filter @vanessa/orchestrator exec tsx src/tests/checkoutIncidentGate.test.ts",

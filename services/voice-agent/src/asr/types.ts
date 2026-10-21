@@ -3,6 +3,7 @@ export type TranscriptResult = {
   isFinal: boolean;
   language: string;
   confidence?: number;
+  turnId?: string;
 };
 
 export interface ProviderRuntimeStatus {
@@ -14,6 +15,8 @@ export interface ProviderRuntimeStatus {
 
 export interface AsrAdapter {
   name?: string;
+  /** True when the provider, rather than local silence timing, commits turns. */
+  usesServerTurnDetection?: boolean;
   connect(handlers: {
     onPartial: (result: TranscriptResult) => void;
     onFinal: (result: TranscriptResult) => void;

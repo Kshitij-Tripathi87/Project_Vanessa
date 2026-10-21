@@ -11,8 +11,8 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
 
   constructor(
     apiKey = process.env.FISH_API_KEY,
-    voiceId = process.env.FISH_VANESSA_VOICE_ID,
-    model = process.env.FISH_MODEL || "s2.1-pro-free"
+    voiceId = process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID,
+    model = process.env.FISH_TTS_MODEL || process.env.FISH_MODEL || "s2.1-pro-free"
   ) {
     this.apiKey = apiKey ? apiKey.replace(/"/g, "").trim() : undefined;
     this.voiceId = voiceId ? voiceId.replace(/"/g, "").trim() : undefined;
@@ -45,9 +45,12 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
     // Sentence/clause boundary chunking for low TTFA
     const clauses = text.split(/(?<=[.!?;\n])\s+/).filter(Boolean);
     const list = clauses.length > 0 ? clauses : [text];
-    let useBrowserFallback = !this.apiKey || !this.apiKey.startsWith("sk-fish-");
+    let useBrowserFallback = !this.apiKey || !this.apiKey.startsWith("sk-fish-") || !this.voiceId;
     if (useBrowserFallback) {
-      this.setStatus({ requested: "Fish Audio", active: "Browser Speech Synthesis", state: "fallback", detail: "Fish API key is missing or invalid." });
+      const reason = !this.apiKey || !this.apiKey.startsWith("sk-fish-")
+        ? "Fish API key is missing or invalid."
+        : "Fish TTS voice ID is not configured.";
+      this.setStatus({ requested: "Fish Audio", active: "Browser Speech Synthesis", state: "fallback", detail: reason });
     } else {
       this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting" });
     }
@@ -65,9 +68,7 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
             text: clause,
             format: "mp3",
           };
-          if (this.voiceId) {
-            body.reference_id = this.voiceId;
-          }
+          body.reference_id = this.voiceId;
 
           const response = await fetch("https://api.fish.audio/v1/tts", {
             method: "POST",
