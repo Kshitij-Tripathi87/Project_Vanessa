@@ -46,6 +46,7 @@ export class VanessaOrchestrator {
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
+    const requestId = payload.requestId || envelope?.requestId;
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
     const idempotencyKey = payload.idempotencyKey || envelope?.idempotencyKey;
@@ -65,6 +66,7 @@ export class VanessaOrchestrator {
         return {
           status: "failed",
           spokenSummary: "Command rejected: Command envelope has expired.",
+          requestId,
         };
       }
 
@@ -77,6 +79,7 @@ export class VanessaOrchestrator {
           return {
             status: "accepted",
             spokenSummary: "Command is already being processed.",
+            requestId,
           };
         }
       }
@@ -88,7 +91,7 @@ export class VanessaOrchestrator {
       agent: "orchestrator",
       action: "command_received",
       status: "info",
-      details: { command, language, sentiment, idempotencyKey },
+      details: { command, language, sentiment, requestId, idempotencyKey },
     });
 
     // 1. Generate task plan
@@ -139,6 +142,7 @@ export class VanessaOrchestrator {
     const finalResult: ExecuteCommandResult = {
       status,
       spokenSummary,
+      requestId,
       planId: plan.id,
       plan,
       pendingTasks: pendingApproval,
@@ -177,7 +181,7 @@ export class VanessaOrchestrator {
 
     return {
       orchestratorOnline: true,
-      activeVoiceProvider: (process.env.VOICE_PROVIDER as any) || "elevenlabs",
+      activeVoiceProvider: (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish") as any,
       activeTasksCount,
       platform: process.platform as any,
       timestamp: Date.now(),

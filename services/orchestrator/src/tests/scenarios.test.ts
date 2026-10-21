@@ -349,10 +349,10 @@ async function runTestSuite() {
     return Boolean(patchVerified && testsPassed);
   });
 
-  // Test 20: Real-Time Voice Streaming, Acoustic Prosody & Sentiment Analysis
-  await assertTest("Voice Agent Subsystem: 16kHz PCM acoustic analysis, dual-stream sentiment & barge-in", async () => {
+  // Test 20: Voice sentiment remains a pure analysis utility; speech sessions
+  // are owned by services/voice-agent and never dispatch from this service.
+  await assertTest("Voice analysis: acoustic features and sentiment classification", async () => {
     const { sentimentAnalyzer } = await import("../voice/sentimentAnalyzer.js");
-    const { voiceStreamServer } = await import("../voice/voiceStreamServer.js");
 
     // 1. Synthesize 16kHz sine wave audio buffer (100ms = 1600 samples)
     const samples = new Int16Array(1600);
@@ -374,33 +374,7 @@ async function runTestSuite() {
       inquisitiveSent.emotion === "inquisitive" &&
       satisfiedSent.emotion === "satisfied";
 
-    // 3. Test VoiceStreamServer barge-in and audio frame handling with mock socket
-    const sentMessages: any[] = [];
-    const mockSocket: any = {
-      readyState: 1, // WebSocket.OPEN
-      send: (data: string) => {
-        try {
-          sentMessages.push(JSON.parse(data));
-        } catch {
-          sentMessages.push(data);
-        }
-      },
-      on: (event: string, callback: any) => {
-        mockSocket[`on_${event}`] = callback;
-      },
-    };
-
-    voiceStreamServer.handleConnection(mockSocket);
-    // Send binary PCM frame
-    mockSocket.on_message(Buffer.from(samples.buffer), true);
-    // Send barge-in interrupt
-    mockSocket.on_message(JSON.stringify({ type: "barge_in", timestamp: Date.now() }), false);
-
-    const hasSessionReady = sentMessages.some((m) => m.type === "session_ready" && m.bargeInEnabled === true);
-    const hasAudioEnergy = sentMessages.some((m) => m.type === "audio_energy" && m.rms !== undefined);
-    const hasBargeInAck = sentMessages.some((m) => m.type === "barge_in_acknowledged");
-
-    return Boolean(validAcoustic && sentimentClassified && hasSessionReady && hasAudioEnergy && hasBargeInAck);
+    return Boolean(validAcoustic && sentimentClassified);
   });
 
   // Test 21: Revision 0.3 - Idempotency Deduplication & Envelope Expiry

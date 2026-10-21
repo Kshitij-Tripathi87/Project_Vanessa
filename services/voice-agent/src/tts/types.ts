@@ -6,6 +6,8 @@ export interface TtsOutputChunk {
   isFinal: boolean;
   audioBase64?: string;
   format?: "mp3" | "pcm_s16le";
+  sampleRate?: number;
+  fallbackSpeech?: boolean;
 }
 
 export interface VoiceTtsAdapter {

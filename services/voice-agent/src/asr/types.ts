@@ -23,8 +23,9 @@ export interface AsrAdapter {
   }): Promise<void> | void;
   sendAudioChunk(pcm: Int16Array): void;
   finalizeTurn?(): void;
-  activateStream?(durationMs?: number): void;
+  activateStream?(durationMs?: number): void | Promise<void>;
   deactivateStream?(): void;
+  setConversationContext?(turns: Array<{ role: "user" | "assistant"; content: string }>): void;
   getProviderStatus?(): ProviderRuntimeStatus;
   setStatusHandler?(handler: (status: ProviderRuntimeStatus) => void): void;
   close(): void;

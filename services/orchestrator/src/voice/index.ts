@@ -6,7 +6,7 @@ export class VanessaVoiceService {
   private activeProviderName: string;
 
   constructor() {
-    this.activeProviderName = process.env.VOICE_PROVIDER || "elevenlabs";
+    this.activeProviderName = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
   }
 
   getProviderName(): string {
@@ -27,6 +27,4 @@ export class VanessaVoiceService {
 
 export const voiceService = new VanessaVoiceService();
 export * from "./types.js";
-export * from "./streamingTts.js";
 export * from "./sentimentAnalyzer.js";
-export * from "./voiceStreamServer.js";

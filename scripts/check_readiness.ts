@@ -25,7 +25,7 @@ interface ServiceCheck {
   details: string;
 }
 
-async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
+async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; statusCode: number; latencyMs: number }> {
   const start = Date.now();
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res: http.IncomingMessage) => {
@@ -35,6 +35,7 @@ async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; 
         resolve({
           ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426, // 426 upgrade required is ok for WS endpoint
           statusText: `HTTP ${res.statusCode}`,
+          statusCode: res.statusCode ?? 500,
           latencyMs: Date.now() - start,
         });
       });
@@ -42,11 +43,11 @@ async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; 
 
     req.on("timeout", () => {
       req.destroy();
-      resolve({ ok: false, statusText: "TIMEOUT", latencyMs: Date.now() - start });
+      resolve({ ok: false, statusText: "TIMEOUT", statusCode: 0, latencyMs: Date.now() - start });
     });
 
     req.on("error", (err: Error) => {
-      resolve({ ok: false, statusText: err.message, latencyMs: Date.now() - start });
+      resolve({ ok: false, statusText: err.message, statusCode: 0, latencyMs: Date.now() - start });
     });
   });
 }
@@ -97,7 +98,7 @@ async function main() {
       name: "Voice Agent Gateway",
       port: voiceAgentPort,
       protocol: "http",
-      url: `http://127.0.0.1:${voiceAgentPort}/health`,
+      url: `http://127.0.0.1:${voiceAgentPort}/ready`,
       status: "OFFLINE",
       latencyMs: 0,
       details: "",
@@ -125,7 +126,7 @@ async function main() {
   for (const s of services) {
     if (s.protocol === "http") {
       const res = await checkHttp(s.url);
-      s.status = res.ok ? "ONLINE" : "OFFLINE";
+      s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
       s.latencyMs = res.latencyMs;
       s.details = res.statusText;
     } else {
@@ -165,14 +166,16 @@ async function main() {
   const hasValidFishKey = fishKey.startsWith("sk-fish-");
   const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
   const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
-  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK !== "false";
+  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
 
   console.log("VOICE PROVIDER CONFIGURATION:");
   console.log(`- Configured ASR Provider: ${asrProvider}`);
   console.log(`- Configured TTS Provider: ${ttsProvider}`);
-  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Valid (sk-fish-...)" : fallbackEnabled ? "Missing / Placeholder (local ASR fallback enabled)" : "Missing / Placeholder (Fish ASR unavailable)"}`);
+  const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
+  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish ASR unavailable)"}`);
   console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
-  console.log(`- Fish TTS Model: ${process.env.FISH_MODEL || "s2.1-pro-free"}`);
+  console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
+  console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
   console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
 
   const onlineCount = services.filter((s) => s.status === "ONLINE").length;

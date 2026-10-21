@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { CommandEnvelope } from "@vanessa/shared";
+
 export interface OrchestratorCommandResult {
   status: "success" | "awaiting_approval" | "failed" | "partial" | "accepted";
   spokenSummary: string;
   planId?: string;
   plan?: any;
   pendingTasks?: any[];
+  requestId?: string;
 }
 
 export class OrchestratorClient {
@@ -16,8 +20,24 @@ export class OrchestratorClient {
     command: string;
     source?: string;
     language?: string;
+    requestId?: string;
+    idempotencyKey?: string;
     conversationContext?: Array<{ role: "user" | "assistant"; content: string }>;
   }): Promise<OrchestratorCommandResult> {
+    const now = Date.now();
+    const requestId = input.requestId || randomUUID();
+    const idempotencyKey = input.idempotencyKey || `voice:${requestId}`;
+    const envelope: CommandEnvelope = {
+      requestId,
+      idempotencyKey,
+      originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
+      command: input.command,
+      createdAt: now,
+      expiresAt: now + 5 * 60 * 1000,
+      schemaVersion: "1.0",
+      source: "voice",
+      language: input.language || "en",
+    };
     const res = await fetch(`${this.baseUrl}/api/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -26,6 +46,9 @@ export class OrchestratorClient {
         source: input.source || "voice",
         language: input.language || "en",
         conversationContext: input.conversationContext,
+        requestId,
+        idempotencyKey,
+        envelope,
       }),
     });
 
@@ -33,7 +56,8 @@ export class OrchestratorClient {
       throw new Error(`Orchestrator error HTTP ${res.status}`);
     }
 
-    return (await res.json()) as OrchestratorCommandResult;
+    const result = (await res.json()) as OrchestratorCommandResult;
+    return { ...result, requestId };
   }
 
   /**

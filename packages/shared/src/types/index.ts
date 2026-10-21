@@ -41,6 +41,7 @@ export interface RelaySequenceEvent<T = any> {
 
 export interface ExecuteCommandPayload {
   command: string;
+  requestId?: string;
   language?: string;
   source?: "voice" | "desktop" | "phone" | "relay";
   sentiment?: any;
@@ -57,6 +58,7 @@ export interface ConversationTurn {
 export interface ExecuteCommandResult {
   status: "success" | "failed" | "partial" | "awaiting_approval" | "accepted";
   spokenSummary: string;
+  requestId?: string;
   planId?: string;
   plan?: import("./agent.js").Plan;
   pendingTasks?: import("./agent.js").Task[];

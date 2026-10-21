@@ -12,6 +12,7 @@ import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
+import { createHash, randomUUID } from "node:crypto";
 
 export type SessionState =
   | "idle"
@@ -24,8 +25,9 @@ export type SessionState =
 export interface VoiceSessionHandlers {
   onStateChange?: (state: SessionState) => void;
   onPartialTranscript?: (text: string) => void;
-  onFinalTranscript?: (text: string) => void;
-  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; isFinal: boolean }) => void;
+  onFinalTranscript?: (text: string, requestId: string) => void;
+  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
+  onTtsUnavailable?: (detail: string) => void;
   onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
   onProviderStatus?: (status: VoiceProviderInfo) => void;
 }
@@ -71,6 +73,9 @@ export class VanessaVoiceSession {
       this.asr = new VoiceAdapter();
     }
 
+    if (!options?.ttsProvider && !process.env.VOICE_TTS_PROVIDER && process.env.VOICE_PROVIDER) {
+      console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
+    }
     const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
     if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
@@ -141,7 +146,7 @@ export class VanessaVoiceSession {
       this.setState("idle");
       throw err;
     }
-    this.asr.activateStream?.(durationMs);
+    await this.asr.activateStream?.(durationMs);
     this.setState("listening");
     this.turnDetector.reset();
     console.log(`[VanessaVoiceSession] Session explicitly activated for ${durationMs}ms`);
@@ -243,40 +248,60 @@ export class VanessaVoiceSession {
 
     this.partialTranscript = "";
     this.setState("thinking");
-    this.handlers.onFinalTranscript?.(command);
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });
     this.conversationContext.push({ role: "user", content: command });
     this.conversationContext = this.conversationContext.slice(-8);
+    this.asr.setConversationContext?.(this.conversationContext);
+    const requestId = turnId
+      ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
+      : `voice-${randomUUID()}`;
+    const idempotencyKey = `voice:${requestId}`;
+    this.handlers.onFinalTranscript?.(command, requestId);
 
+    let responseText: string;
     try {
-      this.setState("executing");
-      this.handlers.onHudUpdate?.({ state: "executing", transcript: command });
+      try {
+        this.setState("executing");
+        this.handlers.onHudUpdate?.({ state: "executing", transcript: command });
 
-      // Orchestrator Planner & parallel capability agent execution
-      const execution = await orchestratorClient.executeCommand({
-        command,
-        source: "voice",
-        language,
-        conversationContext: this.conversationContext,
-      });
+        // The voice service submits one correlated turn; planning and all tool
+        // dispatch remain owned by the orchestrator.
+        const execution = await orchestratorClient.executeCommand({
+          command,
+          requestId,
+          idempotencyKey,
+          source: "voice",
+          language,
+          conversationContext: this.conversationContext,
+        });
 
-      this.setState("responding");
-      this.handlers.onHudUpdate?.({
-        state: "responding",
-        transcript: execution.spokenSummary,
-        plan: execution.plan,
-      });
+        this.setState("responding");
+        this.handlers.onHudUpdate?.({
+          state: "responding",
+          transcript: execution.spokenSummary,
+          plan: execution.plan,
+        });
+        responseText = execution.spokenSummary;
+      } catch (err: any) {
+        console.error("[VanessaVoiceSession] Execution error:", err.message);
+        responseText = "I couldn't reach the task coordinator. Your request was not submitted; please try again.";
+        this.setState("responding");
+        this.handlers.onHudUpdate?.({ state: "responding", transcript: responseText });
+      }
 
-      // Streaming TTS playback with sentence boundary chunking
-      await this.speak(execution.spokenSummary);
-      this.conversationContext.push({ role: "assistant", content: execution.spokenSummary });
-      this.conversationContext = this.conversationContext.slice(-8);
-    } catch (err: any) {
-      console.error("[VanessaVoiceSession] Execution error:", err.message);
-      const message = "I couldn't reach the task coordinator. Your request was not submitted; please try again.";
-      this.setState("responding");
-      this.handlers.onHudUpdate?.({ state: "responding", transcript: message });
-      await this.speak(message).catch(() => {});
+      if (responseText) {
+        if (!responseText.startsWith("I couldn't reach the task coordinator.")) {
+          this.conversationContext.push({ role: "assistant", content: responseText });
+          this.conversationContext = this.conversationContext.slice(-8);
+          this.asr.setConversationContext?.(this.conversationContext);
+        }
+        try {
+          await this.speak(responseText);
+        } catch (err: any) {
+          console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
+        this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");
+        }
+      }
     } finally {
       this.isProcessing = false;
       this.turnDetector.reset();
@@ -360,7 +385,7 @@ export class VanessaVoiceSession {
     this.wakeWord.touchActiveSession(25000);
     await this.ensureAsrConnected();
     if (generation !== this.sessionGeneration) return false;
-    this.asr.activateStream?.(25000);
+    await this.asr.activateStream?.(25000);
     this.setState("listening");
     this.turnDetector.reset();
     return true;

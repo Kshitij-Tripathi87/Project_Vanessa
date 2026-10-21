@@ -156,7 +156,7 @@ export class PrivacyGuard {
   getPrivacyStatus() {
     return {
       localMemory: "active (SQLite/Rust 127.0.0.1)",
-      cloudVoice: (process.env.VOICE_PROVIDER as string) || "ElevenLabs",
+      cloudVoice: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "Fish Audio",
       folderPolicy: "only approved folders",
       allowedFolders: this.getAllowedFolders(),
       localRedactionActive: true,
