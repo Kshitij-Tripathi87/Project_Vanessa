@@ -4,7 +4,7 @@
   "private": true,
   "description": "Vanessa: Voice-native AI control layer for personal computers",
   "scripts": {
-    "dev": "concurrently -n \"ORCHESTRATOR,VOICE,RELAY,DESKTOP\" -c \"cyan,yellow,blue,magenta\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/voice-agent dev\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/desktop dev\"",
+    "dev": "concurrently -n \"ORCHESTRATOR,VOICE,RELAY,DESKTOP\" -c \"cyan,yellow,blue,magenta\" --kill-others-on-fail \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/voice-agent dev\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/desktop dev\"",
     "dev:relay": "pnpm --filter @vanessa/relay dev",
     "dev:orchestrator": "pnpm --filter @vanessa/orchestrator dev",
     "dev:voice": "pnpm --filter @vanessa/voice-agent dev",

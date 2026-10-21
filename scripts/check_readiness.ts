@@ -20,23 +20,26 @@ interface ServiceCheck {
   port: number;
   protocol: "http" | "ws";
   url: string;
-  status: "ONLINE" | "OFFLINE" | "DEGRADED";
+  status: "ONLINE" | "OFFLINE" | "DEGRADED" | "STARTING";
   latencyMs: number;
   details: string;
 }
 
-async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; statusCode: number; latencyMs: number }> {
+async function checkHttp(url: string, timeoutMs = 3000): Promise<{ ok: boolean; statusText: string; statusCode: number; latencyMs: number; body?: any }> {
   const start = Date.now();
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res: http.IncomingMessage) => {
       let data = "";
       res.on("data", (chunk: Buffer | string) => (data += chunk));
       res.on("end", () => {
+        let body: any = null;
+        try { body = JSON.parse(data); } catch {}
         resolve({
-          ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426, // 426 upgrade required is ok for WS endpoint
+          ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426,
           statusText: `HTTP ${res.statusCode}`,
           statusCode: res.statusCode ?? 500,
           latencyMs: Date.now() - start,
+          body,
         });
       });
     });
@@ -52,7 +55,7 @@ async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; 
   });
 }
 
-async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
+async function checkWs(url: string, timeoutMs = 3000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
   const start = Date.now();
   return new Promise((resolve) => {
     let finished = false;
@@ -61,9 +64,7 @@ async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; st
     const finish = (ok: boolean, statusText: string) => {
       if (finished) return;
       finished = true;
-      try {
-        socket.close();
-      } catch {}
+      try { socket.close(); } catch {}
       resolve({ ok, statusText, latencyMs: Date.now() - start });
     };
 
@@ -71,6 +72,35 @@ async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; st
     socket.on("error", (err: Error) => finish(false, err.message));
     setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
   });
+}
+
+async function checkServiceWithRetry(s: ServiceCheck, retries = 3, delayMs = 1000): Promise<ServiceCheck> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    if (s.protocol === "http") {
+      const res = await checkHttp(s.url);
+      if (res.statusCode === 503) {
+        s.status = "DEGRADED";
+        s.latencyMs = res.latencyMs;
+        s.details = `${res.statusText} (${res.body?.message || "degraded"})`;
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+        return s;
+      }
+      s.status = res.ok ? "ONLINE" : "OFFLINE";
+      s.latencyMs = res.latencyMs;
+      s.details = res.statusText;
+      return s;
+    } else {
+      const res = await checkWs(s.url);
+      s.status = res.ok ? "ONLINE" : "OFFLINE";
+      s.latencyMs = res.latencyMs;
+      s.details = res.statusText;
+      return s;
+    }
+  }
+  return s;
 }
 
 async function main() {
@@ -90,7 +120,7 @@ async function main() {
       port: orchestratorPort,
       protocol: "http",
       url: `http://127.0.0.1:${orchestratorPort}/health`,
-      status: "OFFLINE",
+      status: "STARTING",
       latencyMs: 0,
       details: "",
     },
@@ -99,7 +129,7 @@ async function main() {
       port: voiceAgentPort,
       protocol: "http",
       url: `http://127.0.0.1:${voiceAgentPort}/ready`,
-      status: "OFFLINE",
+      status: "STARTING",
       latencyMs: 0,
       details: "",
     },
@@ -108,7 +138,7 @@ async function main() {
       port: voiceAgentPort,
       protocol: "http",
       url: `http://127.0.0.1:${voiceAgentPort}/live`,
-      status: "OFFLINE",
+      status: "STARTING",
       latencyMs: 0,
       details: "",
     },
@@ -117,7 +147,7 @@ async function main() {
       port: localAsrPort,
       protocol: "ws",
       url: localAsrUrl,
-      status: "OFFLINE",
+      status: "STARTING",
       latencyMs: 0,
       details: "",
     },
@@ -126,23 +156,26 @@ async function main() {
       port: relayPort,
       protocol: "http",
       url: `http://127.0.0.1:${relayPort}/health`,
-      status: "OFFLINE",
+      status: "STARTING",
       latencyMs: 0,
       details: "",
     },
   ];
 
-  for (const s of services) {
-    if (s.protocol === "http") {
-      const res = await checkHttp(s.url);
-      s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
-      s.latencyMs = res.latencyMs;
-      s.details = res.statusText;
-    } else {
-      const res = await checkWs(s.url);
-      s.status = res.ok ? "ONLINE" : "OFFLINE";
-      s.latencyMs = res.latencyMs;
-      s.details = res.statusText;
+  // Check services in dependency order
+  const checkOrder = [
+    "Orchestrator Brain",
+    "Voice Agent Gateway",
+    "Voice Agent Liveness",
+    "Local Whisper ASR",
+    "Mobile Relay WSS",
+  ];
+
+  for (const name of checkOrder) {
+    const svc = services.find(s => s.name === name);
+    if (svc) {
+      const checked = await checkServiceWithRetry(svc);
+      Object.assign(svc, checked);
     }
   }
 
@@ -159,7 +192,7 @@ async function main() {
   console.log("--------------------------------------------------------------------------------");
 
   for (const s of services) {
-    const statusIcon = s.status === "ONLINE" ? "🟢" : "🔴";
+    const statusIcon = s.status === "ONLINE" ? "🟢" : s.status === "DEGRADED" ? "🟡" : "🔴";
     console.log(
       `${statusIcon} ${s.name.padEnd(21)}` +
       `${s.port}`.padEnd(8) +
@@ -187,8 +220,33 @@ async function main() {
   console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
   console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
 
+  // Voice Agent Provider Status (if online)
+  const voiceAgent = services.find(s => s.name === "Voice Agent Gateway");
+  if (voiceAgent?.status === "ONLINE" && voiceAgent?.body?.providers) {
+    console.log("\nVOICE AGENT PROVIDER STATUS:");
+    const providers = voiceAgent.body.providers;
+    console.log(`- ASR: ${providers.asr?.requested} (${providers.asr?.configured ? "configured" : "not configured"})`);
+    console.log(`- TTS: ${providers.tts?.requested} (${providers.tts?.configured ? "configured" : "not configured"})`);
+    if (voiceAgent.body.configValidation) {
+      const cv = voiceAgent.body.configValidation;
+      if (cv.errors.length > 0) console.log(`- Config Errors: ${cv.errors.join("; ")}`);
+      if (cv.warnings.length > 0) console.log(`- Config Warnings: ${cv.warnings.join("; ")}`);
+    }
+  }
+
   const onlineCount = services.filter((s) => s.status === "ONLINE").length;
-  console.log(`\nReadiness: ${onlineCount}/${services.length} services online.`);
+  const degradedCount = services.filter((s) => s.status === "DEGRADED").length;
+  console.log(`\nReadiness: ${onlineCount}/${services.length} services online${degradedCount > 0 ? `, ${degradedCount} degraded` : ""}.`);
+
+  // Exit code for CI/CD
+  const allCriticalOnline = services
+    .filter(s => ["Orchestrator Brain", "Voice Agent Gateway", "Voice Agent Liveness"].includes(s.name))
+    .every(s => s.status === "ONLINE");
+
+  process.exit(allCriticalOnline ? 0 : 1);
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error("Readiness probe failed:", err);
+  process.exit(1);
+});
