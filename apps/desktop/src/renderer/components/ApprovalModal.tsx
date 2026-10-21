@@ -1,42 +1,48 @@
 import React from "react";
 import { Task } from "@vanessa/shared";
-import { ShieldAlert, Check, X, CheckCheck, Folder, Share2, AlertTriangle } from "lucide-react";
+import { ShieldAlert, Check, X, Folder, Share2, AlertTriangle } from "lucide-react";
 
 interface ApprovalModalProps {
   task: Task | null;
-  onApprove: (taskId: string, alwaysAllow?: boolean) => void;
+  onApprove: (taskId: string) => void;
   onReject: (taskId: string) => void;
 }
 
 export const ApprovalModal: React.FC<ApprovalModalProps> = ({ task, onApprove, onReject }) => {
   if (!task) return null;
 
+  const requestDetails = Object.entries(task.params || {})
+    .filter(([key]) => !/(password|secret|token|credential|api.?key)/i.test(key))
+    .slice(0, 8)
+    .map(([key, value]) => {
+      const rendered = typeof value === "string" ? value : JSON.stringify(value);
+      return [key, (rendered || "").slice(0, 280)] as const;
+    });
+
   // Determine human-friendly copy based on action
   let actionTitle = `Execute ${task.action}`;
   let accessRequested = task.agent.toUpperCase();
-  let folderScope = "Documents/VanessaDemo";
-  let riskLevel = "External sharing";
+  const rawFolderScope = task.params?.targetPath || task.params?.filePath || task.params?.path || task.params?.basePath;
+  const folderScope = typeof rawFolderScope === "string" ? rawFolderScope : "No local folder specified";
+  let riskLevel = task.risk ? task.risk.toUpperCase() : "Unclassified";
 
   if (task.action.includes("drive.upload")) {
     const filename = task.params?.file || "Q3_Report.pdf";
     actionTitle = `Upload "${filename}" to Google Drive and create a shareable link.`;
     accessRequested = "Google Drive (Cloud)";
-    folderScope = "Documents/VanessaDemo";
     riskLevel = "External sharing";
   } else if (task.action.includes("wifi.restart")) {
     actionTitle = "Restart Wi-Fi network adapter to restore connectivity.";
     accessRequested = "Network Hardware / System Adapter";
-    folderScope = "Local Network Subsystem";
+    // Network actions do not request file-system access.
     riskLevel = "Elevated OS setting (temporary connection drop)";
   } else if (task.action.includes("gmail.send")) {
     actionTitle = `Send email to ${task.params?.to || "recipient"} via Gmail.`;
     accessRequested = "Google Mail (Cloud)";
-    folderScope = "Documents/VanessaDemo";
     riskLevel = "External transmission";
   } else if (task.action.includes("claude_code")) {
     actionTitle = "Open Claude Code with autonomous tool permissions.";
     accessRequested = "Developer CLI / Terminal";
-    folderScope = "Documents/VanessaDemo";
     riskLevel = "Autonomous code execution";
   }
 
@@ -97,6 +103,31 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({ task, onApprove, o
           </div>
         </div>
 
+        {requestDetails.length > 0 && (
+          <div
+            style={{
+              padding: "12px 14px",
+              borderRadius: "10px",
+              background: "rgba(0, 0, 0, 0.28)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+              maxHeight: "140px",
+              overflowY: "auto",
+              fontSize: "11px",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            <strong style={{ color: "var(--text-main)" }}>Request details</strong>
+            {requestDetails.map(([key, value]) => (
+              <div key={key} style={{ color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                <span style={{ color: "#38bdf8" }}>{key}: </span>{value || "(empty)"}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Action Details Card */}
         <div
           style={{
@@ -146,7 +177,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({ task, onApprove, o
         </div>
 
         {/* OWASP Approval Buttons */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
           <button
             id="decline-button"
             onClick={() => onReject(task.id)}
@@ -169,30 +200,8 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({ task, onApprove, o
           </button>
 
           <button
-            id="always-allow-button"
-            onClick={() => onApprove(task.id, true)}
-            style={{
-              padding: "11px 12px",
-              borderRadius: "8px",
-              background: "rgba(56, 189, 248, 0.15)",
-              color: "#38bdf8",
-              border: "1px solid rgba(56, 189, 248, 0.4)",
-              fontWeight: 600,
-              fontSize: "12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "5px",
-              cursor: "pointer",
-            }}
-            title="Always allow this action for this session"
-          >
-            <CheckCheck size={14} /> Always Allow
-          </button>
-
-          <button
             id="approve-button"
-            onClick={() => onApprove(task.id, false)}
+            onClick={() => onApprove(task.id)}
             style={{
               padding: "11px 12px",
               borderRadius: "8px",

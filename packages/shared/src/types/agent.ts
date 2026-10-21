@@ -146,6 +146,7 @@ export interface Task {
   artifacts?: string[];
   startedAt?: number;
   completedAt?: number;
+  approvalExpiresAt?: number;
 }
 
 export interface Plan {

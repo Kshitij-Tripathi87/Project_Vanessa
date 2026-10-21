@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { Task, PermissionStatus } from "@vanessa/shared";
 import { eventBus } from "./eventBus.js";
 import { privacyGuard } from "./privacy.js";
@@ -20,9 +21,6 @@ export class PermissionGuard {
     "claude_code.open",
   ]);
 
-  // Session-level granted permissions
-  private sessionGranted = new Set<string>();
-
   // Actions permanently blocked by policy (OWASP: Least privilege & high-risk prevention)
   private blockedPatterns: RegExp[] = [
     /format\s+[a-z]:/i,
@@ -35,18 +33,15 @@ export class PermissionGuard {
     /\bcredit[_-]?card[_-]?number\b/i,
   ];
 
-  alwaysAllowForSession(actionKey: string) {
-    this.sessionGranted.add(actionKey);
-  }
-
-  check(task: Task): PermissionStatus {
+  check(task: Task, emitAudit = true): PermissionStatus {
     const actionKey = task.action;
 
-    // Check for blocked malicious patterns in params
+    // Match dangerous command text in both the action and parameters.
     const paramStr = JSON.stringify(task.params || {});
+    const inspectedText = `${actionKey} ${paramStr}`;
     for (const pattern of this.blockedPatterns) {
-      if (pattern.test(paramStr)) {
-        eventBus.emitEvent("audit:log", {
+      if (pattern.test(inspectedText)) {
+        if (emitAudit) eventBus.emitEvent("audit:log", {
           id: `audit-${Date.now()}`,
           timestamp: Date.now(),
           taskId: task.id,
@@ -62,48 +57,71 @@ export class PermissionGuard {
       }
     }
 
-    // Check Folder Allowlist for file operations
-    const filePath = task.params?.path || task.params?.targetPath || task.params?.filePath || task.params?.basePath;
-    if (filePath && typeof filePath === "string") {
-      // If path points to system folders like Windows/System32, block
-      const lower = filePath.toLowerCase();
-      if (lower.includes("windows\\system32") || lower.includes("program files") || lower.includes("windows\\syswow64")) {
-        eventBus.emitEvent("audit:log", {
+    // Enforce the approved-folder policy on filesystem and cloud-file actions.
+    const isFileAccess = task.agent === "files" || /^(file|folder|directory)\./i.test(actionKey) || actionKey === "drive.upload";
+    if (isFileAccess) {
+      const pathKeys = ["path", "targetPath", "filePath", "basePath", "sourceDir", "oldPath", "newPath", "file"];
+      const filePaths = pathKeys
+        .map((key) => task.params?.[key])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (actionKey === "folder.create") {
+        const folderName = task.params?.name || task.params?.path;
+        if (typeof folderName === "string" && folderName.trim()) {
+          const basePath = typeof task.params?.basePath === "string"
+            ? task.params.basePath
+            : privacyGuard.getAllowedFolders()[0] || process.cwd();
+          filePaths.push(path.isAbsolute(folderName) ? folderName : path.resolve(basePath, folderName));
+        }
+      }
+      const protectedPath = filePaths.find((filePath) => /(?:^|[\\/])(?:windows[\\/](?:system32|syswow64)|program files(?: \(x86\))?)(?:[\\/]|$)/i.test(path.normalize(filePath)));
+      if (protectedPath) {
+        if (emitAudit) eventBus.emitEvent("audit:log", {
           id: `audit-${Date.now()}`,
           timestamp: Date.now(),
           taskId: task.id,
           agent: task.agent,
           action: task.action,
-          resource: filePath,
+          resource: protectedPath,
+          risk: "blocked",
+          permission: "blocked",
+          status: "blocked",
+          details: "Blocked by protected system path policy.",
+        });
+        return "blocked";
+      }
+      const deniedPath = filePaths.find((filePath) => !privacyGuard.isPathAllowed(filePath));
+      if (deniedPath) {
+        if (emitAudit) eventBus.emitEvent("audit:log", {
+          id: `audit-${Date.now()}`,
+          timestamp: Date.now(),
+          taskId: task.id,
+          agent: task.agent,
+          action: task.action,
+          resource: deniedPath,
           risk: "destructive",
           permission: "blocked",
           status: "blocked",
-          details: `Blocked by folder privacy policy: access to protected Windows directory denied`,
+          details: "Blocked by folder privacy policy: path is outside approved folders.",
         });
         return "blocked";
       }
     }
 
-    if (this.sessionGranted.has(actionKey)) {
-      return "allowed";
-    }
-
-    if (this.confirmActions.has(actionKey)) {
-      if (this.autonomousMode) {
-        eventBus.emitEvent("audit:log", {
-          id: `audit-${Date.now()}`,
-          timestamp: Date.now(),
-          taskId: task.id,
-          agent: task.agent,
-          action: task.action,
-          resource: task.params?.path || task.params?.resource || task.action,
-          risk: task.risk || "medium",
-          permission: "autonomous_approved",
-          status: "autonomous_approved",
-          details: `Autonomous Execution: Executed ${task.action} without interruption`,
-        });
-        return "allowed";
-      }
+    // Explicitly sensitive actions and any high-risk task always require a
+    // fresh, per-task human approval. Global autonomy never overrides this.
+    if (this.confirmActions.has(actionKey) || task.risk === "high") {
+      if (emitAudit) eventBus.emitEvent("audit:log", {
+        id: `audit-${Date.now()}`,
+        timestamp: Date.now(),
+        taskId: task.id,
+        agent: task.agent,
+        action: task.action,
+        resource: task.params?.path || task.params?.resource || task.action,
+        risk: task.risk || "medium",
+        permission: "requires_confirmation",
+        status: "awaiting_approval",
+        details: "Explicit user approval is required before this action can run.",
+      });
       return "confirm";
     }
 

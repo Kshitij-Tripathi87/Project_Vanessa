@@ -1,4 +1,19 @@
-export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482913", defaultDeviceName: string = "Kshitij-Laptop"): string {
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
+}
+
+export function getRemotePwaHtml(port: number, defaultPairingCode: string = "", defaultDeviceName: string = "Vanessa Laptop"): string {
+  const safePairingCode = escapeHtml(defaultPairingCode);
+  const safeDeviceName = escapeHtml(defaultDeviceName);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -203,7 +218,7 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
     </div>
     <div id="statusBadge" class="badge badge-paired">
       <div class="dot"></div>
-      <span id="statusText">Paired: ${defaultDeviceName}</span>
+      <span id="statusText">Paired: ${safeDeviceName}</span>
     </div>
   </div>
 
@@ -217,14 +232,15 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
 
       <div style="display: flex; flex-direction: column; gap: 4px;">
         <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">DEVICE NAME</label>
-        <input type="text" id="deviceNameInput" class="input-field" value="${defaultDeviceName}" placeholder="e.g. Kshitij-Laptop" />
+        <input type="text" id="deviceNameInput" class="input-field" value="${safeDeviceName}" placeholder="e.g. Kshitij-Laptop" />
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 4px;">
         <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">6-DIGIT PAIRING CODE</label>
-        <input type="text" id="pairingInput" class="code-input" value="${defaultPairingCode}" maxlength="6" placeholder="482913" />
+        <input type="text" id="pairingInput" class="code-input" value="${safePairingCode}" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="482913" />
       </div>
 
+      <div id="pairError" style="display:none; color:#fda4af; font-size:12px;"></div>
       <button id="pairBtn" class="btn btn-primary">Connect →</button>
     </div>
 
@@ -297,8 +313,40 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
   </div>
 
   <script>
-    let token = localStorage.getItem("vanessa_phone_token") || "vtok_active_session";
+    let token = localStorage.getItem("vanessa_phone_token") || "";
     let pendingTaskId = null;
+
+    function showPairingView() {
+      const paired = Boolean(token);
+      document.getElementById("pairingView").style.display = paired ? "none" : "block";
+      document.getElementById("controlView").style.display = paired ? "flex" : "none";
+      document.getElementById("statusText").innerText = paired ? "Paired device" : "Not paired";
+      document.getElementById("statusBadge").className = paired ? "badge badge-paired" : "badge";
+    }
+
+    async function pairPhone() {
+      const code = document.getElementById("pairingInput").value.trim();
+      const error = document.getElementById("pairError");
+      error.style.display = "none";
+      try {
+        const response = await fetch("/api/remote/pair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success || !data.token) throw new Error(data.error || "Pairing failed.");
+        token = data.token;
+        localStorage.setItem("vanessa_phone_token", token);
+        showPairingView();
+      } catch (err) {
+        error.textContent = err.message || "Pairing failed.";
+        error.style.display = "block";
+      }
+    }
+
+    showPairingView();
+    document.getElementById("pairBtn").onclick = pairPhone;
 
     function setCmd(text) {
       document.getElementById("cmdInput").value = text;
@@ -322,6 +370,13 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
           body: JSON.stringify({ command: cmd, token })
         });
         const data = await res.json();
+        if (res.status === 401) {
+          localStorage.removeItem("vanessa_phone_token");
+          token = "";
+          showPairingView();
+          throw new Error(data.error || "Pair this phone again.");
+        }
+        if (!res.ok) throw new Error(data.error || "Command failed.");
 
         if (data.status === "awaiting_approval") {
           document.getElementById("planStatus").innerText = "Awaiting Approval";
@@ -333,7 +388,7 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
             document.getElementById("approvalCard").style.display = "block";
           }
         } else {
-          document.getElementById("planStatus").innerText = "Completed";
+          document.getElementById("planStatus").innerText = data.status === "partial" ? "Not Verified" : data.status === "failed" ? "Failed" : "Completed";
           document.getElementById("spokenResponse").innerText = data.spokenSummary || "Task completed.";
           renderTasks(data.plan?.tasks || []);
 
@@ -391,21 +446,41 @@ export function getRemotePwaHtml(port: number, defaultPairingCode: string = "482
           body: JSON.stringify({ taskId: pendingTaskId, token })
         });
         const data = await res.json();
-        document.getElementById("spokenResponse").innerText = "Task approved and executed successfully.";
-        document.getElementById("planStatus").innerText = "Success";
+        if (res.status === 401) {
+          localStorage.removeItem("vanessa_phone_token");
+          token = "";
+          showPairingView();
+          throw new Error(data.error || "Pair this phone again.");
+        }
+        if (!res.ok || !data.success) throw new Error(data.error || "Approval is no longer valid.");
+        document.getElementById("spokenResponse").innerText = data.task?.spokenSummary || (data.task?.status === "success" ? "Task approved, executed, and verified." : "Task approved but did not complete verification.");
+        document.getElementById("planStatus").innerText = data.task?.status === "success" ? "Verified" : "Not Verified";
         if (data.task?.result?.shareLink) {
           document.getElementById("linkUrl").innerText = data.task.result.shareLink;
           document.getElementById("resultCard").style.display = "block";
         }
       } catch (err) {
-        alert("Failed to approve: " + err.message);
+        document.getElementById("approvalCard").style.display = "block";
+        document.getElementById("spokenResponse").innerText = "Approval failed: " + err.message;
       }
     };
 
     document.getElementById("denyBtn").onclick = async () => {
-      document.getElementById("approvalCard").style.display = "none";
-      document.getElementById("spokenResponse").innerText = "Action denied by user.";
-      document.getElementById("planStatus").innerText = "Declined";
+      if (!pendingTaskId) return;
+      try {
+        const res = await fetch("/api/remote/reject", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId: pendingTaskId, token })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "Rejection is no longer valid.");
+        document.getElementById("approvalCard").style.display = "none";
+        document.getElementById("spokenResponse").innerText = "Action denied. Dependent actions were stopped.";
+        document.getElementById("planStatus").innerText = "Declined";
+      } catch (err) {
+        document.getElementById("spokenResponse").innerText = "Could not reject action: " + err.message;
+      }
     };
 
     function copyLink() {

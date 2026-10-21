@@ -5,6 +5,13 @@ export type TranscriptResult = {
   confidence?: number;
 };
 
+export interface ProviderRuntimeStatus {
+  requested: string;
+  active: string;
+  state: "idle" | "connecting" | "ready" | "fallback" | "error";
+  detail?: string;
+}
+
 export interface AsrAdapter {
   name?: string;
   connect(handlers: {
@@ -15,5 +22,7 @@ export interface AsrAdapter {
   finalizeTurn?(): void;
   activateStream?(durationMs?: number): void;
   deactivateStream?(): void;
+  getProviderStatus?(): ProviderRuntimeStatus;
+  setStatusHandler?(handler: (status: ProviderRuntimeStatus) => void): void;
   close(): void;
 }

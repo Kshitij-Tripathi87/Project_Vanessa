@@ -1,4 +1,4 @@
-# Vanessa | Voice-Native AI Control Layer for Personal Computers
+# Vanessa | Voice-first engineering and IT assistant
 
 > **"Hey Vanessa, my Wi-Fi isn't working—restart the adapter and open YouTube."**  
 > Vanessa restarts the Wi-Fi, verifies connectivity, opens YouTube, and reports back by voice.
@@ -6,7 +6,7 @@
 ---
 
 ## ⚡ What We Are Building
-Vanessa is a voice-native AI control layer for personal computers (optimized for Windows 11). You state a high-level outcome; she understands it, creates a structured task graph, runs specialized agents in parallel, controls your OS, apps, browser, files, and developer tools, and reports back by voice.
+Vanessa is a voice-first assistant for engineering and IT work. It helps investigate operational issues across repositories, logs, runbooks, and incident history; prepare bounded changes; run approved checks; and report evidence. Windows 11 is the initial desktop target. General PC control remains part of the longer-term product vision.
 
 ### 🏛️ Architecture & Flow
 ```

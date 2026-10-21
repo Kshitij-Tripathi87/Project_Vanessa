@@ -131,6 +131,14 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task }) => {
             <XCircle size={13} /> Failed
           </span>
         );
+      case "partial":
+      case "blocked":
+      case "expired":
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#fbbf24", fontSize: "12px", fontWeight: 500 }}>
+            <AlertCircle size={13} /> Unverified
+          </span>
+        );
       case "cancelled":
         return (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#64748b", fontSize: "12px", fontWeight: 500 }}>
@@ -225,6 +233,23 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task }) => {
           }}
         >
           {task.error}
+        </div>
+      )}
+
+      {task.verification && (
+        <div style={{ fontSize: "11px", color: task.verification.verified ? "#6ee7b7" : "#fbbf24" }}>
+          {task.verification.verified ? "Verified" : "Not verified"}: {task.verification.details || task.verification.postconditions.join("; ")}
+        </div>
+      )}
+
+      {task.evidence && task.evidence.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
+          {task.evidence.slice(0, 3).map((item, index) => (
+            <div key={`${item.source || "evidence"}-${index}`}>
+              Evidence{item.source ? ` · ${item.source}` : ""}: {item.description}
+            </div>
+          ))}
+          {task.evidence.length > 3 && <div>+{task.evidence.length - 3} more evidence item(s)</div>}
         </div>
       )}
     </div>

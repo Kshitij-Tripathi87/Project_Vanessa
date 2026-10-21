@@ -39,6 +39,15 @@ export class Narrator {
       return `${prefix}This action requires your confirmation: ${actions}. Do you want me to proceed?`;
     }
 
+    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired");
+    if (partialTasks.length > 0) {
+      const actions = partialTasks.map((t) => t.action.replace(/[._]/g, " ")).join(" and ");
+      if (language === "hi" || language === "hinglish") {
+        return `${prefix}${actions} ka result mila, lekin verify nahi ho paya. Dependent actions roke gaye hain.`;
+      }
+      return `${prefix}I got a result for ${actions}, but could not verify it. Dependent actions were stopped.`;
+    }
+
     // 3. Single successful task: use specific spoken summary if available
     const successTasks = tasks.filter((t) => t.status === "success");
     if (successTasks.length === 1) {

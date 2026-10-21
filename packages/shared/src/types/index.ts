@@ -49,7 +49,7 @@ export interface ExecuteCommandPayload {
 }
 
 export interface ExecuteCommandResult {
-  status: "success" | "failed" | "awaiting_approval" | "accepted";
+  status: "success" | "failed" | "partial" | "awaiting_approval" | "accepted";
   spokenSummary: string;
   planId?: string;
   plan?: import("./agent.js").Plan;

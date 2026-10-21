@@ -101,6 +101,7 @@ export class VanessaOrchestrator {
     // 3. Inspect results to build spoken response
     const pendingApproval = tasks.filter((t) => t.status === "awaiting_approval");
     const failedTasks = tasks.filter((t) => t.status === "failed");
+    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired");
     const successTasks = tasks.filter((t) => t.status === "success");
 
     let status: ExecuteCommandResult["status"] = "success";
@@ -111,6 +112,9 @@ export class VanessaOrchestrator {
       spokenSummary = narrator.narrateOutcome(command, tasks, language, sentiment);
     } else if (failedTasks.length > 0) {
       status = "failed";
+      spokenSummary = narrator.narrateOutcome(command, tasks, language, sentiment);
+    } else if (partialTasks.length > 0) {
+      status = "partial";
       spokenSummary = narrator.narrateOutcome(command, tasks, language, sentiment);
     } else {
       status = "success";
@@ -128,7 +132,7 @@ export class VanessaOrchestrator {
         status,
       },
       agent: "orchestrator",
-      status: status === "failed" ? "failed" : "success",
+      status: status === "failed" || status === "partial" ? "failed" : "success",
       ttlDays: 30,
     });
 
@@ -139,6 +143,12 @@ export class VanessaOrchestrator {
       plan,
       pendingTasks: pendingApproval,
       sentiment,
+      verification: {
+        verified: status === "success",
+        postconditions: tasks.map((task) => task.verification?.details || task.verification?.postconditions?.[0] || `${task.action}: ${task.status}`),
+        outcome: status === "success" ? "succeeded" : status === "partial" ? "partial" : status === "failed" ? "failed" : "partial",
+        details: `Verified ${tasks.filter((task) => task.verification?.verified).length} of ${tasks.length} task(s).`,
+      },
     };
 
     if (idempotencyKey) {

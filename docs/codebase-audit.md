@@ -32,6 +32,18 @@ The orchestrator listens only on `127.0.0.1`, and `/api/remote/pairing` construc
 
 Expired rooms are removed only when someone tries to claim them, and rate-limit keys are kept in a process-wide map. A public relay can accumulate stale entries over time. Add periodic expiry and a maximum room count before operating it as a long-lived public service.
 
+### High: Ambient audio currently leaves the device before activation
+
+The desktop starts microphone capture automatically and streams every PCM frame to the voice service. The wake-word detector runs on ASR transcripts, so idle audio is sent to Fish to recognize the wake phrase. A transcript could also reach command dispatch without a wake phrase. The session now rejects such command dispatch, but keeping audio local until activation still needs the selected wake strategy and a local detector.
+
+### Medium: Voice has two active execution paths and an implicit speech fallback
+
+The desktop falls back from `services/voice-agent` to the orchestrator's separate `/voice/stream` implementation. Fish TTS failures also fall through to browser `SpeechSynthesis` without showing the provider change. The dossier calls for one canonical voice session owner and visible provider status. The root `pnpm dev` already includes the voice-agent service, so the extra orchestrator path is not needed for the normal development stack.
+
+### Medium: Some failure drills check state instead of causing failures
+
+The relay drill only runs a local Bluetooth/YouTube command and never stops the relay. The voice failover drill checks only `orchestratorOnline`. These are logic checks, not process-failure or provider-failover drills. Keep their current names from implying real fault injection until the drills actually stop services or sever provider connections.
+
 ### Medium: File access policy does not cover every path parameter
 
 The permission guard checks only a small set of parameter names (`path`, `targetPath`, `filePath`, and `basePath`). Operations using `oldPath`, `newPath`, or other names can bypass that check. The workspace itself is also allowlisted in full. Centralize path validation at the file-agent boundary and resolve symlinks before checking containment.
@@ -40,6 +52,7 @@ The permission guard checks only a small set of parameter names (`path`, `target
 
 - `Agents and tools/` contains its own Python, Rust, Tauri, and Node project metadata and a large independent test tree. Treat it as a documented vendored project or move it to a submodule/separate repository; the orchestrator currently searches several guessed directory names to locate it.
 - `services/relay/src/` tracks generated `.js`, `.d.ts`, and source-map files alongside the TypeScript sources, while the relay build emits to `dist/`. Keep generated outputs out of `src/` to avoid stale duplicate implementations.
+- The dossier is now treated as the product and architecture source of truth. Its main open implementation decisions are local wake-word versus push-to-talk behavior, visible voice-provider fallback, a single voice-session owner, authenticated remote commands, and verifiable end-to-end incident execution.
 - The root README contains visible text-encoding corruption and some setup information should be checked against the current scripts and service ports.
 - Several agents still invoke shell commands directly. Review `coding.agent.ts`, `incident.agent.ts`, `developer.agent.ts`, and `testing.agent.ts` for safe argument passing, especially where user-controlled branch names, paths, prompts, or commands are involved.
 

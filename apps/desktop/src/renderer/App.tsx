@@ -8,6 +8,7 @@ import { TaskPlan } from "./components/TaskPlan.js";
 import { AuditLog } from "./components/AuditLog.js";
 import { MemoryPalaceViewer } from "./components/MemoryPalaceViewer.js";
 import { MobilePairingModal } from "./components/MobilePairingModal.js";
+import { ApprovalModal } from "./components/ApprovalModal.js";
 import {
   Settings,
   Minimize2,
@@ -33,10 +34,12 @@ export function App() {
   const {
     voiceState,
     activePlan,
+    pendingApproval,
     auditLogs,
     lastResponse,
     setVoiceState,
     setLastResponse,
+    setPendingApproval,
   } = useVanessaStore();
 
   useTaskStream();
@@ -46,6 +49,7 @@ export function App() {
     audioLevel,
     liveSentiment,
     partialTranscript,
+    providerStatus,
     toggleRecording,
     resumeAudio,
   } = useAudioCapture();
@@ -124,6 +128,24 @@ export function App() {
     setTypedCommand("");
     await executeSpeechCommand(cmd);
   };
+
+  const handleApproveTask = useCallback(async (taskId: string) => {
+    const result = await window.vanessa.approveTask(taskId);
+    if (result.success) {
+      setPendingApproval(null);
+    } else {
+      setLastResponse(result.error || "This approval is no longer valid. Review the updated task status.");
+    }
+  }, [setPendingApproval, setLastResponse]);
+
+  const handleRejectTask = useCallback(async (taskId: string) => {
+    const result = await window.vanessa.rejectTask(taskId);
+    if (result.success) {
+      setPendingApproval(null);
+    } else {
+      setLastResponse(result.error || "This approval could not be rejected.");
+    }
+  }, [setPendingApproval, setLastResponse]);
 
   const handleKillSwitch = async () => {
     if (window.vanessa?.cancelTask) {
@@ -549,6 +571,29 @@ export function App() {
           <span>{isMicActive ? "Mic Live" : "Click to Speak"}</span>
         </button>
 
+        {providerStatus && (
+          <div
+            title={`ASR: ${providerStatus.asr.active} (${providerStatus.asr.state})${providerStatus.asr.detail ? ` — ${providerStatus.asr.detail}` : ""}\nTTS: ${providerStatus.tts.active} (${providerStatus.tts.state})${providerStatus.tts.detail ? ` — ${providerStatus.tts.detail}` : ""}`}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "2px",
+              maxWidth: "112px",
+              overflow: "hidden",
+              fontSize: "9px",
+              lineHeight: 1.1,
+              color: providerStatus.asr.state === "fallback" || providerStatus.tts.state === "fallback"
+                ? "#fbbf24"
+                : providerStatus.asr.state === "error" || providerStatus.tts.state === "error"
+                ? "#fb7185"
+                : "var(--text-muted)",
+            }}
+          >
+            <span>ASR · {providerStatus.asr.active}{providerStatus.asr.state === "fallback" ? " (fallback)" : ""}</span>
+            <span>TTS · {providerStatus.tts.active}{providerStatus.tts.state === "fallback" ? " (fallback)" : ""}</span>
+          </div>
+        )}
+
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "6px" }}>
           <input
             type="text"
@@ -824,6 +869,8 @@ export function App() {
           <span>Kill Switch (Esc)</span>
         </button>
       </footer>
+
+      <ApprovalModal task={pendingApproval} onApprove={handleApproveTask} onReject={handleRejectTask} />
     </div>
   );
 }

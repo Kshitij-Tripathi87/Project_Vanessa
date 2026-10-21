@@ -15,6 +15,18 @@ export interface SentimentData {
   };
 }
 
+export interface ProviderStatus {
+  requested: string;
+  active: string;
+  state: "idle" | "connecting" | "ready" | "fallback" | "error";
+  detail?: string;
+}
+
+export interface VoiceProviderStatus {
+  asr: ProviderStatus;
+  tts: ProviderStatus;
+}
+
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
   const ratio = inputSampleRate / 16000;
@@ -38,6 +50,7 @@ export function useAudioCapture() {
   const [liveSentiment, setLiveSentiment] = useState<SentimentData | null>(null);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -46,6 +59,9 @@ export function useAudioCapture() {
   const wsRef = useRef<WebSocket | null>(null);
   const recognitionRef = useRef<any>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const pttActiveRef = useRef(false);
+  const activatedSocketRef = useRef<WebSocket | null>(null);
+  const stopCaptureRef = useRef<(() => void) | null>(null);
 
   // Audio Playback Queue for low-latency streaming TTS chunks
   const audioQueueRef = useRef<Array<{
@@ -152,36 +168,47 @@ export function useAudioCapture() {
     setVoiceState("listening");
   }, [setVoiceState]);
 
-  // Initialize WebSocket connection to Voice Agent (Port 4500 with 4319 fallback)
+  const activateConnectedSocket = useCallback((socket: WebSocket) => {
+    if (pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
+      socket.send(JSON.stringify({ type: "activate" }));
+      activatedSocketRef.current = socket;
+    }
+  }, []);
+
+  // Keep the control channel ready, but do not start audio capture or ASR until PTT.
   const connectVoiceWs = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    // Try WhisperFlow realtime service first, fallback to orchestrator voice stream
-    const primaryUrl = "ws://127.0.0.1:4500/ws";
-    const fallbackUrl = "ws://127.0.0.1:4319/voice/stream";
-
-    let ws = new WebSocket(primaryUrl);
+    const ws = new WebSocket("ws://127.0.0.1:4500/ws");
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("[useAudioCapture] Connected to Vanessa Voice Real-Time WebSocket on port 4500");
+      setMicError(null);
+      activateConnectedSocket(ws);
     };
 
     ws.onerror = () => {
-      if (ws.url.includes("4500")) {
-        console.log("[useAudioCapture] Port 4500 unavailable, switching to orchestrator voice stream on port 4319");
-        const fallbackWs = new WebSocket(fallbackUrl);
-        wsRef.current = fallbackWs;
-        attachMessageHandlers(fallbackWs);
-      }
+      setMicError("Vanessa voice service is unavailable. Start the voice agent and try again.");
+      pttActiveRef.current = false;
+      setVoiceState("error");
     };
 
-    const attachMessageHandlers = (targetWs: WebSocket) => {
-      targetWs.onmessage = (event) => {
+    ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+
+          if (msg.type === "session_ready" && msg.providers) {
+            setProviderStatus(msg.providers);
+            return;
+          }
+
+          if (msg.type === "provider_status" && msg.providers) {
+            setProviderStatus(msg.providers);
+            return;
+          }
 
           if (msg.type === "hud_update") {
             if (msg.state) setVoiceState(msg.state);
@@ -197,6 +224,15 @@ export function useAudioCapture() {
 
           if (msg.type === "state_change") {
             setVoiceState(msg.state);
+            return;
+          }
+
+          if (msg.type === "voice_error") {
+            pttActiveRef.current = false;
+            activatedSocketRef.current = null;
+            stopCaptureRef.current?.();
+            setMicError(msg.message || "Speech recognition could not start.");
+            setVoiceState("error");
             return;
           }
 
@@ -253,20 +289,21 @@ export function useAudioCapture() {
         } catch (err) {
           console.warn("[useAudioCapture] WS message error:", err);
         }
-      };
-
-      targetWs.onclose = () => {
-        setTimeout(connectVoiceWs, 3000);
-      };
     };
 
-    attachMessageHandlers(ws);
-  }, [setVoiceState, setLastResponse, setActivePlan, playNextInQueue]);
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        activatedSocketRef.current = null;
+        setTimeout(connectVoiceWs, 3000);
+      }
+    };
+  }, [activateConnectedSocket, setVoiceState, setLastResponse, setActivePlan, playNextInQueue]);
 
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
     try {
+      if (mediaStreamRef.current) return;
       setMicError(null);
       connectVoiceWs();
 
@@ -318,7 +355,7 @@ export function useAudioCapture() {
         }
 
         // Stream binary 16-bit PCM buffer directly (server frames into 20ms chunks)
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
+        if (pttActiveRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(pcmBuffer.buffer);
         }
       };
@@ -358,6 +395,7 @@ export function useAudioCapture() {
 
   // Stop microphone capture
   const stopRecording = useCallback(() => {
+    pttActiveRef.current = false;
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -380,20 +418,15 @@ export function useAudioCapture() {
 
     setIsMicActive(false);
     setAudioLevel(0);
-    if (voiceState === "listening") {
-      setVoiceState("idle");
-    }
-  }, [voiceState, setVoiceState]);
+  }, []);
+  stopCaptureRef.current = stopRecording;
 
   const resumeAudio = useCallback(async () => {
     if (audioContextRef.current && audioContextRef.current.state === "suspended") {
       await audioContextRef.current.resume();
       console.log("[useAudioCapture] AudioContext successfully resumed!");
     }
-    if (!isMicActive) {
-      await startRecording();
-    }
-  }, [isMicActive, startRecording]);
+  }, []);
 
   const finalizeListening = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -403,37 +436,42 @@ export function useAudioCapture() {
   }, [setVoiceState]);
 
   const toggleRecording = useCallback(async () => {
-    await resumeAudio();
-    if (voiceState === "listening") {
-      // User tapped orb again to conclude speaking -> finalize turn immediately
+    if (pttActiveRef.current) {
+      pttActiveRef.current = false;
+      activatedSocketRef.current = null;
       finalizeListening();
+      stopRecording();
     } else {
-      // User tapped orb to start speaking -> activate listening
+      // Acquire the microphone only after an explicit PTT action.
+      await startRecording();
+      if (!mediaStreamRef.current) return;
+      pttActiveRef.current = true;
       setVoiceState("listening");
       setPartialTranscript("");
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "activate" }));
-      }
+      if (wsRef.current) activateConnectedSocket(wsRef.current);
     }
-  }, [resumeAudio, voiceState, setVoiceState, finalizeListening]);
+  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket]);
 
   useEffect(() => {
     connectVoiceWs();
-    // Auto-start ambient hands-free listening on launch (no buttons or clicks needed)
-    startRecording();
     return () => {
-      stopRecording();
+      pttActiveRef.current = false;
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      processorRef.current?.disconnect();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      audioContextRef.current?.close().catch(() => {});
       if (wsRef.current) {
         wsRef.current.close();
       }
     };
-  }, [connectVoiceWs, startRecording, stopRecording]);
+  }, [connectVoiceWs]);
 
   return {
     isMicActive,
     audioLevel,
     liveSentiment,
     partialTranscript,
+    providerStatus,
     micError,
     startRecording,
     stopRecording,

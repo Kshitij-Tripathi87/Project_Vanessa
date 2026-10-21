@@ -35,6 +35,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
+  ipcMain.handle("vanessa:reject-task", async (_, taskId: string) => {
+    try {
+      const res = await fetch(`${ORCHESTRATOR_URL}/api/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId }),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 3. Cancel Task / Emergency Kill-Switch
   ipcMain.handle("vanessa:cancel-task", async () => {
     try {

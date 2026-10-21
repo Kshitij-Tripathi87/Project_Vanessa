@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
+import { privacyGuard } from "../core/privacy.js";
 import {
   AgentEvidence,
   AgentResult,
@@ -45,7 +46,7 @@ export class FileAgent implements SpecialistAgent {
     switch (action) {
       case "folder.create": {
         const folderName = params.name || params.path || "Buildathon Demo";
-        const basePath = params.basePath || path.join(os.homedir(), "Desktop");
+        const basePath = params.basePath || privacyGuard.getAllowedFolders()[0] || path.join(os.homedir(), "Documents", "VanessaDemo");
         const targetPath = path.isAbsolute(folderName) ? folderName : path.join(basePath, folderName);
 
         if (process.env.FAKE === "1") {
@@ -138,6 +139,10 @@ export class FileAgent implements SpecialistAgent {
               directory: targetDir,
               verifiedFilesystemResults: { totalMatches: matches.length },
             },
+            verification: {
+              passed: true,
+              details: `Directory listing completed for ${targetDir}; ${matches.length} matching entry(ies) observed.`,
+            },
           };
         } catch (err: any) {
           return {
@@ -170,6 +175,10 @@ export class FileAgent implements SpecialistAgent {
             proposedChanges: [`Rename ${oldPath} -> ${newPath}`],
             verifiedFilesystemResults: { oldPath, newPath, success: true },
           },
+          verification: {
+            passed: await fs.stat(newPath).then((stat) => stat.isFile() || stat.isDirectory()).catch(() => false),
+            details: `Rename destination inspected at ${newPath}.`,
+          },
         };
       }
 
@@ -178,12 +187,17 @@ export class FileAgent implements SpecialistAgent {
         const sourceDir = params.sourceDir || process.cwd();
         const requestedZipName = path.basename(String(params.zipName || `project_${Date.now()}.zip`));
         const zipName = requestedZipName.toLowerCase().endsWith(".zip") ? requestedZipName : `${requestedZipName}.zip`;
-        const destZip = path.join(os.tmpdir(), zipName);
+        const archiveRoot = privacyGuard.getAllowedFolders()[0] || process.cwd();
+        const destZip = path.join(archiveRoot, zipName);
         await runPowerShell(
           "Compress-Archive -Path (Join-Path $env:VANESSA_SOURCE '*') -DestinationPath $env:VANESSA_DESTINATION -Force",
           { VANESSA_SOURCE: sourceDir, VANESSA_DESTINATION: destZip },
           15000
         );
+        const zipStats = await fs.stat(destZip);
+        if (!zipStats.isFile() || zipStats.size === 0) {
+          throw new Error("Archive output was missing or empty after compression.");
+        }
         return {
           agentId: this.id,
           status: "completed",
@@ -197,53 +211,38 @@ export class FileAgent implements SpecialistAgent {
             proposedChanges: [`Archive directory ${sourceDir}`],
             verifiedFilesystemResults: { zipPath: destZip },
           },
-        };
-      }
-
-      case "drive.upload": {
-        const filePath = params.filePath || params.file || "report.pdf";
-        const fileId = `drive_${Math.random().toString(36).substring(2, 10)}`;
-        const shareLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
-        const fileName = path.basename(filePath);
-        return {
-          agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: `Uploaded ${fileName} to Google Drive. Link: ${shareLink}`,
-          spokenSummary: "Report uploaded to Google Drive. The share link is ready.",
-          evidence: [
-            {
-              description: `Uploaded file ${fileName} to Google Drive`,
-              source: "Google Drive API",
-              timestamp: startTime,
-              confidence: 1.0,
-            },
-          ],
-          artifacts: [shareLink],
-          data: {
-            file: fileName,
-            fileId,
-            driveFileId: fileId,
-            shareLink,
-            fileReferences: [filePath],
-            proposedChanges: ["Upload file to Google Drive cloud storage"],
-            verifiedFilesystemResults: { uploadConfirmed: true, shareLink },
+          verification: {
+            passed: true,
+            details: `Archive exists at ${destZip} with ${zipStats.size} bytes.`,
           },
         };
       }
 
-      case "drive.share_link": {
-        const fileId = params.fileId || "demo-file";
-        const shareLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+      case "drive.upload": {
         return {
           agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: `Generated share link for file ${fileId}`,
-          spokenSummary: "Share link ready.",
+          status: "failed",
+          success: false,
+          summary: "Google Drive upload integration is not configured.",
+          spokenSummary: "I could not upload the file because Google Drive integration is not configured.",
           evidence: [],
-          artifacts: [shareLink],
-          data: { shareLink },
+          artifacts: [],
+          error: "No authenticated Google Drive client is configured; no upload was attempted.",
+          verification: { passed: false, details: "Cloud upload was not performed." },
+        };
+      }
+
+      case "drive.share_link": {
+        return {
+          agentId: this.id,
+          status: "failed",
+          success: false,
+          summary: "Google Drive sharing integration is not configured.",
+          spokenSummary: "I could not create a share link because Google Drive integration is not configured.",
+          evidence: [],
+          artifacts: [],
+          error: "No authenticated Google Drive client is configured; no share link was created.",
+          verification: { passed: false, details: "Cloud sharing was not performed." },
         };
       }
 

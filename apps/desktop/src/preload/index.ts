@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld("vanessa", {
   approveTask: (taskId: string) =>
     ipcRenderer.invoke("vanessa:approve-task", taskId),
 
+  rejectTask: (taskId: string) =>
+    ipcRenderer.invoke("vanessa:reject-task", taskId),
+
   cancelTask: (taskId?: string) =>
     ipcRenderer.invoke("vanessa:cancel-task", taskId),
 

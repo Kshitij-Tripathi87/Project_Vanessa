@@ -77,39 +77,45 @@ async function main() {
   console.log("     VANESSA SERVICE STACK READINESS PROBE       ");
   console.log("==================================================\n");
 
+  const orchestratorPort = Number(process.env.VANESSA_PORT || 4319);
+  const voiceAgentPort = Number(process.env.VOICE_AGENT_PORT || 4500);
+  const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
+  const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
+  const relayPort = Number(process.env.RELAY_PORT || process.env.PORT || 4400);
+
   const services: ServiceCheck[] = [
     {
       name: "Orchestrator Brain",
-      port: 4319,
+      port: orchestratorPort,
       protocol: "http",
-      url: "http://127.0.0.1:4319/health",
+      url: `http://127.0.0.1:${orchestratorPort}/health`,
       status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
     {
       name: "Voice Agent Gateway",
-      port: 4500,
+      port: voiceAgentPort,
       protocol: "http",
-      url: "http://127.0.0.1:4500/health",
+      url: `http://127.0.0.1:${voiceAgentPort}/health`,
       status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
     {
       name: "Local Whisper ASR",
-      port: 4505,
+      port: localAsrPort,
       protocol: "ws",
-      url: "ws://127.0.0.1:4505",
+      url: localAsrUrl,
       status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
     {
       name: "Mobile Relay WSS",
-      port: Number(process.env.RELAY_PORT || 4400),
+      port: relayPort,
       protocol: "http",
-      url: `http://127.0.0.1:${Number(process.env.RELAY_PORT || 4400)}/health`,
+      url: `http://127.0.0.1:${relayPort}/health`,
       status: "OFFLINE",
       latencyMs: 0,
       details: "",
@@ -158,14 +164,16 @@ async function main() {
   const fishKey = process.env.FISH_API_KEY || "";
   const hasValidFishKey = fishKey.startsWith("sk-fish-");
   const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
-  const ttsProvider = process.env.VOICE_PROVIDER || "fish";
+  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
+  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK !== "false";
 
   console.log("VOICE PROVIDER CONFIGURATION:");
   console.log(`- Configured ASR Provider: ${asrProvider}`);
   console.log(`- Configured TTS Provider: ${ttsProvider}`);
-  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Valid (sk-fish-...)" : "Missing / Placeholder (Using offline fallback)"}`);
-  console.log(`- Fish Model: ${process.env.FISH_MODEL || "s2.1-pro-free"}`);
-  console.log(`- Offline Local ASR Fallback: ws://127.0.0.1:4505 (Faster-Whisper)`);
+  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Valid (sk-fish-...)" : fallbackEnabled ? "Missing / Placeholder (local ASR fallback enabled)" : "Missing / Placeholder (Fish ASR unavailable)"}`);
+  console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
+  console.log(`- Fish TTS Model: ${process.env.FISH_MODEL || "s2.1-pro-free"}`);
+  console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
 
   const onlineCount = services.filter((s) => s.status === "ONLINE").length;
   console.log(`\nReadiness: ${onlineCount}/${services.length} services online.`);

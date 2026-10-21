@@ -43,6 +43,14 @@ if (typeof window !== "undefined" && !window.vanessa) {
       });
       return res.json();
     },
+    rejectTask: async (taskId) => {
+      const res = await fetch("http://127.0.0.1:4319/api/reject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId }),
+      });
+      return res.json();
+    },
     cancelTask: async () => {
       const res = await fetch("http://127.0.0.1:4319/api/cancel", {
         method: "POST",
