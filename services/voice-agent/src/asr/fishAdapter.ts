@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { decode, encode } from "@msgpack/msgpack";
 import { AsrAdapter, ProviderRuntimeStatus, TranscriptResult } from "./types.js";
 import { VoiceAdapter } from "./voiceAdapter.js";
 
@@ -12,6 +13,9 @@ export interface FishAsrOptions {
 
 export class FishAsrAdapter implements AsrAdapter {
   name = "fish";
+  get usesServerTurnDetection(): boolean {
+    return !this.useFallback;
+  }
   private ws: WebSocket | null = null;
   private handlers?: {
     onPartial: (result: TranscriptResult) => void;
@@ -21,8 +25,13 @@ export class FishAsrAdapter implements AsrAdapter {
   private isReconnecting = false;
   private fallbackAdapter: VoiceAdapter | null = null;
   private useFallback = false;
+  private fallbackReason = "";
   private allowFallback = true;
   private queuedFrames: Buffer[] = [];
+  private pendingAudio = Buffer.alloc(0);
+  private sessionStarted = false;
+  private providerSessionId?: string;
+  private finalizing = false;
   private apiKey: string;
   private url: string;
   private model: string;
@@ -97,55 +106,68 @@ export class FishAsrAdapter implements AsrAdapter {
         this.isConnected = true;
         this.isReconnecting = false;
         this.useFallback = false;
-        this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "ready" });
+        this.sessionStarted = false;
+        this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: "Waiting for Fish Audio to initialize the transcription session." });
         console.log(`[FishAsrAdapter] Connected to Fish Realtime ASR at ${this.url} (${this.model})`);
 
-        // Send initialization handshake
-        ws.send(
-          JSON.stringify({
-            type: "start",
-            model: this.model,
-            sample_rate: this.sampleRate,
-            language: "en",
-          })
-        );
-
-        // Flush queued frames
-        while (this.isSessionActive && this.queuedFrames.length > 0) {
-          const frame = this.queuedFrames.shift()!;
-          ws.send(frame);
-        }
+        // Fish realtime ASR uses MessagePack control/audio messages and waits
+        // for session_started before accepting audio.
+        ws.send(encode({
+          type: "config",
+          audio: { format: "pcm_s16le", sample_rate: this.sampleRate, channels: 1 },
+          turn_detection: { mode: "auto", eager: true },
+          results: { drafts: true },
+        }));
       });
 
       ws.on("message", (raw: WebSocket.Data) => {
         try {
-          const msg = JSON.parse(raw.toString());
-          // Fish Audio Realtime ASR events: draft vs committed
-          const eventType = msg.type || msg.event;
-          const text = (msg.text || msg.transcript || "").trim();
+          const packed = Buffer.isBuffer(raw)
+            ? raw
+            : Array.isArray(raw)
+              ? Buffer.concat(raw)
+              : Buffer.from(raw as ArrayBuffer);
+          const msg = decode(packed) as Record<string, any>;
+          const eventType = msg.type;
 
+          if (eventType === "session_started") {
+            this.sessionStarted = true;
+            this.providerSessionId = typeof msg.session_id === "string" ? msg.session_id : undefined;
+            this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "ready" });
+            this.flushQueuedFrames(ws);
+            return;
+          }
+
+          if (eventType === "error") {
+            const detail = typeof msg.message === "string" ? msg.message : "Fish Audio returned an ASR session error.";
+            this.isConnected = false;
+            if (this.allowFallback) this.initFallback(`${detail} Local Whisper fallback is enabled.`);
+            else this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail });
+            return;
+          }
+
+          const text = (msg.text || "").trim();
           if (!text) return;
 
-          if (eventType === "draft" || msg.is_final === false) {
+          if (eventType === "draft") {
             // Draft = HUD display only. INVARIANT: never triggers planning!
             this.handlers?.onPartial({
               text,
               isFinal: false,
-              language: msg.language || "en",
-              confidence: msg.confidence ?? 0.88,
+              language: msg.language_code || "en",
             });
-          } else if (eventType === "committed" || msg.is_final === true) {
+          } else if (eventType === "committed" && msg.user_turn !== false) {
             // Committed turn = Command ready for planner
             console.log(`[FishAsrAdapter] Committed Turn: "${text}"`);
             this.handlers?.onFinal({
               text,
               isFinal: true,
-              language: msg.language || "en",
-              confidence: msg.confidence ?? 0.98,
+              language: msg.language_code || "en",
+              turnId: `${this.providerSessionId || "fish"}:${msg.turn_index ?? text}`,
             });
           }
         } catch {
-          // Binary message or non-json ping
+          // Ignore malformed MessagePack frames and non-session control data.
         }
       });
 
@@ -163,8 +185,9 @@ export class FishAsrAdapter implements AsrAdapter {
       ws.on("close", (code, reason) => {
         if (this.ws !== ws) return;
         this.isConnected = false;
+        this.sessionStarted = false;
         console.log(`[FishAsrAdapter] Disconnected (code: ${code}, reason: ${reason || "none"}).`);
-        if (this.isSessionActive && !this.useFallback && !this.isReconnecting) {
+        if (this.isSessionActive && !this.finalizing && !this.useFallback && !this.isReconnecting) {
           this.isReconnecting = true;
           this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: "Reconnecting to Fish Audio." });
           this.reconnectTimer = setTimeout(() => {
@@ -187,9 +210,37 @@ export class FishAsrAdapter implements AsrAdapter {
 
   private initFallback(detail: string): void {
     this.useFallback = true;
+    this.fallbackReason = detail;
+    this.isConnected = false;
+    this.sessionStarted = false;
+    this.queuedFrames = [];
+    this.pendingAudio = Buffer.alloc(0);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const failedSocket = this.ws;
+    this.ws = null;
+    if (failedSocket && failedSocket.readyState < WebSocket.CLOSING) {
+      try { failedSocket.close(); } catch {}
+    }
     this.setStatus({ requested: "Fish Audio", active: "Local Whisper", state: "fallback", detail });
     if (!this.fallbackAdapter) {
       this.fallbackAdapter = new VoiceAdapter();
+      this.fallbackAdapter.setStatusHandler((providerStatus) => {
+        if (!this.useFallback) return;
+        const state = providerStatus.state === "error"
+          ? "error"
+          : providerStatus.state === "connecting"
+            ? "connecting"
+            : "fallback";
+        this.setStatus({
+          requested: "Fish Audio",
+          active: "Local Whisper",
+          state,
+          detail: [this.fallbackReason, providerStatus.detail].filter(Boolean).join(" "),
+        });
+      });
       if (this.handlers) {
         this.fallbackAdapter.connect(this.handlers);
       }
@@ -209,30 +260,63 @@ export class FishAsrAdapter implements AsrAdapter {
     }
 
     const buffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(buffer);
-    } else {
-      this.queuedFrames.push(buffer);
-      if (this.queuedFrames.length > 100) {
-        this.queuedFrames.shift(); // retain max ~8-10 seconds
-      }
+    this.pendingAudio = this.pendingAudio.length ? Buffer.concat([this.pendingAudio, buffer]) : Buffer.from(buffer);
+    const messageBytes = Math.round(this.sampleRate * 0.1) * 2; // Fish expects 80–100 ms per message.
+    while (this.pendingAudio.length >= messageBytes) {
+      const audio = this.pendingAudio.subarray(0, messageBytes);
+      this.pendingAudio = this.pendingAudio.subarray(messageBytes);
+      this.sendAudioMessage(Buffer.from(audio));
     }
   }
 
   finalizeTurn(): void {
+    if (!this.isSessionActive) return;
     if (this.useFallback && this.fallbackAdapter) {
       this.fallbackAdapter.finalizeTurn?.();
       return;
     }
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "finish" }));
+    this.finalizing = true;
+    if (this.pendingAudio.length) {
+      const messageBytes = Math.round(this.sampleRate * 0.1) * 2;
+      const tail = Buffer.alloc(messageBytes);
+      this.pendingAudio.copy(tail);
+      this.pendingAudio = Buffer.alloc(0);
+      this.sendAudioMessage(tail);
+    }
+    this.queueOrSend(Buffer.from(encode({ type: "audio_done" })));
+  }
+
+  private sendAudioMessage(audio: Buffer): void {
+    this.queueOrSend(Buffer.from(encode({ type: "audio", data: audio })));
+  }
+
+  private queueOrSend(message: Buffer): void {
+    if (this.sessionStarted && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(message);
+      return;
+    }
+    this.queuedFrames.push(message);
+    // Bound pre-handshake buffering to five seconds of audio/control messages.
+    if (this.queuedFrames.length > 50) this.queuedFrames.shift();
+  }
+
+  private flushQueuedFrames(ws: WebSocket): void {
+    while (this.isSessionActive && this.sessionStarted && ws === this.ws && ws.readyState === WebSocket.OPEN && this.queuedFrames.length) {
+      ws.send(this.queuedFrames.shift()!);
     }
   }
 
   activateStream(durationMs = 25000): void {
+    if (this.finalizing && this.ws && this.ws.readyState < WebSocket.CLOSING) {
+      try { this.ws.close(); } catch {}
+      this.ws = null;
+    }
     this.isSessionActive = true;
+    this.finalizing = false;
+    this.sessionStarted = false;
+    this.providerSessionId = undefined;
+    this.pendingAudio = Buffer.alloc(0);
     this.isReconnecting = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -254,7 +338,7 @@ export class FishAsrAdapter implements AsrAdapter {
     }
 
     this.idleTimer = setTimeout(() => {
-      this.deactivateStream();
+      this.finalizeTurn();
     }, durationMs);
   }
 
@@ -263,20 +347,32 @@ export class FishAsrAdapter implements AsrAdapter {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+    const finishProviderSession = this.sessionStarted && this.ws?.readyState === WebSocket.OPEN && !this.finalizing;
     this.isSessionActive = false;
+    this.isConnected = false;
+    this.finalizing = true;
+    if (finishProviderSession && this.ws) {
+      this.ws.send(Buffer.from(encode({ type: "audio_done" })));
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.queuedFrames = [];
+    this.pendingAudio = Buffer.alloc(0);
     this.fallbackAdapter?.deactivateStream?.();
 
-    if (this.ws && this.ws.readyState < WebSocket.CLOSING) {
+    if (!finishProviderSession && this.ws && this.ws.readyState < WebSocket.CLOSING) {
       console.log("[FishAsrAdapter] Closing Fish Realtime ASR socket after the active capture window.");
       try {
         this.ws.close();
       } catch {}
       this.ws = null;
+    }
+    if (finishProviderSession) {
+      // The provider closes after sending session_done. Retain the socket ref
+      // until its close event so its final lifecycle signal can be consumed.
+      this.sessionStarted = false;
     }
     if (!this.useFallback && this.status.state !== "error") {
       this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "idle" });
@@ -289,7 +385,12 @@ export class FishAsrAdapter implements AsrAdapter {
       this.idleTimer = null;
     }
     this.isSessionActive = false;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.finalizing = true;
+    this.sessionStarted = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       try {
         this.ws.close();
@@ -299,6 +400,10 @@ export class FishAsrAdapter implements AsrAdapter {
     this.isConnected = false;
     this.fallbackAdapter?.close();
     this.fallbackAdapter = null;
+    this.useFallback = false;
+    this.isReconnecting = false;
     this.queuedFrames = [];
+    this.pendingAudio = Buffer.alloc(0);
+    this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "idle" });
   }
 }

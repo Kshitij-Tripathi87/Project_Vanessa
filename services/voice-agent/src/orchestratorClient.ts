@@ -1,5 +1,5 @@
 export interface OrchestratorCommandResult {
-  status: "success" | "awaiting_approval" | "failed";
+  status: "success" | "awaiting_approval" | "failed" | "partial" | "accepted";
   spokenSummary: string;
   planId?: string;
   plan?: any;
@@ -16,6 +16,7 @@ export class OrchestratorClient {
     command: string;
     source?: string;
     language?: string;
+    conversationContext?: Array<{ role: "user" | "assistant"; content: string }>;
   }): Promise<OrchestratorCommandResult> {
     const res = await fetch(`${this.baseUrl}/api/execute`, {
       method: "POST",
@@ -24,6 +25,7 @@ export class OrchestratorClient {
         command: input.command,
         source: input.source || "voice",
         language: input.language || "en",
+        conversationContext: input.conversationContext,
       }),
     });
 

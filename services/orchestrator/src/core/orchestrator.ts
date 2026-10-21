@@ -44,7 +44,7 @@ export class VanessaOrchestrator {
   }
 
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
-    const { command, language = "en", sentiment, envelope } = payload;
+    const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
@@ -92,7 +92,7 @@ export class VanessaOrchestrator {
     });
 
     // 1. Generate task plan
-    const plan = await planner.createPlan(command);
+    const plan = await planner.createPlan(command, conversationContext);
 
     // 2. Execute plan through parallel DAG task runner
     const tasks = await runPlan(plan);

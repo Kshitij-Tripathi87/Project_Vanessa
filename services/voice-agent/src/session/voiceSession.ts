@@ -11,6 +11,7 @@ import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
+import { ConversationTurn } from "@vanessa/shared";
 
 export type SessionState =
   | "idle"
@@ -48,7 +49,11 @@ export class VanessaVoiceSession {
   private isSpeaking = false;
   private isAsrConnected = false;
   private asrConnectPromise?: Promise<void>;
+  private sessionGeneration = 0;
   private handlers: VoiceSessionHandlers = {};
+  private conversationContext: ConversationTurn[] = [];
+  private processedTurnIds = new Set<string>();
+  private queuedUtterances: Array<{ text: string; language: string }> = [];
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
@@ -115,8 +120,7 @@ export class VanessaVoiceSession {
         this.handlers.onPartialTranscript?.(result.text);
       },
       onFinal: async (result) => {
-        if (this.isProcessing) return;
-        await this.handleFinalUtterance(result.text, result.language);
+        await this.handleFinalUtterance(result.text, result.language, result.turnId);
       },
     })).then(() => {
       this.isAsrConnected = true;
@@ -169,7 +173,7 @@ export class VanessaVoiceSession {
       partialTranscript: this.partialTranscript,
     });
 
-    if (turnState === "complete" && !this.isProcessing && !this.isFinalizingTurn) {
+    if (turnState === "complete" && !this.asr.usesServerTurnDetection && !this.isProcessing && !this.isFinalizingTurn) {
       this.isFinalizingTurn = true;
       console.log("[VanessaVoiceSession] Turn complete detected by VAD, finalizing turn...");
       this.finalizeTurn();
@@ -184,14 +188,32 @@ export class VanessaVoiceSession {
     this.asr.finalizeTurn?.();
   }
 
-  async handleFinalUtterance(rawText: string, language = "en"): Promise<void> {
-    if (this.isProcessing) return;
+  async handleFinalUtterance(rawText: string, language = "en", turnId?: string, alreadyAccepted = false): Promise<void> {
+    if (turnId && this.processedTurnIds.has(turnId)) return;
+    if (turnId) {
+      this.processedTurnIds.add(turnId);
+      if (this.processedTurnIds.size > 32) {
+        const oldest = this.processedTurnIds.values().next().value;
+        if (oldest) this.processedTurnIds.delete(oldest);
+      }
+    }
+    if (this.isProcessing) {
+      // PTT or a barge-in explicitly opened this ASR window. Queue a couple of
+      // follow-up turns while the current response/task finishes, then route
+      // them through the same orchestrator path in order.
+      const wakeCheck = this.wakeWord.processTranscript(rawText);
+      if (wakeCheck.detected && wakeCheck.cleanedText.trim() && this.queuedUtterances.length < 2) {
+        this.queuedUtterances.push({ text: wakeCheck.cleanedText, language });
+      }
+      return;
+    }
+    const generation = this.sessionGeneration;
     this.isFinalizingTurn = false;
     console.log(`[VanessaVoiceSession] Processing utterance: "${rawText}"`);
     this.isProcessing = true;
 
     // Filter wake word prefix
-    const wakeCheck = this.wakeWord.processTranscript(rawText);
+    const wakeCheck = alreadyAccepted ? { detected: true, cleanedText: rawText } : this.wakeWord.processTranscript(rawText);
     if (!wakeCheck.detected) {
       // Ignore transcripts unless an explicit push-to-talk activation is active.
       this.isProcessing = false;
@@ -223,6 +245,8 @@ export class VanessaVoiceSession {
     this.setState("thinking");
     this.handlers.onFinalTranscript?.(command);
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });
+    this.conversationContext.push({ role: "user", content: command });
+    this.conversationContext = this.conversationContext.slice(-8);
 
     try {
       this.setState("executing");
@@ -233,6 +257,7 @@ export class VanessaVoiceSession {
         command,
         source: "voice",
         language,
+        conversationContext: this.conversationContext,
       });
 
       this.setState("responding");
@@ -244,17 +269,30 @@ export class VanessaVoiceSession {
 
       // Streaming TTS playback with sentence boundary chunking
       await this.speak(execution.spokenSummary);
+      this.conversationContext.push({ role: "assistant", content: execution.spokenSummary });
+      this.conversationContext = this.conversationContext.slice(-8);
     } catch (err: any) {
       console.error("[VanessaVoiceSession] Execution error:", err.message);
-      this.setState("idle");
+      const message = "I couldn't reach the task coordinator. Your request was not submitted; please try again.";
+      this.setState("responding");
+      this.handlers.onHudUpdate?.({ state: "responding", transcript: message });
+      await this.speak(message).catch(() => {});
     } finally {
       this.isProcessing = false;
       this.turnDetector.reset();
-      this.bargeIn.reset();
-      this.wakeWord.resetSession();
-      this.asr.deactivateStream?.();
+      if (generation === this.sessionGeneration) {
+        this.bargeIn.reset();
+        this.wakeWord.resetSession();
+        this.asr.deactivateStream?.();
+      }
       if (this.state !== "listening") {
         this.setState("idle");
+      }
+      const queuedTurn = this.queuedUtterances.shift();
+      if (queuedTurn) {
+        queueMicrotask(() => {
+          void this.handleFinalUtterance(queuedTurn.text, queuedTurn.language, undefined, true);
+        });
       }
     }
   }
@@ -263,14 +301,15 @@ export class VanessaVoiceSession {
    * Speak response via streaming TTS
    */
   async speak(text: string): Promise<void> {
+    const generation = this.sessionGeneration;
     this.isSpeaking = true;
     try {
       await this.tts.streamSpeech(text, (chunk) => {
-        if (!this.isSpeaking) return; // interrupted
+        if (!this.isSpeaking || generation !== this.sessionGeneration) return; // interrupted or superseded
         this.handlers.onAudioChunkOut?.(chunk);
       });
     } finally {
-      this.isSpeaking = false;
+      if (generation === this.sessionGeneration) this.isSpeaking = false;
     }
   }
 
@@ -278,21 +317,26 @@ export class VanessaVoiceSession {
    * Barge-In interrupt: immediately cancels active speech and downstream responses
    */
   interrupt(): void {
+    this.sessionGeneration += 1;
     this.isSpeaking = false;
     this.tts.abort();
     this.bargeIn.reset();
     this.setState("interrupted");
     this.handlers.onStateChange?.("interrupted");
 
-    // Immediately transition to listening for the user's new request
-    setTimeout(() => {
-      this.setState("listening");
-      this.turnDetector.reset();
-      this.handlers.onHudUpdate?.({ state: "listening", transcript: "" });
-    }, 100);
+    // Local speech onset is an explicit conversational interruption. Re-open
+    // ASR immediately; old response cleanup is generation-guarded above.
+    this.turnDetector.reset();
+    this.resumeSessionAfterInterruption(this.sessionGeneration).then((resumed) => {
+      if (resumed) this.handlers.onHudUpdate?.({ state: "listening", transcript: "" });
+    }).catch((err) => {
+      console.warn("[VanessaVoiceSession] Could not resume ASR after interruption:", err.message);
+      if (this.state === "interrupted") this.setState("idle");
+    });
   }
 
   stop(): void {
+    this.sessionGeneration += 1;
     this.isSpeaking = false;
     this.tts.abort();
     this.asr.close();
@@ -310,5 +354,15 @@ export class VanessaVoiceSession {
   private setState(state: SessionState): void {
     this.state = state;
     this.handlers.onStateChange?.(state);
+  }
+
+  private async resumeSessionAfterInterruption(generation: number): Promise<boolean> {
+    this.wakeWord.touchActiveSession(25000);
+    await this.ensureAsrConnected();
+    if (generation !== this.sessionGeneration) return false;
+    this.asr.activateStream?.(25000);
+    this.setState("listening");
+    this.turnDetector.reset();
+    return true;
   }
 }

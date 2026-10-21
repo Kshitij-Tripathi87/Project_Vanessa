@@ -14,6 +14,7 @@ export class VoiceAdapter implements AsrAdapter {
   private streamActive = false;
   private statusHandler?: (status: ProviderRuntimeStatus) => void;
   private reconnectTimer?: NodeJS.Timeout;
+  private connectionError?: string;
 
   constructor(
     private readonly serverUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505"
@@ -29,7 +30,12 @@ export class VoiceAdapter implements AsrAdapter {
   }
 
   getProviderStatus(): ProviderRuntimeStatus {
-    return { requested: "Local Whisper", active: "Local Whisper", state: this.streamActive ? (this.isConnected ? "ready" : "connecting") : "idle" };
+    return {
+      requested: "Local Whisper",
+      active: "Local Whisper",
+      state: this.streamActive ? (this.isConnected ? "ready" : this.connectionError ? "error" : "connecting") : "idle",
+      detail: this.streamActive && !this.isConnected ? this.connectionError : undefined,
+    };
   }
 
   setStatusHandler(handler: (status: ProviderRuntimeStatus) => void): void {
@@ -40,6 +46,8 @@ export class VoiceAdapter implements AsrAdapter {
   private initSocket(): void {
     if (!this.streamActive || !this.shouldReconnect) return;
     try {
+      this.connectionError = undefined;
+      this.statusHandler?.(this.getProviderStatus());
       const websocket = new WebSocket(this.serverUrl);
       this.websocket = websocket;
 
@@ -49,6 +57,7 @@ export class VoiceAdapter implements AsrAdapter {
           return;
         }
         this.isConnected = true;
+        this.connectionError = undefined;
         this.statusHandler?.(this.getProviderStatus());
         console.log(`[VoiceAdapter] Connected to Voice ASR daemon at ${this.serverUrl}`);
 
@@ -81,22 +90,25 @@ export class VoiceAdapter implements AsrAdapter {
         } catch {}
       });
 
-      websocket.on("error", () => {
+      websocket.on("error", (err) => {
         if (this.websocket !== websocket) return;
         this.isConnected = false;
+        this.connectionError = `Local Whisper connection failed: ${err.message}`;
         this.statusHandler?.(this.getProviderStatus());
       });
 
       websocket.on("close", () => {
         if (this.websocket !== websocket) return;
         this.isConnected = false;
+        if (!this.connectionError) this.connectionError = "Local Whisper connection closed.";
         this.statusHandler?.(this.getProviderStatus());
         if (this.shouldReconnect && this.streamActive) {
           this.reconnectTimer = setTimeout(() => this.initSocket(), 1500);
         }
       });
-    } catch {
+    } catch (err: any) {
       this.isConnected = false;
+      this.connectionError = `Local Whisper connection failed: ${err.message || "unknown error"}`;
       this.statusHandler?.(this.getProviderStatus());
       if (this.shouldReconnect && this.streamActive) {
         this.reconnectTimer = setTimeout(() => this.initSocket(), 1500);
@@ -148,6 +160,7 @@ export class VoiceAdapter implements AsrAdapter {
     this.websocket?.close();
     this.websocket = undefined;
     this.isConnected = false;
+    this.connectionError = undefined;
     this.statusHandler?.(this.getProviderStatus());
   }
 
