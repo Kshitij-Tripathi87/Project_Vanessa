@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
+import { openCodex } from "./codex-launcher.js";
 
 const execAsync = promisify(exec);
 
@@ -9,6 +10,9 @@ export class DeveloperAgent {
 
   async execute(action: string, params: Record<string, any> = {}): Promise<any> {
     switch (action) {
+      case "codex.open":
+        return openCodex(params);
+
       case "vscode.open_project": {
         const projectPath = params.path || process.cwd();
         try {
