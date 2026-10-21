@@ -92,10 +92,10 @@ export class VanessaOrchestrator {
       action: "command_received",
       status: "info",
       details: { command, language, sentiment, requestId, idempotencyKey },
-    });
+    }, requestId);
 
     // 1. Generate task plan
-    const plan = await planner.createPlan(command, conversationContext);
+    const plan = await planner.createPlan(command, conversationContext, requestId);
 
     // 2. Execute plan through parallel DAG task runner
     const tasks = await runPlan(plan);

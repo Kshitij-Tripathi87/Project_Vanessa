@@ -13,8 +13,8 @@ export class TurnDetector {
 
   constructor(options?: TurnDetectorOptions) {
     this.options = {
-      silenceThresholdMs: options?.silenceThresholdMs ?? 650,
-      minSpeechMs: options?.minSpeechMs ?? 350,
+      silenceThresholdMs: options?.silenceThresholdMs ?? (Number(process.env.VOICE_TURN_SILENCE_MS) || 650),
+      minSpeechMs: options?.minSpeechMs ?? (Number(process.env.VOICE_TURN_MIN_SPEECH_MS) || 350),
     };
   }
 

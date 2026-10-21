@@ -2,7 +2,7 @@ import { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { BargeInDetector } from "./bargeIn.js";
-import { WakeWordDetector } from "./wakeWord.js";
+import { WakeWordDetector, WakeWordResult } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
@@ -42,6 +42,8 @@ export class VanessaVoiceSession {
   private vad = new SileroVadDetector();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
+  private porcupineWakeWord: { processChunk(pcm: Int16Array): boolean; release(): void } | null = null;
+  private porcupineWakeWordType: "porcupine" | "transcript" = "transcript";
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
 
@@ -56,6 +58,7 @@ export class VanessaVoiceSession {
   private conversationContext: ConversationTurn[] = [];
   private processedTurnIds = new Set<string>();
   private queuedUtterances: Array<{ text: string; language: string }> = [];
+  private porcupineBuffer: Int16Array | null = null;
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
@@ -85,6 +88,28 @@ export class VanessaVoiceSession {
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
     this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
+
+    // Initialize optional audio-level wake word (Porcupine)
+    this.initPorcupineWakeWord().catch((err) => {
+      console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
+    });
+  }
+
+  private async initPorcupineWakeWord(): Promise<void> {
+    const provider = process.env.VOICE_WAKE_PROVIDER?.toLowerCase();
+    if (provider !== "porcupine") return;
+
+    try {
+      const { createWakeWordDetector } = await import("./porcupineWakeWord.js");
+      const detector = await createWakeWordDetector();
+      if (detector) {
+        this.porcupineWakeWord = detector.detector;
+        this.porcupineWakeWordType = detector.type;
+        console.log("[VanessaVoiceSession] Audio-level wake word enabled:", detector.type);
+      }
+    } catch (err: any) {
+      console.warn("[VanessaVoiceSession] Porcupine wake word unavailable, using transcript-based:", err.message);
+    }
   }
 
   setHandlers(handlers: VoiceSessionHandlers): void {
@@ -161,18 +186,33 @@ export class VanessaVoiceSession {
     // 1. VAD speech detection
     const vadRes = this.vad.processChunk(chunk.pcm);
 
-    // 2. Hardware Barge-In check: interrupt Vanessa if user starts speaking
+    // 2. Optional: Audio-level wake word detection (Porcupine)
+    // Porcupine expects 512 samples @ 16kHz; we accumulate two 320-sample frames
+    if (this.porcupineWakeWord && !this.wakeWord.isSessionActive()) {
+      this.porcupineBuffer = this.porcupineBuffer ? new Int16Array([...this.porcupineBuffer, ...chunk.pcm]) : chunk.pcm;
+      if (this.porcupineBuffer.length >= 512) {
+        const porcupineFrame = this.porcupineBuffer.slice(0, 512);
+        this.porcupineBuffer = this.porcupineBuffer.slice(512);
+        if (this.porcupineWakeWord.processChunk(porcupineFrame)) {
+          console.log("[VanessaVoiceSession] Audio-level wake word detected!");
+          this.wakeWord.touchActiveSession(25000);
+          // Process the remaining audio in this chunk for ASR
+        }
+      }
+    }
+
+    // 3. Hardware Barge-In check: interrupt Vanessa if user starts speaking
     if (this.bargeIn.shouldInterrupt(vadRes.isSpeech, this.isSpeaking)) {
       this.interrupt();
       return;
     }
 
-    // 3. Stream audio chunk to ASR
+    // 4. Stream audio chunk to ASR
     if (this.wakeWord.isSessionActive()) {
       this.asr.sendAudioChunk(chunk.pcm);
     }
 
-    // 4. Turn detection: silence threshold + transcript completion
+    // 5. Turn detection: silence threshold + transcript completion
     const turnState = this.turnDetector.process({
       isSpeech: vadRes.isSpeech,
       partialTranscript: this.partialTranscript,

@@ -354,7 +354,7 @@ fastify.get("/remote", async (request, reply) => {
 });
 
 // Voice service status - delegates to voice-agent service on port 4500
-// Fish Audio is the selected provider; ElevenLabs integration moved to voice-agent
+// Fish Audio is the selected provider; all voice configuration validated in voice-agent
 fastify.get("/voice/session", async (request, reply) => {
   const voiceAgentUrl = process.env.VOICE_AGENT_URL || "http://127.0.0.1:4500";
 

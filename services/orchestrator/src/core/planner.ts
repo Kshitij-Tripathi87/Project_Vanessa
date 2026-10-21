@@ -68,7 +68,7 @@ export class VanessaPlanner {
     return task;
   }
 
-  async createPlan(command: string, conversationContext: ConversationTurn[] = []): Promise<Plan> {
+  async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestId?: string): Promise<Plan> {
     const planId = `plan_${Date.now()}`;
     await skillsRuntime.initialize();
 
@@ -105,7 +105,7 @@ export class VanessaPlanner {
             tasks,
             createdAt: Date.now(),
           };
-          eventBus.emitEvent("plan:created", plan);
+          eventBus.emitEvent("plan:created", plan, requestId);
           return plan;
         }
       } catch (err) {
@@ -116,7 +116,7 @@ export class VanessaPlanner {
     // Heuristic & Pattern-based deterministic planner
     const plan = this.createHeuristicPlan(command, planId);
     plan.tasks = plan.tasks.map((t: Task) => this.enrichTask(t, command));
-    eventBus.emitEvent("plan:created", plan);
+    eventBus.emitEvent("plan:created", plan, requestId);
     return plan;
   }
 

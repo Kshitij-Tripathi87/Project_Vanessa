@@ -158,6 +158,7 @@ export interface Plan {
   tasks: Task[];
   createdAt?: number;
   completedAt?: number;
+  requestId?: string;
 }
 
 export interface AgentMessage {

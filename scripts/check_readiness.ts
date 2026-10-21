@@ -104,6 +104,15 @@ async function main() {
       details: "",
     },
     {
+      name: "Voice Agent Liveness",
+      port: voiceAgentPort,
+      protocol: "http",
+      url: `http://127.0.0.1:${voiceAgentPort}/live`,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    },
+    {
       name: "Local Whisper ASR",
       port: localAsrPort,
       protocol: "ws",
