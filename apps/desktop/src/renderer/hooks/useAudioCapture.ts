@@ -63,12 +63,18 @@ export function useAudioCapture() {
   voiceStateRef.current = voiceState;
   const pttActiveRef = useRef(false);
   const activatedSocketRef = useRef<WebSocket | null>(null);
+  const preRollRef = useRef<ArrayBuffer[]>([]);
+  const pendingBargeAudioRef = useRef<ArrayBuffer[]>([]);
+  const bargeResumePendingRef = useRef(false);
   const stopCaptureRef = useRef<((preservePlaybackContext?: boolean) => void) | null>(null);
 
   // Audio Playback Queue for low-latency streaming TTS chunks
   const audioQueueRef = useRef<Array<{
     text: string;
     audioBase64?: string;
+    format?: "mp3" | "pcm_s16le";
+    sampleRate?: number;
+    fallbackSpeech?: boolean;
     speechRate: number;
     speechPitch: number;
     isFinal: boolean;
@@ -90,7 +96,7 @@ export function useAudioCapture() {
     if (item.audioBase64 && (window.AudioContext || (window as any).webkitAudioContext)) {
       try {
         if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         }
         const audioCtx = audioContextRef.current;
         if (audioCtx.state === "suspended") {
@@ -102,7 +108,16 @@ export function useAudioCapture() {
         for (let i = 0; i < binaryStr.length; i++) {
           bytes[i] = binaryStr.charCodeAt(i);
         }
-        const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
+        let audioBuffer: AudioBuffer;
+        if (item.format === "pcm_s16le") {
+          const sampleCount = Math.floor(bytes.byteLength / 2);
+          const samples = new Int16Array(bytes.buffer, bytes.byteOffset, sampleCount);
+          audioBuffer = audioCtx.createBuffer(1, sampleCount, item.sampleRate || 24000);
+          const channel = audioBuffer.getChannelData(0);
+          for (let i = 0; i < sampleCount; i++) channel[i] = samples[i] / (samples[i] < 0 ? 0x8000 : 0x7fff);
+        } else {
+          audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
+        }
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
         activeSourceNodeRef.current = source;
@@ -126,7 +141,7 @@ export function useAudioCapture() {
     }
 
     // 2. Client-side SpeechSynthesis fallback with emotion-modulated rate & pitch
-    if ("speechSynthesis" in window && item.text) {
+    if (item.fallbackSpeech && "speechSynthesis" in window && item.text) {
       const utterance = new SpeechSynthesisUtterance(item.text);
       utterance.rate = item.speechRate || 1.05;
       utterance.pitch = item.speechPitch || 1.02;
@@ -179,6 +194,9 @@ export function useAudioCapture() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: Date.now() }));
     }
+    pendingBargeAudioRef.current = preRollRef.current;
+    preRollRef.current = [];
+    bargeResumePendingRef.current = true;
     pttActiveRef.current = true;
     setVoiceState("listening");
   }, [setVoiceState]);
@@ -239,6 +257,11 @@ export function useAudioCapture() {
 
           if (msg.type === "state_change") {
             setVoiceState(msg.state);
+            if (msg.state === "listening" && bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
+              for (const frame of pendingBargeAudioRef.current) ws.send(frame);
+              pendingBargeAudioRef.current = [];
+              bargeResumePendingRef.current = false;
+            }
             return;
           }
 
@@ -248,6 +271,12 @@ export function useAudioCapture() {
             stopCaptureRef.current?.();
             setMicError(msg.message || "Speech recognition could not start.");
             setVoiceState("error");
+            return;
+          }
+
+          if (msg.type === "tts_unavailable") {
+            setMicError(`Speech playback is unavailable. ${msg.detail || "The response remains available as text."}`);
+            setVoiceState("idle");
             return;
           }
 
@@ -273,6 +302,9 @@ export function useAudioCapture() {
             audioQueueRef.current.push({
               text: msg.text,
               audioBase64: msg.audioBase64,
+              format: msg.format,
+              sampleRate: msg.sampleRate,
+              fallbackSpeech: msg.fallbackSpeech === true,
               speechRate: msg.speechRate || 1.05,
               speechPitch: msg.speechPitch || 1.02,
               isFinal: msg.isFinal ?? false,
@@ -377,9 +409,17 @@ export function useAudioCapture() {
           pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
 
-        // Stream binary 16-bit PCM buffer directly (server frames into 20ms chunks)
+        const audioFrame = pcmBuffer.buffer.slice(pcmBuffer.byteOffset, pcmBuffer.byteOffset + pcmBuffer.byteLength);
+        // Keep a short local-only lead-in during playback so barge-in does not
+        // clip the user's first word. It is sent only after ASR resumes.
         if (pttActiveRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(pcmBuffer.buffer);
+          wsRef.current.send(audioFrame);
+          preRollRef.current = [];
+        } else if (voiceStateRef.current === "speaking") {
+          preRollRef.current.push(audioFrame);
+          if (preRollRef.current.length > 16) preRollRef.current.shift();
+        } else {
+          preRollRef.current = [];
         }
       };
 
@@ -473,6 +513,9 @@ export function useAudioCapture() {
         triggerBargeIn();
         return;
       }
+      preRollRef.current = [];
+      pendingBargeAudioRef.current = [];
+      bargeResumePendingRef.current = false;
       pttActiveRef.current = true;
       setVoiceState("listening");
       setPartialTranscript("");

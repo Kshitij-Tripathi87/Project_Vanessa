@@ -10,6 +10,32 @@ dotenv.config();
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
 
+function getProviderReadiness() {
+  const fishKeyValid = (process.env.FISH_API_KEY || "").startsWith("sk-fish-");
+  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
+  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
+  const asrFallbackConfigured = process.env.VOICE_ALLOW_FALLBACK === "true" && Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
+  const ttsFallbackConfigured = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
+  const asrConfigured = asrProvider === "fish"
+    ? fishKeyValid || asrFallbackConfigured
+    : asrProvider === "elevenlabs"
+      ? Boolean(process.env.ELEVENLABS_API_KEY)
+      : Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
+  const ttsConfigured = ttsProvider === "fish"
+    ? (fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) || ttsFallbackConfigured
+    : Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID);
+  const fallbackActive = (asrProvider === "fish" && !fishKeyValid && asrFallbackConfigured)
+    || (ttsProvider === "fish" && !(fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) && ttsFallbackConfigured);
+  return {
+    ready: asrConfigured && ttsConfigured,
+    state: !asrConfigured || !ttsConfigured ? "unavailable" : fallbackActive ? "degraded" : "ready",
+    providers: {
+      asr: { requested: asrProvider, configured: asrConfigured, fallbackConfigured: asrFallbackConfigured },
+      tts: { requested: ttsProvider, configured: ttsConfigured, fallbackConfigured: ttsFallbackConfigured },
+    },
+  } as const;
+}
+
 export async function createVoiceAgentServer() {
   const fastify = Fastify({ logger: false });
 
@@ -20,6 +46,7 @@ export async function createVoiceAgentServer() {
 
   // Health check
   fastify.get("/health", async () => {
+    const readiness = getProviderReadiness();
     return {
       status: "online",
       service: "vanessa-voice-agent",
@@ -29,8 +56,16 @@ export async function createVoiceAgentServer() {
       chunkSamples: 320,
       defaultAsr: process.env.VOICE_ASR_PROVIDER || "fish",
       defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish",
+      readiness: readiness.state,
+      providers: readiness.providers,
       timestamp: Date.now(),
     };
+  });
+
+  fastify.get("/ready", async (_request, reply) => {
+    const readiness = getProviderReadiness();
+    if (!readiness.ready) reply.status(503);
+    return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
   });
 
   // WhisperFlow-compatible Real-time WebSocket streaming endpoint
@@ -48,11 +83,14 @@ export async function createVoiceAgentServer() {
         onPartialTranscript: (text) => {
           sendJson(socket, { type: "transcript_partial", text });
         },
-        onFinalTranscript: (text) => {
-          sendJson(socket, { type: "transcript_final", text });
+        onFinalTranscript: (text, requestId) => {
+          sendJson(socket, { type: "transcript_final", text, requestId });
         },
         onAudioChunkOut: (chunk) => {
           sendJson(socket, { type: "tts_chunk", ...chunk });
+        },
+        onTtsUnavailable: (detail) => {
+          sendJson(socket, { type: "tts_unavailable", detail });
         },
         onHudUpdate: (hud) => {
           sendJson(socket, { type: "hud_update", ...hud });

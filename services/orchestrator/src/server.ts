@@ -56,8 +56,6 @@ eventBus.on("plan:created", forwardEvent);
 eventBus.on("plan:completed", forwardEvent);
 eventBus.on("audit:log", forwardEvent);
 
-import { voiceStreamServer } from "./voice/voiceStreamServer.js";
-
 // WebSocket endpoint for real-time HUD streaming
 fastify.get("/events", { websocket: true }, (socket, req) => {
   const origin = req.headers.origin;
@@ -79,16 +77,6 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
   socket.on("close", () => {
     connectedClients.delete(socket);
   });
-});
-
-// Dedicated full-duplex WebSocket endpoint for live voice streaming & sentiment
-fastify.get("/voice/stream", { websocket: true }, (socket, req) => {
-  const origin = req.headers.origin;
-  if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
-    socket.close(1008, "Origin not allowed");
-    return;
-  }
-  voiceStreamServer.handleConnection(socket);
 });
 
 // Health check endpoint

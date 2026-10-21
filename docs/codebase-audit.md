@@ -13,6 +13,10 @@ Reviewed on 2026-10-21. This pass covered the desktop app, orchestrator, voice a
 - Changed remote task rendering to use `textContent`, so task data cannot become executable HTML.
 - Implemented screenshot capture to a temporary file and removed the machine-specific screenshot path.
 - Removed the unused fixed `ORCHESTRATOR_TOKEN` value from the root example environment file.
+- Made push-to-talk the explicit activation boundary: microphone audio remains local while idle and during Vanessa's reply, and only active capture frames reach ASR. A short local pre-roll is sent only after barge-in resumes ASR.
+- Routed desktop voice turns through the voice-agent into the orchestrator with a stable request ID, expiring idempotency envelope, and bounded conversation context. Fish ASR drafts stay in the HUD; only committed user turns are dispatched.
+- Replaced per-clause MP3 synthesis with Fish live TTS PCM streaming, one playback queue, explicit browser fallback, provider readiness reporting, and visible speech failures that preserve the text response.
+- Removed the unused orchestrator `/voice/stream` execution path so the voice-agent owns capture, ASR, TTS, and playback while the orchestrator remains the task owner.
 
 ## Remaining issues
 
@@ -32,13 +36,9 @@ The orchestrator listens only on `127.0.0.1`, and `/api/remote/pairing` construc
 
 Expired rooms are removed only when someone tries to claim them, and rate-limit keys are kept in a process-wide map. A public relay can accumulate stale entries over time. Add periodic expiry and a maximum room count before operating it as a long-lived public service.
 
-### High: Ambient audio currently leaves the device before activation
+### Medium: Barge-in onset detection is energy-based
 
-The desktop starts microphone capture automatically and streams every PCM frame to the voice service. The wake-word detector runs on ASR transcripts, so idle audio is sent to Fish to recognize the wake phrase. A transcript could also reach command dispatch without a wake phrase. The session now rejects such command dispatch, but keeping audio local until activation still needs the selected wake strategy and a local detector.
-
-### Medium: Voice has two active execution paths and an implicit speech fallback
-
-The desktop falls back from `services/voice-agent` to the orchestrator's separate `/voice/stream` implementation. Fish TTS failures also fall through to browser `SpeechSynthesis` without showing the provider change. The dossier calls for one canonical voice session owner and visible provider status. The root `pnpm dev` already includes the voice-agent service, so the extra orchestrator path is not needed for the normal development stack.
+The desktop keeps audio local during playback and uses a short energy threshold to trigger barge-in. This protects privacy and avoids sending an utterance before the ASR session resumes, but noisy rooms may cause false interruptions and quiet speech may need tuning. Validate thresholds with real microphones and room noise before broad deployment.
 
 ### Medium: Some failure drills check state instead of causing failures
 
@@ -52,7 +52,7 @@ The permission guard checks only a small set of parameter names (`path`, `target
 
 - `Agents and tools/` contains its own Python, Rust, Tauri, and Node project metadata and a large independent test tree. Treat it as a documented vendored project or move it to a submodule/separate repository; the orchestrator currently searches several guessed directory names to locate it.
 - `services/relay/src/` tracks generated `.js`, `.d.ts`, and source-map files alongside the TypeScript sources, while the relay build emits to `dist/`. Keep generated outputs out of `src/` to avoid stale duplicate implementations.
-- The dossier is now treated as the product and architecture source of truth. Its main open implementation decisions are local wake-word versus push-to-talk behavior, visible voice-provider fallback, a single voice-session owner, authenticated remote commands, and verifiable end-to-end incident execution.
+- The dossier is now treated as the product and architecture source of truth. Push-to-talk, visible provider fallback, and a single voice-session owner are implemented; authenticated remote commands and verifiable end-to-end incident execution remain open.
 - The root README contains visible text-encoding corruption and some setup information should be checked against the current scripts and service ports.
 - Several agents still invoke shell commands directly. Review `coding.agent.ts`, `incident.agent.ts`, `developer.agent.ts`, and `testing.agent.ts` for safe argument passing, especially where user-controlled branch names, paths, prompts, or commands are involved.
 

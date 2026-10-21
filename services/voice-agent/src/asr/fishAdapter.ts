@@ -11,6 +11,11 @@ export interface FishAsrOptions {
   allowFallback?: boolean;
 }
 
+export interface FishAsrContextTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export class FishAsrAdapter implements AsrAdapter {
   name = "fish";
   get usesServerTurnDetection(): boolean {
@@ -26,7 +31,7 @@ export class FishAsrAdapter implements AsrAdapter {
   private fallbackAdapter: VoiceAdapter | null = null;
   private useFallback = false;
   private fallbackReason = "";
-  private allowFallback = true;
+  private allowFallback = false;
   private queuedFrames: Buffer[] = [];
   private pendingAudio = Buffer.alloc(0);
   private sessionStarted = false;
@@ -36,18 +41,25 @@ export class FishAsrAdapter implements AsrAdapter {
   private url: string;
   private model: string;
   private sampleRate: number;
+  private conversationContext: FishAsrContextTurn[] = [];
   private isSessionActive = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private status: ProviderRuntimeStatus = { requested: "Fish Audio", active: "Fish Audio", state: "idle" };
   private statusHandler?: (status: ProviderRuntimeStatus) => void;
+  private connectPromise?: Promise<void>;
 
   constructor(options?: FishAsrOptions) {
     this.apiKey = options?.apiKey || process.env.FISH_API_KEY || "";
     this.url = options?.url || process.env.FISH_ASR_URL || "wss://api.fish.audio/v1/asr/realtime";
     this.model = options?.model || process.env.FISH_ASR_MODEL || "transcribe-stream-1";
     this.sampleRate = options?.sampleRate || 16000;
-    this.allowFallback = options?.allowFallback ?? (process.env.VOICE_ALLOW_FALLBACK !== "false");
+    this.allowFallback = options?.allowFallback ?? (process.env.VOICE_ALLOW_FALLBACK === "true");
+    if (!this.apiKey || !this.apiKey.startsWith("sk-fish-")) {
+      this.status = this.allowFallback
+        ? { requested: "Fish Audio", active: "Local Whisper", state: "fallback", detail: "Fish API key is missing or invalid; local Whisper fallback is enabled." }
+        : { requested: "Fish Audio", active: "Unavailable", state: "error", detail: "Fish API key is missing or invalid." };
+    }
   }
 
   async connect(handlers: {
@@ -73,6 +85,13 @@ export class FishAsrAdapter implements AsrAdapter {
     return { ...this.status };
   }
 
+  setConversationContext(turns: FishAsrContextTurn[]): void {
+    this.conversationContext = turns.slice(-8).map((turn) => ({
+      role: turn.role,
+      content: turn.content.replace(/\s+/g, " ").slice(0, 1200),
+    }));
+  }
+
   setStatusHandler(handler: (status: ProviderRuntimeStatus) => void): void {
     this.statusHandler = handler;
     handler(this.getProviderStatus());
@@ -83,25 +102,60 @@ export class FishAsrAdapter implements AsrAdapter {
     this.statusHandler?.(this.getProviderStatus());
   }
 
-  private initWebSocket(): void {
-    if (!this.isSessionActive) return;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
+  private initWebSocket(): Promise<void> {
+    if (!this.isSessionActive) return Promise.reject(new Error("ASR session is not active."));
+    if (this.sessionStarted && this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
 
+    let resolveConnection!: () => void;
+    let rejectConnection!: (error: Error) => void;
+    let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolveConnection = resolve;
+      rejectConnection = reject;
+    });
+    this.connectPromise = promise;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (this.connectPromise === promise) this.connectPromise = undefined;
+      if (error) rejectConnection(error);
+      else resolveConnection();
+    };
+    timeout = setTimeout(() => {
+        const error = new Error("Fish Audio ASR session handshake timed out.");
+        if (this.allowFallback) {
+          this.initFallback(`${error.message} Local Whisper fallback is enabled.`);
+          finish();
+        } else {
+          this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
+          finish(error);
+        }
+    }, 10000);
+
+    let ws: WebSocket;
     try {
-      const ws = new WebSocket(this.url, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      });
-      this.ws = ws;
-      this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting" });
+      ws = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.apiKey}` } });
+    } catch (err: any) {
+      const error = new Error(`Fish Audio could not be initialized: ${err.message}`);
+      if (this.allowFallback) {
+        this.initFallback(`${error.message} Local Whisper fallback is enabled.`);
+        finish();
+      } else {
+        this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
+        finish(error);
+      }
+      return promise;
+    }
+    this.ws = ws;
+    this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting" });
 
       ws.on("open", () => {
         if (!this.isSessionActive || this.ws !== ws) {
           ws.close();
-          return;
+          return finish(new Error("ASR session was closed during connection."));
         }
         this.isConnected = true;
         this.isReconnecting = false;
@@ -109,14 +163,14 @@ export class FishAsrAdapter implements AsrAdapter {
         this.sessionStarted = false;
         this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: "Waiting for Fish Audio to initialize the transcription session." });
         console.log(`[FishAsrAdapter] Connected to Fish Realtime ASR at ${this.url} (${this.model})`);
-
-        // Fish realtime ASR uses MessagePack control/audio messages and waits
-        // for session_started before accepting audio.
         ws.send(encode({
           type: "config",
           audio: { format: "pcm_s16le", sample_rate: this.sampleRate, channels: 1 },
           turn_detection: { mode: "auto", eager: true },
           results: { drafts: true },
+          ...(this.conversationContext.length ? {
+            context: { history: this.conversationContext.map((turn) => ({ role: turn.role, text: turn.content })) },
+          } : {}),
         }));
       });
 
@@ -135,29 +189,28 @@ export class FishAsrAdapter implements AsrAdapter {
             this.providerSessionId = typeof msg.session_id === "string" ? msg.session_id : undefined;
             this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "ready" });
             this.flushQueuedFrames(ws);
+            finish();
             return;
           }
 
           if (eventType === "error") {
             const detail = typeof msg.message === "string" ? msg.message : "Fish Audio returned an ASR session error.";
             this.isConnected = false;
-            if (this.allowFallback) this.initFallback(`${detail} Local Whisper fallback is enabled.`);
-            else this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail });
+            if (this.allowFallback) {
+              this.initFallback(`${detail} Local Whisper fallback is enabled.`);
+              finish();
+            } else {
+              this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail });
+              finish(new Error(detail));
+            }
             return;
           }
 
-          const text = (msg.text || "").trim();
+          const text = String(msg.text || "").replace(/<\|[^|]*\|>|\[[^\[\]]*\]/g, " ").replace(/\s+/g, " ").trim();
           if (!text) return;
-
           if (eventType === "draft") {
-            // Draft = HUD display only. INVARIANT: never triggers planning!
-            this.handlers?.onPartial({
-              text,
-              isFinal: false,
-              language: msg.language_code || "en",
-            });
+            this.handlers?.onPartial({ text, isFinal: false, language: msg.language_code || "en" });
           } else if (eventType === "committed" && msg.user_turn !== false) {
-            // Committed turn = Command ready for planner
             console.log(`[FishAsrAdapter] Committed Turn: "${text}"`);
             this.handlers?.onFinal({
               text,
@@ -175,10 +228,19 @@ export class FishAsrAdapter implements AsrAdapter {
         if (this.ws !== ws) return;
         console.warn(`[FishAsrAdapter] WebSocket error: ${err.message}`);
         this.isConnected = false;
-        if (this.allowFallback) {
+        const error = new Error(`Fish Audio connection failed: ${err.message}`);
+        if (!settled) {
+          if (this.allowFallback) {
+            this.initFallback(`${error.message} Local Whisper fallback is enabled.`);
+            finish();
+          } else {
+            this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
+            finish(error);
+          }
+        } else if (this.allowFallback) {
           this.initFallback("Fish Audio connection failed; local Whisper fallback is enabled.");
         } else {
-          this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: "Fish Audio connection failed and fallback is disabled." });
+          this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
         }
       });
 
@@ -187,25 +249,27 @@ export class FishAsrAdapter implements AsrAdapter {
         this.isConnected = false;
         this.sessionStarted = false;
         console.log(`[FishAsrAdapter] Disconnected (code: ${code}, reason: ${reason || "none"}).`);
-        if (this.isSessionActive && !this.finalizing && !this.useFallback && !this.isReconnecting) {
+        if (!settled) {
+          const error = new Error(`Fish Audio closed before session readiness (${code}: ${reason.toString()}).`);
+          if (this.allowFallback) {
+            this.initFallback(`${error.message} Local Whisper fallback is enabled.`);
+            finish();
+          } else {
+            this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
+            finish(error);
+          }
+        } else if (this.isSessionActive && !this.finalizing && !this.useFallback && !this.isReconnecting) {
           this.isReconnecting = true;
           this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: "Reconnecting to Fish Audio." });
           this.reconnectTimer = setTimeout(() => {
             this.isReconnecting = false;
-            this.initWebSocket();
+            void this.initWebSocket().catch((err) => this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: err.message }));
           }, 1500);
         } else if (!this.isSessionActive && !this.useFallback) {
           this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "idle" });
         }
       });
-    } catch (err: any) {
-      console.warn(`[FishAsrAdapter] Init failed: ${err.message}`);
-      if (this.allowFallback) {
-        this.initFallback("Fish Audio could not be initialized; local Whisper fallback is enabled.");
-      } else {
-        this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: "Fish Audio could not be initialized and fallback is disabled." });
-      }
-    }
+    return promise;
   }
 
   private initFallback(detail: string): void {
@@ -307,7 +371,7 @@ export class FishAsrAdapter implements AsrAdapter {
     }
   }
 
-  activateStream(durationMs = 25000): void {
+  async activateStream(durationMs = 25000): Promise<void> {
     if (this.finalizing && this.ws && this.ws.readyState < WebSocket.CLOSING) {
       try { this.ws.close(); } catch {}
       this.ws = null;
@@ -324,7 +388,7 @@ export class FishAsrAdapter implements AsrAdapter {
     }
     if (this.useFallback && this.fallbackAdapter) {
       this.fallbackAdapter.connect(this.handlers!);
-      this.fallbackAdapter.activateStream?.();
+      await this.fallbackAdapter.activateStream?.();
     }
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
@@ -332,7 +396,7 @@ export class FishAsrAdapter implements AsrAdapter {
     }
 
     if (!this.useFallback && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) {
-      this.initWebSocket();
+      await this.initWebSocket();
     } else if (this.useFallback) {
       this.setStatus({ ...this.status, state: "fallback" });
     }
@@ -404,6 +468,13 @@ export class FishAsrAdapter implements AsrAdapter {
     this.isReconnecting = false;
     this.queuedFrames = [];
     this.pendingAudio = Buffer.alloc(0);
-    this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "idle" });
+    this.setStatus(!this.apiKey || !this.apiKey.startsWith("sk-fish-")
+      ? {
+          requested: "Fish Audio",
+          active: this.allowFallback ? "Local Whisper" : "Unavailable",
+          state: this.allowFallback ? "fallback" : "error",
+          detail: "Fish API key is missing or invalid.",
+        }
+      : { requested: "Fish Audio", active: "Fish Audio", state: "idle" });
   }
 }
