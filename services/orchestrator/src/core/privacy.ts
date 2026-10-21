@@ -48,13 +48,34 @@ export class PrivacyGuard {
   }
 
   isPathAllowed(targetPath: string): boolean {
-    const resolved = path.resolve(targetPath);
-    for (const allowed of this.allowedFolders) {
-      if (resolved === allowed || resolved.startsWith(allowed + path.sep)) {
-        return true;
+    try {
+      const resolved = this.resolvePhysicalPath(targetPath);
+      for (const allowedPath of this.allowedFolders) {
+        const allowed = this.resolvePhysicalPath(allowedPath);
+        const relative = path.relative(allowed, resolved);
+        if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) {
+          return true;
+        }
       }
+    } catch {
+      return false;
     }
     return false;
+  }
+
+  private resolvePhysicalPath(targetPath: string): string {
+    let candidate = path.resolve(targetPath);
+    const suffix: string[] = [];
+
+    while (!fs.existsSync(candidate)) {
+      const parent = path.dirname(candidate);
+      if (parent === candidate) throw new Error("Path has no existing ancestor");
+      suffix.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+
+    const realAncestor = fs.realpathSync.native(candidate);
+    return path.resolve(realAncestor, ...suffix);
   }
 
   /**

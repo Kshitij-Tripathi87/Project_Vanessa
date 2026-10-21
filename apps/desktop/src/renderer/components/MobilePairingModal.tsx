@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Smartphone, Shield, Check, X, Copy, ExternalLink, ToggleLeft, ToggleRight, Laptop, KeyRound } from "lucide-react";
 
 interface MobilePairingModalProps {
@@ -13,31 +13,59 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
   isOpen,
   onClose,
   deviceName = "Kshitij-Laptop",
-  pairingCode = "482913",
+  pairingCode = "",
   remoteUrl = "http://127.0.0.1:4319/remote",
 }) => {
   const [remoteEnabled, setRemoteEnabled] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [activePairingCode, setActivePairingCode] = useState(pairingCode);
+  const [activeRemoteUrl, setActiveRemoteUrl] = useState(remoteUrl);
+  const [pairingError, setPairingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch("http://127.0.0.1:4319/api/remote/pairing")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load the active pairing code.");
+        return response.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setActivePairingCode(data.pairingCode || "Unavailable");
+        setActiveRemoteUrl(data.url || remoteUrl);
+        setRemoteEnabled(Boolean(data.enabled));
+        setPairingError(null);
+      })
+      .catch((error) => {
+        if (!cancelled) setPairingError(error.message || "Pairing service is unavailable.");
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, remoteUrl]);
 
   if (!isOpen) return null;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(remoteUrl);
+    navigator.clipboard.writeText(activeRemoteUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleToggle = async () => {
     const nextState = !remoteEnabled;
-    setRemoteEnabled(nextState);
     try {
-      await fetch("http://127.0.0.1:4319/api/remote/toggle", {
+      const response = await fetch("http://127.0.0.1:4319/api/remote/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: nextState }),
       });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not change remote access.");
+      setRemoteEnabled(Boolean(data.enabled));
+      setActivePairingCode(data.pairingCode || "Unavailable");
+      setPairingError(null);
     } catch {
-      // Offline fallback
+      setPairingError("Remote access setting could not be updated.");
     }
   };
 
@@ -197,7 +225,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
                 <span>Pairing Code (6-digit):</span>
               </div>
               <div style={{ fontSize: "20px", fontWeight: 800, letterSpacing: "3px", color: "#ffffff", fontFamily: "var(--font-mono)" }}>
-                {pairingCode}
+                {activePairingCode || "Loading…"}
               </div>
             </div>
           </div>
@@ -215,7 +243,8 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
           >
             <div>📱 <strong>On your phone:</strong></div>
             <div>1. Enter device name: <strong style={{ color: "#fff" }}>{deviceName}</strong></div>
-            <div>2. Enter pairing code: <strong style={{ color: "var(--cyan-glow)" }}>{pairingCode}</strong></div>
+            <div>2. Enter pairing code: <strong style={{ color: "var(--cyan-glow)" }}>{activePairingCode || "Loading…"}</strong></div>
+            {pairingError && <div style={{ color: "#fda4af" }}>{pairingError}</div>}
             <div style={{ color: "#34d399", fontWeight: 600 }}>→ Connected via secure outbound WebSocket relay</div>
           </div>
         </div>
@@ -237,7 +266,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
             }}
           >
             <span style={{ fontSize: "12px", color: "#38bdf8", fontFamily: "var(--font-mono)" }}>
-              {remoteUrl}
+              {activeRemoteUrl}
             </span>
             <div style={{ display: "flex", gap: "6px" }}>
               <button
@@ -259,7 +288,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
                 <span>{copied ? "Copied" : "Copy"}</span>
               </button>
               <a
-                href={remoteUrl}
+                href={activeRemoteUrl}
                 target="_blank"
                 rel="noreferrer"
                 style={{

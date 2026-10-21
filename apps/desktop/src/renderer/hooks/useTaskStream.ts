@@ -7,6 +7,7 @@ declare global {
     vanessa: {
       executeCommand: (payload: { command: string; language?: string }) => Promise<any>;
       approveTask: (taskId: string) => Promise<any>;
+      rejectTask: (taskId: string) => Promise<any>;
       cancelTask: (taskId?: string) => Promise<any>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;
       onTriggerPTT?: (callback: () => void) => () => void;

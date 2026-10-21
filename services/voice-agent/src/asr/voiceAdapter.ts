@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { AsrAdapter, TranscriptResult } from "./types.js";
+import { AsrAdapter, ProviderRuntimeStatus, TranscriptResult } from "./types.js";
 
 export class VoiceAdapter implements AsrAdapter {
   private websocket?: WebSocket;
@@ -12,6 +12,8 @@ export class VoiceAdapter implements AsrAdapter {
   private queue: Uint8Array[] = [];
   private pendingFinalize = false;
   private streamActive = false;
+  private statusHandler?: (status: ProviderRuntimeStatus) => void;
+  private reconnectTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly serverUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505"
@@ -23,34 +25,46 @@ export class VoiceAdapter implements AsrAdapter {
   }): void {
     this.handlers = handlers;
     this.shouldReconnect = true;
-    this.initSocket();
+    if (this.streamActive) this.initSocket();
+  }
+
+  getProviderStatus(): ProviderRuntimeStatus {
+    return { requested: "Local Whisper", active: "Local Whisper", state: this.streamActive ? (this.isConnected ? "ready" : "connecting") : "idle" };
+  }
+
+  setStatusHandler(handler: (status: ProviderRuntimeStatus) => void): void {
+    this.statusHandler = handler;
+    handler(this.getProviderStatus());
   }
 
   private initSocket(): void {
+    if (!this.streamActive || !this.shouldReconnect) return;
     try {
-      this.websocket = new WebSocket(this.serverUrl);
+      const websocket = new WebSocket(this.serverUrl);
+      this.websocket = websocket;
 
-      this.websocket.on("open", () => {
-        if (!this.streamActive) {
-          this.websocket?.close();
+      websocket.on("open", () => {
+        if (!this.streamActive || this.websocket !== websocket) {
+          websocket.close();
           return;
         }
         this.isConnected = true;
+        this.statusHandler?.(this.getProviderStatus());
         console.log(`[VoiceAdapter] Connected to Voice ASR daemon at ${this.serverUrl}`);
 
         // Flush chunks queued during connection establishment
         while (this.queue.length > 0) {
           const chunk = this.queue.shift()!;
-          this.websocket?.send(chunk);
+          websocket.send(chunk);
         }
 
         if (this.pendingFinalize) {
           this.pendingFinalize = false;
-          this.websocket?.send(JSON.stringify({ type: "finalize" }));
+          websocket.send(JSON.stringify({ type: "finalize" }));
         }
       });
 
-      this.websocket.on("message", (data: any) => {
+      websocket.on("message", (data: any) => {
         try {
           const message = JSON.parse(data.toString());
           const result: TranscriptResult = {
@@ -67,20 +81,25 @@ export class VoiceAdapter implements AsrAdapter {
         } catch {}
       });
 
-      this.websocket.on("error", () => {
+      websocket.on("error", () => {
+        if (this.websocket !== websocket) return;
         this.isConnected = false;
+        this.statusHandler?.(this.getProviderStatus());
       });
 
-      this.websocket.on("close", () => {
+      websocket.on("close", () => {
+        if (this.websocket !== websocket) return;
         this.isConnected = false;
-        if (this.shouldReconnect) {
-          setTimeout(() => this.initSocket(), 2000);
+        this.statusHandler?.(this.getProviderStatus());
+        if (this.shouldReconnect && this.streamActive) {
+          this.reconnectTimer = setTimeout(() => this.initSocket(), 1500);
         }
       });
     } catch {
       this.isConnected = false;
-      if (this.shouldReconnect) {
-        setTimeout(() => this.initSocket(), 2000);
+      this.statusHandler?.(this.getProviderStatus());
+      if (this.shouldReconnect && this.streamActive) {
+        this.reconnectTimer = setTimeout(() => this.initSocket(), 1500);
       }
     }
   }
@@ -99,6 +118,7 @@ export class VoiceAdapter implements AsrAdapter {
   }
 
   finalizeTurn(): void {
+    if (!this.streamActive) return;
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(JSON.stringify({ type: "finalize" }));
     } else {
@@ -109,9 +129,11 @@ export class VoiceAdapter implements AsrAdapter {
   activateStream(): void {
     this.streamActive = true;
     this.shouldReconnect = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (!this.websocket || this.websocket.readyState === WebSocket.CLOSED) {
       this.initSocket();
     }
+    this.statusHandler?.(this.getProviderStatus());
   }
 
   deactivateStream(): void {
@@ -119,9 +141,14 @@ export class VoiceAdapter implements AsrAdapter {
     this.queue = [];
     this.pendingFinalize = false;
     this.shouldReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     this.websocket?.close();
     this.websocket = undefined;
     this.isConnected = false;
+    this.statusHandler?.(this.getProviderStatus());
   }
 
   close(): void {

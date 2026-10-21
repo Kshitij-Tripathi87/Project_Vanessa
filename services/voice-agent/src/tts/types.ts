@@ -1,3 +1,5 @@
+import { ProviderRuntimeStatus } from "../asr/types.js";
+
 export interface TtsOutputChunk {
   chunkIndex: number;
   text: string;
@@ -13,4 +15,6 @@ export interface VoiceTtsAdapter {
     signal?: AbortSignal
   ): Promise<void>;
   abort(): void;
+  getProviderStatus?(): ProviderRuntimeStatus;
+  setStatusHandler?(handler: (status: ProviderRuntimeStatus) => void): void;
 }

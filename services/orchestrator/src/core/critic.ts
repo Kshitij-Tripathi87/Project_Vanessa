@@ -17,6 +17,12 @@ export class CriticEngine {
     const proofPoints: string[] = [];
     let invariantsPreserved = true;
 
+    if (task.verification && !task.verification.verified) {
+      passed = false;
+      score = 0.4;
+      feedbackNotes.push("Task did not return a passing verification result.");
+    }
+
     // 1. Invariant Checks based on skill or action
     if (skill?.invariants && skill.invariants.length > 0) {
       for (const invariant of skill.invariants) {
@@ -66,9 +72,9 @@ export class CriticEngine {
       if (task.result?.connected === false || task.verification?.verified === false) {
         passed = false;
         score = 0.3;
-        feedbackNotes.push("Wi-Fi network connection ping failed postcondition check");
-      } else {
-        proofPoints.push("Deterministic proof: Network interface up and ping check verified");
+        feedbackNotes.push("Wi-Fi network postcondition could not be verified.");
+      } else if (task.result?.connected === true) {
+        proofPoints.push("Observed Wi-Fi connection status is connected.");
       }
     }
 
@@ -79,7 +85,9 @@ export class CriticEngine {
         if (fs.existsSync(folderPath)) {
           proofPoints.push(`Deterministic proof: Directory exists on disk at ${folderPath}`);
         } else {
-          proofPoints.push(`Directory created in environment: ${folderPath}`);
+          passed = false;
+          score = 0.3;
+          feedbackNotes.push(`Directory postcondition failed: ${folderPath} does not exist.`);
         }
       }
     }
@@ -89,8 +97,6 @@ export class CriticEngine {
       const driveUrl = task.result?.url || task.result?.shareableLink || task.result?.id;
       if (driveUrl) {
         proofPoints.push(`Deterministic proof: Shareable cloud link generated: ${driveUrl}`);
-      } else if (task.status === "awaiting_approval") {
-        proofPoints.push("Awaiting explicit confirmation before cloud transmission");
       }
     }
 
@@ -123,7 +129,7 @@ export class CriticEngine {
       score = Math.min(score, 0.4);
     }
 
-    const proofStr = proofPoints.length > 0 ? proofPoints.join("; ") : "Task completed without unhandled exceptions";
+    const proofStr = proofPoints.length > 0 ? proofPoints.join("; ") : undefined;
     const feedbackStr = feedbackNotes.length > 0 ? feedbackNotes.join("; ") : "All acceptance criteria and invariants satisfied";
 
     return {

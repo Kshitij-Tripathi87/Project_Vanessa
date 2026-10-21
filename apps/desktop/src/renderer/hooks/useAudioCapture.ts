@@ -15,6 +15,18 @@ export interface SentimentData {
   };
 }
 
+export interface ProviderStatus {
+  requested: string;
+  active: string;
+  state: "idle" | "connecting" | "ready" | "fallback" | "error";
+  detail?: string;
+}
+
+export interface VoiceProviderStatus {
+  asr: ProviderStatus;
+  tts: ProviderStatus;
+}
+
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
   const ratio = inputSampleRate / 16000;
@@ -38,6 +50,7 @@ export function useAudioCapture() {
   const [liveSentiment, setLiveSentiment] = useState<SentimentData | null>(null);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -186,6 +199,16 @@ export function useAudioCapture() {
     ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+
+          if (msg.type === "session_ready" && msg.providers) {
+            setProviderStatus(msg.providers);
+            return;
+          }
+
+          if (msg.type === "provider_status" && msg.providers) {
+            setProviderStatus(msg.providers);
+            return;
+          }
 
           if (msg.type === "hud_update") {
             if (msg.state) setVoiceState(msg.state);
@@ -448,6 +471,7 @@ export function useAudioCapture() {
     audioLevel,
     liveSentiment,
     partialTranscript,
+    providerStatus,
     micError,
     startRecording,
     stopRecording,

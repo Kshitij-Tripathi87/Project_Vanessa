@@ -3,7 +3,7 @@ import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { BargeInDetector } from "./bargeIn.js";
 import { WakeWordDetector } from "./wakeWord.js";
-import { AsrAdapter } from "../asr/types.js";
+import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
 import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
@@ -26,6 +26,12 @@ export interface VoiceSessionHandlers {
   onFinalTranscript?: (text: string) => void;
   onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; isFinal: boolean }) => void;
   onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
+  onProviderStatus?: (status: VoiceProviderInfo) => void;
+}
+
+export interface VoiceProviderInfo {
+  asr: ProviderRuntimeStatus;
+  tts: ProviderRuntimeStatus;
 }
 
 export class VanessaVoiceSession {
@@ -67,17 +73,31 @@ export class VanessaVoiceSession {
       this.tts = new ElevenLabsTtsAdapter();
     }
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
+    this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
+    this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
   }
 
   setHandlers(handlers: VoiceSessionHandlers): void {
     this.handlers = { ...this.handlers, ...handlers };
   }
 
-  getProviderInfo(): { asr: string; tts: string } {
+  getProviderInfo(): VoiceProviderInfo {
     return {
-      asr: (this.asr as any).name || (this.asr instanceof FishAsrAdapter ? "fish" : "voice"),
-      tts: this.tts instanceof FishTtsAdapter ? "fish" : "elevenlabs",
+      asr: this.asr.getProviderStatus?.() || {
+        requested: (this.asr as any).name || (this.asr instanceof FishAsrAdapter ? "Fish Audio" : "Local Whisper"),
+        active: (this.asr as any).name || (this.asr instanceof FishAsrAdapter ? "Fish Audio" : "Local Whisper"),
+        state: "idle",
+      },
+      tts: this.tts.getProviderStatus?.() || {
+        requested: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
+        active: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
+        state: "idle",
+      },
     };
+  }
+
+  private notifyProviderStatus(): void {
+    this.handlers.onProviderStatus?.(this.getProviderInfo());
   }
 
   async start(): Promise<void> {

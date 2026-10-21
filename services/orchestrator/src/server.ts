@@ -4,6 +4,7 @@ import websocket from "@fastify/websocket";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
 import { VanessaEvent } from "@vanessa/shared";
@@ -185,16 +186,41 @@ fastify.post("/api/privacy/folders", async (request, reply) => {
 });
 
 // Mobile Companion Relay State & Endpoints
-let remoteAccessEnabled = true;
-let activePairingCode = "VAN-892";
-let activePairingToken = "vtok_" + Math.random().toString(36).substring(2, 10);
-const authenticatedPhoneTokens = new Set<string>(["vtok_active_session"]);
+let remoteAccessEnabled = false;
+let activePairingCode = createPairingCode();
+let pairingExpiresAt = Date.now() + 5 * 60_000;
+const phoneSessionTokens = new Map<string, number>();
+const pairingAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function createPairingCode(): string {
+  return randomInt(100000, 1000000).toString();
+}
+
+function isAuthorizedPhoneRequest(request: any): boolean {
+  const authorization = request.headers.authorization;
+  const bearerToken = typeof authorization === "string" && authorization.startsWith("Bearer ")
+    ? authorization.slice(7)
+    : undefined;
+  const token = bearerToken || request.body?.token;
+  if (typeof token !== "string") return false;
+  const expiresAt = phoneSessionTokens.get(token);
+  if (!expiresAt) return false;
+  if (expiresAt <= Date.now()) {
+    phoneSessionTokens.delete(token);
+    return false;
+  }
+  return true;
+}
 
 fastify.get("/api/remote/pairing", async () => {
+  if (pairingExpiresAt <= Date.now()) {
+    activePairingCode = createPairingCode();
+    pairingExpiresAt = Date.now() + 5 * 60_000;
+  }
   return {
     enabled: remoteAccessEnabled,
-    pairingCode: activePairingCode,
-    pairingToken: activePairingToken,
+    pairingCode: remoteAccessEnabled ? activePairingCode : null,
+    pairingExpiresAt,
     url: `http://127.0.0.1:${PORT}/remote`,
   };
 });
@@ -205,6 +231,11 @@ fastify.post("/api/remote/toggle", async (request) => {
     remoteAccessEnabled = body.enabled;
   } else {
     remoteAccessEnabled = !remoteAccessEnabled;
+  }
+  if (!remoteAccessEnabled) {
+    phoneSessionTokens.clear();
+    activePairingCode = createPairingCode();
+    pairingExpiresAt = Date.now() + 5 * 60_000;
   }
   eventBus.emitEvent("audit:log", {
     id: `audit-${Date.now()}`,
@@ -218,17 +249,37 @@ fastify.post("/api/remote/toggle", async (request) => {
     status: "info",
     details: `Remote phone access ${remoteAccessEnabled ? "ENABLED" : "DISABLED"}`,
   });
-  return { enabled: remoteAccessEnabled };
+  return {
+    enabled: remoteAccessEnabled,
+    pairingCode: remoteAccessEnabled ? activePairingCode : null,
+    pairingExpiresAt,
+  };
 });
 
 fastify.post("/api/remote/pair", async (request, reply) => {
-  const body = request.body as { code?: string; token?: string };
+  const body = request.body as { code?: string };
   if (!remoteAccessEnabled) {
     return reply.status(403).send({ error: "Remote access is disabled on this laptop." });
   }
-  if (body?.code === activePairingCode || body?.token === activePairingToken) {
-    const sessionToken = "psess_" + Math.random().toString(36).substring(2, 12);
-    authenticatedPhoneTokens.add(sessionToken);
+  const ip = request.ip || "unknown";
+  const now = Date.now();
+  let attempts = pairingAttempts.get(ip);
+  if (!attempts || attempts.resetAt <= now) {
+    attempts = { count: 0, resetAt: now + 5 * 60_000 };
+    pairingAttempts.set(ip, attempts);
+  }
+  if (attempts.count >= 5) {
+    return reply.status(429).send({ error: "Too many pairing attempts. Wait five minutes and try again." });
+  }
+  attempts.count += 1;
+  const supplied = typeof body?.code === "string" ? Buffer.from(body.code) : Buffer.alloc(0);
+  const expected = Buffer.from(activePairingCode);
+  const codeMatches = supplied.length === expected.length && timingSafeEqual(supplied, expected);
+  if (codeMatches && pairingExpiresAt > Date.now()) {
+    const sessionToken = randomBytes(32).toString("base64url");
+    phoneSessionTokens.set(sessionToken, Date.now() + 30 * 24 * 60 * 60_000);
+    activePairingCode = createPairingCode();
+    pairingExpiresAt = Date.now() + 5 * 60_000;
     eventBus.emitEvent("audit:log", {
       id: `audit-${Date.now()}`,
       timestamp: Date.now(),
@@ -251,6 +302,9 @@ fastify.post("/api/remote/command", async (request, reply) => {
   if (!remoteAccessEnabled) {
     return reply.status(403).send({ error: "Remote access: OFF. Please enable on your laptop HUD." });
   }
+  if (!isAuthorizedPhoneRequest(request)) {
+    return reply.status(401).send({ error: "Phone session is not paired or has expired. Pair this device again." });
+  }
   if (!body || !body.command) {
     return reply.status(400).send({ error: "Missing required parameter 'command'" });
   }
@@ -262,11 +316,10 @@ fastify.post("/api/remote/command", async (request, reply) => {
     source: "remote_pwa",
     agent: "orchestrator",
     action: "remote_command_received",
-    command: body.command,
     risk: "low",
     permission: "allowed",
     status: "info",
-    details: { command: body.command, origin: "Phone Mobile Companion PWA" },
+    details: "Command received from the authenticated Mobile Companion session.",
   });
 
   const result = await orchestrator.executeCommand({
@@ -281,28 +334,34 @@ fastify.post("/api/remote/approve", async (request, reply) => {
   if (!remoteAccessEnabled) {
     return reply.status(403).send({ error: "Remote access is disabled on this laptop." });
   }
+  if (!isAuthorizedPhoneRequest(request)) {
+    return reply.status(401).send({ error: "Phone session is not paired or has expired. Pair this device again." });
+  }
   if (!body?.taskId) {
     return reply.status(400).send({ error: "Missing taskId" });
   }
-  eventBus.emitEvent("audit:log", {
-    id: `audit-${Date.now()}`,
-    timestamp: Date.now(),
-    source: "remote_pwa",
-    agent: "safety_gate",
-    action: "approval.granted_remote",
-    resource: body.taskId,
-    risk: "medium",
-    permission: "approved_once",
-    status: "approved",
-    details: "Task authorization confirmed via Mobile Companion PWA",
-  });
   const task = await orchestrator.approve(body.taskId);
+  return reply.send({ success: !!task, task });
+});
+
+fastify.post("/api/remote/reject", async (request, reply) => {
+  const body = request.body as { taskId: string; token?: string };
+  if (!remoteAccessEnabled) {
+    return reply.status(403).send({ error: "Remote access is disabled on this laptop." });
+  }
+  if (!isAuthorizedPhoneRequest(request)) {
+    return reply.status(401).send({ error: "Phone session is not paired or has expired. Pair this device again." });
+  }
+  if (!body?.taskId) {
+    return reply.status(400).send({ error: "Missing taskId" });
+  }
+  const task = await orchestrator.reject(body.taskId);
   return reply.send({ success: !!task, task });
 });
 
 // Serve Mobile Companion Phone PWA
 fastify.get("/remote", async (request, reply) => {
-  const html = getRemotePwaHtml(PORT, activePairingCode);
+  const html = getRemotePwaHtml(PORT);
   return reply.type("text/html").send(html);
 });
 

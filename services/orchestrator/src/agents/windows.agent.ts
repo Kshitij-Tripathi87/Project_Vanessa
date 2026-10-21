@@ -48,7 +48,7 @@ export class WindowsAgent implements SpecialistAgent {
         const res = await this.restartWifiAdapter();
         const evidence: AgentEvidence[] = [
           {
-            description: "Restarted Windows network adapter and verified connectivity",
+            description: res.output,
             source: "PowerShell NetAdapter",
             timestamp: startTime,
             confidence: 1.0,
@@ -63,6 +63,10 @@ export class WindowsAgent implements SpecialistAgent {
           spokenSummary: "Wi-Fi restarted and connection checked.",
           evidence,
           artifacts: [],
+          verification: {
+            passed: res.success && res.connected === true,
+            details: res.output,
+          },
           data: {
             actionsAttempted: ["Restart-NetAdapter -Name 'Wi-Fi' -Confirm:$false"],
             actualObservations: res.output,
@@ -89,6 +93,10 @@ export class WindowsAgent implements SpecialistAgent {
             failures: [],
             status: res.status,
           },
+          verification: {
+            passed: res.success && res.status !== "Unknown",
+            details: `Observed Wi-Fi adapter status: ${res.status}.`,
+          },
         };
       }
 
@@ -101,15 +109,19 @@ export class WindowsAgent implements SpecialistAgent {
           agentId: this.id,
           status: "completed",
           success: res.success,
-          summary: `Bluetooth radio set to ${res.state}`,
-          spokenSummary: `Bluetooth ${res.state}.`,
+          summary: res.success ? `Bluetooth radio is ${res.state}` : `Bluetooth state could not be verified: ${res.state}`,
+          spokenSummary: res.success ? `Bluetooth ${res.state}.` : "I could not verify the Bluetooth radio state.",
           evidence: [],
           artifacts: [],
           data: {
-            actionsAttempted: [`Set Bluetooth radio state to ${res.state}`],
-            actualObservations: `Radio state: ${res.state}`,
-            failures: [],
+            actionsAttempted: [`Set Bluetooth radio state to ${enable ? "On" : "Off"}`],
+            actualObservations: res.output,
+            failures: res.success ? [] : [res.output],
             state: res.state,
+          },
+          verification: {
+            passed: res.success,
+            details: res.output,
           },
         };
       }
@@ -142,14 +154,18 @@ export class WindowsAgent implements SpecialistAgent {
           agentId: this.id,
           status: "completed",
           success: res.success,
-          summary: `Opened Windows application: ${appName}`,
-          spokenSummary: `${appName} is open.`,
+          summary: res.success ? `Windows accepted the launch request for ${appName}` : `Could not launch ${appName}`,
+          spokenSummary: res.success ? `I launched ${appName}.` : `I could not launch ${appName}.`,
           evidence: [],
           artifacts: [],
           data: {
             actionsAttempted: [`Start-Process '${appName}'`],
-            actualObservations: `${appName} launched successfully`,
+            actualObservations: res.output,
             failures: res.success ? [] : [res.output],
+          },
+          verification: {
+            passed: res.success,
+            details: res.output,
           },
         };
       }
@@ -194,28 +210,35 @@ export class WindowsAgent implements SpecialistAgent {
     }
   }
 
-  private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string }> {
+  private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string; connected: boolean }> {
     if (process.env.FAKE === "1") {
       return {
         success: true,
         adapter: "Wi-Fi (Fake)",
-        output: "Successfully restarted Wi-Fi network adapter (Wi-Fi (Fake)). Connection verified.",
+        connected: false,
+        output: "FAKE mode: Wi-Fi restart was simulated; no physical adapter was changed or verified.",
       };
     }
-    const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1 | ForEach-Object { Restart-NetAdapter -Name $_.Name -Confirm:$false; Write-Output ('Restarted ' + $_.Name) }"`;
     try {
-      const { stdout } = await execAsync(psCommand, { timeout: 10000 });
-      const adapterName = stdout.trim() || "Wi-Fi";
+      const { stdout } = await runPowerShell(
+        "$adapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1; if (-not $adapter) { throw 'Wireless adapter not found' }; Restart-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 1200; $status = (Get-NetAdapter -Name $adapter.Name -ErrorAction Stop).Status; [pscustomobject]@{ Name = $adapter.Name; Status = $status } | ConvertTo-Json -Compress",
+        {},
+        10000
+      );
+      const observed = JSON.parse(stdout.trim());
+      const connected = String(observed.Status).toLowerCase() === "up";
       return {
-        success: true,
-        adapter: adapterName,
-        output: `Successfully restarted Wi-Fi network adapter (${adapterName}). Connection verified.`,
+        success: connected,
+        adapter: observed.Name,
+        connected,
+        output: `Wi-Fi adapter ${observed.Name} reported status ${observed.Status} after restart.`,
       };
     } catch (err: any) {
       return {
-        success: true,
+        success: false,
         adapter: "Wi-Fi",
-        output: `Adapter reset initiated (simulated/elevated hook: ${(err.message || "").slice(0, 80)})`,
+        connected: false,
+        output: `Wi-Fi adapter restart or post-check failed: ${(err.message || "").slice(0, 120)}`,
       };
     }
   }
@@ -224,34 +247,41 @@ export class WindowsAgent implements SpecialistAgent {
     try {
       const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -ExpandProperty Status -First 1"`;
       const { stdout } = await execAsync(psCommand, { timeout: 4000 });
-      const status = stdout.trim() || "Up";
+      const status = stdout.trim() || "Unknown";
       return {
-        success: true,
+        success: status !== "Unknown",
         status,
         spokenSummary: `Wi-Fi is ${status.toLowerCase() === "up" ? "connected and operational" : status}.`,
       };
     } catch {
-      return {
-        success: true,
-        status: "Up",
-        spokenSummary: "Wi-Fi is connected and operational.",
-      };
+      return { success: false, status: "Unknown", spokenSummary: "I could not verify the Wi-Fi adapter status." };
     }
   }
 
-  private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string }> {
+  private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string; output: string }> {
     if (process.env.FAKE === "1") {
-      return { success: true, state: enable ? "enabled" : "disabled" };
+      const state = enable ? "enabled" : "disabled";
+      return { success: false, state: `simulated ${state}`, output: `FAKE mode: Bluetooth ${state} was simulated; no radio state was changed or verified.` };
     }
     const stateStr = enable ? "On" : "Off";
     try {
-      const psCommand = `powershell -NoProfile -Command "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'}; if ($bt) { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::${stateStr}).GetAwaiter().GetResult(); 'Bluetooth state set to ${stateStr}' } else { 'Bluetooth radio ready' }"`;
-      await execAsync(psCommand, { timeout: 5000 });
-    } catch {}
-    return {
-      success: true,
-      state: enable ? "enabled" : "disabled",
-    };
+      const psCommand = `powershell -NoProfile -Command "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'} | Select-Object -First 1; if (-not $bt) { throw 'Bluetooth radio not found' }; $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::${stateStr}).GetAwaiter().GetResult(); $observed = $bt.State.ToString(); [pscustomobject]@{ State = $observed } | ConvertTo-Json -Compress"`;
+      const { stdout } = await execAsync(psCommand, { timeout: 5000 });
+      const observed = JSON.parse(stdout.trim()).State as string;
+      const expectedState = enable ? "On" : "Off";
+      const success = observed.toLowerCase() === expectedState.toLowerCase();
+      return {
+        success,
+        state: observed.toLowerCase() === "on" ? "enabled" : observed.toLowerCase() === "off" ? "disabled" : observed,
+        output: `Bluetooth radio reported state ${observed} after requesting ${expectedState}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        state: "unknown",
+        output: `Bluetooth state change or verification failed: ${(err.message || "Unknown error").slice(0, 160)}`,
+      };
+    }
   }
 
   private async setVolume(level: number): Promise<{ success: boolean; level: number }> {

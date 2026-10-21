@@ -57,6 +57,9 @@ export async function createVoiceAgentServer() {
         onHudUpdate: (hud) => {
           sendJson(socket, { type: "hud_update", ...hud });
         },
+        onProviderStatus: (providers) => {
+          sendJson(socket, { type: "provider_status", providers });
+        },
       },
     });
 
@@ -74,6 +77,7 @@ export async function createVoiceAgentServer() {
       bargeInEnabled: true,
       activationMode: "push_to_talk",
       wakeWord: null,
+      providers: session.getProviderInfo(),
       timestamp: Date.now(),
     });
 
