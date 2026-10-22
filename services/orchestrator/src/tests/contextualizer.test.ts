@@ -101,10 +101,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: "phone-local reminder defaults to the origin device",
+    name: "phone-originated task remains target-unspecified without a target selection",
     run: () => {
       const context = contextualizeRequest("Remind me to submit the form at 6 PM", { source: "phone", originDeviceId: "phone-1" });
-      assert.equal(context.targetDevice.kind, "origin_device");
+      assert.equal(context.targetDevice.kind, "unspecified");
     },
   },
   {
@@ -117,7 +117,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.deepEqual(context.targetDevice, {
         kind: "specific_device",
         deviceId: "laptop-9",
-        reason: "A validated target device was supplied by the command envelope.",
+        reason: "The command envelope names a target device; the relay and target host must authenticate and authorize it before dispatch.",
       });
     },
   },
@@ -130,6 +130,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.equal("allowedTools" in context, false);
     },
   },
+  {
     name: "YouTube URL recognition accepts watch and short links only",
     run: () => {
       assert.equal(isYouTubeWatchUrl("https://www.youtube.com/watch?v=abc123"), true);
