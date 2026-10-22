@@ -175,16 +175,11 @@ export class VanessaPlanner {
     const planId = `plan_${Date.now()}`;
     await skillsRuntime.initialize();
 
-    // Explicit links take priority over model-generated guesses.
-    const explicitUrl = extractExplicitHttpUrl(command);
-    const lowerCommand = command.toLowerCase();
-    const directOpenIntent = /\b(open|go to|navigate to|visit|load)\b/.test(lowerCommand);
-    const conflictingIntent = /\b(search|summari[sz]e|extract|download|compare|read the page)\b/.test(lowerCommand);
-    const directPlayIntent = /\b(play|watch)\b/.test(lowerCommand) && Boolean(explicitUrl && isYouTubeWatchUrl(explicitUrl));
-    const commandWithoutUrl = explicitUrl ? lowerCommand.replace(explicitUrl.toLowerCase(), "") : lowerCommand;
-    const compoundIntent = /\b(and then|then|also|and)\b/.test(commandWithoutUrl);
-    if (explicitUrl && !conflictingIntent && !compoundIntent && (directOpenIntent || directPlayIntent)) {
-      const directPlan = makeDirectUrlPlan(command, planId, explicitUrl);
+    // Contextualize the command before planning. Explicit, unambiguous links
+    // may bypass the LLM so the model cannot change the requested destination.
+    const browserContext = contextualizeBrowserRequest(command);
+    if (browserContext.kind === "exact_url" && browserContext.canShortCircuit) {
+      const directPlan = makeDirectUrlPlan(command, planId, browserContext.url);
       eventBus.emitEvent("plan:created", directPlan, requestId);
       return directPlan;
     }
@@ -222,11 +217,11 @@ export class VanessaPlanner {
             tasks,
             createdAt: Date.now(),
           };
-          if (explicitUrl && !conflictingIntent && (directOpenIntent || directPlayIntent)) {
-            forceBrowserTask(plan, makeDirectUrlPlan(command, planId, explicitUrl).tasks[0]);
-          } else {
-            const youtubeTask = makeBrowserIntentTask(command);
-            if (youtubeTask) forceBrowserTask(plan, youtubeTask);
+          if (browserContext.kind === "exact_url" && !browserContext.conflictingIntent) {
+            forceBrowserTask(plan, makeDirectUrlPlan(command, planId, browserContext.url).tasks[0]);
+          } else if (browserContext.kind !== "exact_url") {
+            const browserTask = makeBrowserIntentTask(command);
+            if (browserTask) forceBrowserTask(plan, browserTask);
           }
           eventBus.emitEvent("plan:created", plan, requestId);
           return plan;
@@ -239,11 +234,11 @@ export class VanessaPlanner {
     // Heuristic & Pattern-based deterministic planner
     const plan = this.createHeuristicPlan(command, planId);
     plan.tasks = plan.tasks.map((t: Task) => this.enrichTask(t, command));
-    if (explicitUrl && !conflictingIntent && (directOpenIntent || directPlayIntent)) {
-      forceBrowserTask(plan, makeDirectUrlPlan(command, planId, explicitUrl).tasks[0]);
-    } else {
-      const youtubeTask = makeBrowserIntentTask(command);
-      if (youtubeTask) forceBrowserTask(plan, youtubeTask);
+    if (browserContext.kind === "exact_url" && !browserContext.conflictingIntent) {
+      forceBrowserTask(plan, makeDirectUrlPlan(command, planId, browserContext.url).tasks[0]);
+    } else if (browserContext.kind !== "exact_url") {
+      const browserTask = makeBrowserIntentTask(command);
+      if (browserTask) forceBrowserTask(plan, browserTask);
     }
     eventBus.emitEvent("plan:created", plan, requestId);
     return plan;
@@ -431,73 +426,10 @@ export class VanessaPlanner {
       });
     }
 
-    // Browser and YouTube intent classification. Site open, search and playback are separate.
-    if (makeBrowserIntentTask(command)) {
-      const searchMatch = command.match(/search(?:\s+on)?\s+(?:youtube\s+)?(?:for\s+)?(.+?)(?:\s+on\s+youtube)?[.!?]*$/i);
-      const wantsSearch = /\bsearch\b/.test(lower);
-      const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
-        /\bfind\b.*\bvideo\b/.test(lower) ||
-        /\bopen\s+(?:(?:me|this|that)\s+)?(?:the\s+|a\s+)?video\b/.test(lower);
-
-      if (wantsSearch) {
-        let query = (searchMatch?.[1] || "").trim();
-        query = query.replace(/\s+on\s+youtube$/i, "").replace(/[.!?]+$/g, "").trim();
-        if (!query) query = command.replace(/.*\bsearch\b(?:\s+for)?/i, "").replace(/\s+on\s+youtube.*$/i, "").trim();
-        tasks.push({
-          id: "t_yt_search",
-          agent: "browser",
-          action: "youtube.search",
-          params: { query },
-          dependsOn: [],
-          status: "pending",
-          allowedTools: ["browser_navigate"],
-          acceptanceCriteria: ["Open YouTube results for requested query", "Verify result entries exist", "Do not claim playback"],
-        });
-      } else if (wantsPlayback) {
-        let query = command.match(/\b(?:play|watch|listen to)\s+(.+?)(?:\s+on\s+youtube)?[.!?]*$/i)?.[1] ||
-          command.match(/\b(?:find|open)\b.*?\bvideo\b(?:\s+(?:about|on|for)\s+)?(.+?)(?:\s+on\s+youtube)?[.!?]*$/i)?.[1] ||
-          "";
-        query = query.replace(/^(?:me\s+)?(?:a\s+|the\s+)?(?:video\s+(?:about|on|for)\s+)?/i, "")
-          .replace(/\s+on\s+youtube$/i, "").replace(/[.!?]+$/g, "").trim();
-        if (!query) query = "YouTube video";
-        tasks.push({
-          id: "t_yt_play",
-          agent: "browser",
-          action: "youtube.search_and_play",
-          params: { query },
-          dependsOn: [],
-          status: "pending",
-          allowedTools: ["browser_navigate", "browser_click"],
-          acceptanceCriteria: ["Choose relevant video", "Open watch page", "Verify playback progress before saying it is playing"],
-        });
-      } else {
-        tasks.push({
-          id: "t_yt_home",
-          agent: "browser",
-          action: "browser.open_url",
-          params: { url: "https://www.youtube.com/" },
-          dependsOn: [],
-          status: "pending",
-          allowedTools: ["browser_navigate"],
-          acceptanceCriteria: ["Open YouTube homepage, not search results", "Verify actual loaded page URL"],
-        });
-      }
-    } else if (/\bsearch\b/.test(lower)) {
-      const match = command.match(/\bsearch\s+(?:(google|bing)\s+)?(?:for\s+)?(.+?)[.!?]*$/i);
-      const engine = (match?.[1] || "google").toLowerCase();
-      const query = (match?.[2] || "").replace(/\s+(?:on|in)\s+(?:google|bing)$/i, "").trim();
-      if (query) {
-        tasks.push({
-          id: "t_web_search",
-          agent: "browser",
-          action: "browser.search",
-          params: { query, engine },
-          dependsOn: [],
-          status: "pending",
-          allowedTools: ["browser_navigate"],
-          acceptanceCriteria: ["Open results for the requested query", "Verify the actual search page URL/title"],
-        });
-      }
+    // Browser intent has already been normalized by the contextualizer.
+    const browserIntentTask = makeBrowserIntentTask(command);
+    if (browserIntentTask) {
+      tasks.push(browserIntentTask);
     } else if (lower.includes("chrome") || lower.includes("browser")) {
       tasks.push({
         id: "t_browser",
