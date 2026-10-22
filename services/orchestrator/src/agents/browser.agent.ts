@@ -10,6 +10,7 @@ import {
   type BrowserDriver,
   type BrowserPageState,
   type YouTubeCandidate,
+  type VideoState,
 } from "./browserDriver.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +55,37 @@ function rankCandidate(query: string, candidate: YouTubeCandidate): number {
   if (!queryWords.length) return 0;
   const titleWords = new Set(normalizedWords(`${candidate.title} ${candidate.channel || ""}`));
   return queryWords.filter((word) => titleWords.has(word)).length / queryWords.length;
+}
+
+function isVideoPlaying(video: VideoState): boolean {
+  return !video.paused && video.currentTime > 0.25 && video.readyState >= 2;
+}
+
+async function attemptPlaybackAndVerify(driver: BrowserDriver): Promise<{
+  video: VideoState;
+  attempted: boolean;
+  attemptDetails?: string;
+}> {
+  // Let normal autoplay settle before sending an input event.
+  await pause(1300);
+  let video = await driver.getVideoState();
+  if (isVideoPlaying(video)) return { video, attempted: false };
+
+  let attemptDetails = "No explicit playback attempt was needed before verification.";
+  let attempted = false;
+  try {
+    const attempt = await driver.startVideoPlayback();
+    attempted = attempt.attempted;
+    attemptDetails = attempt.details;
+  } catch (error) {
+    attempted = true;
+    attemptDetails = error instanceof Error ? error.message : String(error);
+  }
+
+  // The attempt itself is not success; inspect fresh state after the input.
+  await pause(1800);
+  video = await driver.getVideoState();
+  return { video, attempted, attemptDetails };
 }
 
 function evidence(description: string, data?: unknown): AgentEvidence {
@@ -180,27 +212,27 @@ export class BrowserAgent implements SpecialistAgent {
           }
           const isWatchPage = isYouTubeVideoUrl(page.url);
           if (params.play === true && isWatchPage) {
-            await pause(2200);
-            const video = await this.driver.getVideoState();
-            const playing = !video.paused && video.currentTime > 0.25 && video.readyState >= 2;
+            const playback = await attemptPlaybackAndVerify(this.driver);
+            const video = playback.video;
+            const playing = isVideoPlaying(video);
             if (playing) {
               return this.completed(
                 `Playing ${video.title || "the requested YouTube video"}`,
                 `Playing ${video.title || "the requested video"}.`,
-                [evidence("Observed video player advancing on the requested watch page.", { page, video })],
+                [evidence("Observed video player advancing on the requested watch page.", { page, video, playbackAttempt: playback })],
                 [page.url],
-                { requestedUrl: url, page, video, playbackVerified: true },
+                { requestedUrl: url, page, video, playbackAttempt: playback, playbackVerified: true },
                 true,
-                "The video element was unpaused and its playback time advanced."
+                "The video element was unpaused and its playback time advanced after opening/attempting playback."
               );
             }
             return this.partial(
-              `Opened ${page.url}, but playback did not start automatically.`,
-              "I opened the video, but playback didn't start. Please press play.",
-              [evidence("Watch page was opened, but playback was not observed.", { page, video })],
+              `Opened ${page.url}, but playback could not be verified.`,
+              "I opened the video, but the site didn't start playback. Please press play.",
+              [evidence("Watch page opened; playback attempt did not produce verified progress.", { page, video, playbackAttempt: playback })],
               [page.url],
-              { requestedUrl: url, page, video, playbackVerified: false },
-              "Watch page opened; video playback was not verified."
+              { requestedUrl: url, page, video, playbackAttempt: playback, playbackVerified: false },
+              "The watch page was open, but the video element did not show verified playback progress."
             );
           }
           return this.completed(
@@ -269,25 +301,25 @@ export class BrowserAgent implements SpecialistAgent {
               "Final URL is not a verified YouTube watch URL."
             );
           }
-          await pause(2500);
-          const video = await this.driver.getVideoState();
-          const playing = !video.paused && video.currentTime > 0.25 && video.readyState >= 2;
+          const playback = await attemptPlaybackAndVerify(this.driver);
+          const video = playback.video;
+          const playing = isVideoPlaying(video);
           if (!playing) {
             return this.partial(
-              `Opened "${video.title || best.candidate.title}", but playback did not start automatically.`,
-              `I opened ${video.title || best.candidate.title}, but playback didn't start. Please press play.`,
-              [evidence("Correct watch page was opened, but video playback was not observed.", { candidate: best.candidate, page, video })],
+              `Opened "${video.title || best.candidate.title}", but playback could not be verified.`,
+              `I opened ${video.title || best.candidate.title}, but the site didn't start playback. Please press play.`,
+              [evidence("Correct watch page was opened and playback was attempted, but progress was not observed.", { candidate: best.candidate, page, video, playbackAttempt: playback })],
               [page.url],
-              { query, candidate: best.candidate, page, video, playbackVerified: false },
-              "Video page is open, but the video element did not demonstrate playback progress."
+              { query, candidate: best.candidate, page, video, playbackAttempt: playback, playbackVerified: false },
+              "Video page is open, but playback progress was not observed after the playback attempt."
             );
           }
           return this.completed(
             `Playing "${video.title || best.candidate.title}"`,
             `Playing ${video.title || best.candidate.title}.`,
-            [evidence("Selected video and verified playback progress.", { candidate: best.candidate, page, video })],
+            [evidence("Selected video and verified playback progress.", { candidate: best.candidate, page, video, playbackAttempt: playback })],
             [page.url],
-            { query, candidate: best.candidate, page, video, playbackVerified: true },
+            { query, candidate: best.candidate, page, video, playbackAttempt: playback, playbackVerified: true },
             true,
             "Watch page is active and video playback time advanced."
           );
