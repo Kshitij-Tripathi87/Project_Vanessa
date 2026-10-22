@@ -11,6 +11,7 @@ Output: plan ID, intent/risk, unique tasks, registered agent/action IDs, schema-
 
 ## Rules
 - Preserve exact URL; do not convert it into search.
+- A request to find/play/watch a video defaults to YouTube only when no other platform or local-file intent is stated. A mention of YouTube as a topic inside a Google/web query does not make YouTube the target.
 - Distinguish browser.open_url, browser.search, youtube.search, youtube.open_video and youtube.search_and_play.
 - Search is not playback; results page must not be reported as playing.
 - Reject unknown agents/actions, invalid parameters, duplicate IDs, dangling dependencies and cycles.
