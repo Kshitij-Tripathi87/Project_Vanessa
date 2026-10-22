@@ -95,7 +95,11 @@ export class VanessaOrchestrator {
     }, requestId);
 
     // 1. Generate task plan
-    const plan = await planner.createPlan(command, conversationContext, requestId);
+    const plan = await planner.createPlan(command, conversationContext, requestId, {
+      source: payload.source || envelope?.source || "desktop",
+      originDeviceId: envelope?.originDeviceId,
+      targetDeviceId: envelope?.targetDeviceId,
+    });
 
     // 2. Execute plan through parallel DAG task runner
     const tasks = await runPlan(plan);
