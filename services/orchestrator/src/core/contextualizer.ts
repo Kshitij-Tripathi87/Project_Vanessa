@@ -13,6 +13,7 @@ export type RequestDomain =
   | "files"
   | "cloud"
   | "incident"
+  | "it_ops"
   | "memory"
   | "knowledge"
   | "testing"
@@ -176,7 +177,7 @@ function inferDomains(command: string, browser: BrowserIntentContext): RequestDo
   if (browser.kind !== "none") add("browser");
   if (/\b(investigate|incident|root cause|outage|service failing|http 500|\b500 errors?\b|stack trace|production issue)\b/.test(lower)) {
     add("incident");
-    add("it-ops" as RequestDomain);
+    add("it_ops");
   }
   if (/\b(wi-?fi|bluetooth|volume|adapter|screenshot|system settings|restart my (?:pc|computer)|open app|close app)\b/.test(lower)) add("system");
   if (/\b(claude code|vs code|vscode|visual studio code|coding agent|build (?:me )?(?:an? )?app|write code|git (?:status|diff|branch|commit|pull)|run tests|unit tests|regression test)\b/.test(lower)) add("developer");
@@ -234,7 +235,7 @@ function inferTargetDevice(command: string, options: ContextualizationOptions): 
 export function contextualizeRequest(command: string, options: ContextualizationOptions = {}): NormalizedRequestContext {
   const browser = contextualizeBrowserRequest(command);
   const domains = inferDomains(command, browser);
-  const primaryPriority: RequestDomain[] = ["incident", "system", "developer", "cloud", "files", "browser", "memory", "knowledge", "testing", "general"];
+  const primaryPriority: RequestDomain[] = ["incident", "it_ops", "system", "developer", "cloud", "files", "browser", "memory", "knowledge", "testing", "general"];
   const primaryDomain = primaryPriority.find((candidate) => domains.includes(candidate)) || "general";
 
   const entities: NormalizedRequestContext["entities"] = {};
