@@ -43,6 +43,23 @@ async function main() {
       },
     },
     {
+      name: "video request defaults to YouTube when no platform or local file is specified",
+      run: async () => {
+        const plan = await planner.createPlan("Find and play a video about Python async");
+        assert.equal(plan.tasks[0].action, "youtube.search_and_play");
+        assert.match(String(plan.tasks[0].params.query), /Python async/i);
+      },
+    },
+    {
+      name: "Google search about YouTube remains a web search",
+      run: async () => {
+        const plan = await planner.createPlan("Search Google for YouTube video resolution");
+        assert.equal(plan.tasks[0].action, "browser.search");
+        assert.equal(plan.tasks[0].params.engine, "google");
+        assert.match(String(plan.tasks[0].params.query), /YouTube video resolution/i);
+      },
+    },
+    {
       name: "a supplied YouTube watch link with play intent is opened directly",
       run: async () => {
         const target = "https://www.youtube.com/watch?v=abc123";
