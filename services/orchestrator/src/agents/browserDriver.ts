@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import WebSocket from "ws";
@@ -166,11 +167,7 @@ function resolveEdgePath(): string {
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {
-    try {
-      // Check synchronously to keep path resolution deterministic at startup.
-      const fsSync = require("node:fs") as typeof import("node:fs");
-      if (fsSync.existsSync(candidate)) return candidate;
-    } catch { /* check next location */ }
+    if (existsSync(candidate)) return candidate;
   }
   throw new Error("Microsoft Edge was not found. Install Edge or set VANESSA_BROWSER_PATH to its executable.");
 }
