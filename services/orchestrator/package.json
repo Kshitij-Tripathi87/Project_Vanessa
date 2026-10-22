@@ -12,7 +12,8 @@
     "test:skills": "tsx src/tests/skillsRuntime.test.ts",
     "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
     "test:browser-agent": "tsx src/tests/browserAgent.test.ts",
-    "test:planner-browser": "tsx src/tests/plannerBrowserRouting.test.ts"
+    "test:planner-browser": "tsx src/tests/plannerBrowserRouting.test.ts",
+    "test:contextualizer": "tsx src/tests/contextualizer.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
