@@ -25,7 +25,8 @@ function normalizeHttpUrl(input: unknown): string {
   if (explicitScheme && explicitScheme !== "http" && explicitScheme !== "https") {
     throw new Error("Only HTTP and HTTPS URLs are permitted.");
   }
-  const withScheme = /^https?:\\/\\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const lowerTrimmed = trimmed.toLowerCase();
+  const withScheme = lowerTrimmed.startsWith("http://") || lowerTrimmed.startsWith("https://") ? trimmed : `https://${trimmed}`;
   const parsed = new URL(withScheme);
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Only HTTP and HTTPS URLs are permitted.");
