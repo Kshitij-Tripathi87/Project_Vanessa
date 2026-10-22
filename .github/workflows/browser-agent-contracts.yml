@@ -53,3 +53,6 @@ jobs:
 
       - name: Test planner Browser routing
         run: pnpm test:planner-browser
+
+      - name: Test intent contextualizer
+        run: pnpm test:contextualizer
