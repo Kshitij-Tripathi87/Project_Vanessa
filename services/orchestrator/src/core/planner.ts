@@ -124,7 +124,7 @@ export class VanessaPlanner {
   }
 
   async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestId?: string): Promise<Plan> {
-    const planId = \`plan_\${Date.now()}\`;
+    const planId = `plan_${Date.now()}`;
     await skillsRuntime.initialize();
 
     // Explicit links take priority over model-generated guesses.
