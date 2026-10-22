@@ -10,7 +10,6 @@ export interface BrowserPageState {
   url: string;
   title: string;
   readyState: string;
-  bodyText?: string;
   httpStatus?: number;
 }
 
@@ -204,7 +203,7 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
   async getPageState(): Promise<BrowserPageState> {
     const connection = await this.ensureConnected();
     const response = await connection.send<any>("Runtime.evaluate", {
-      expression: "({url: location.href, title: document.title || '', readyState: document.readyState, bodyText: (document.body?.innerText || '').slice(0, 1500)})",
+      expression: "({url: location.href, title: document.title || '', readyState: document.readyState})",
       returnByValue: true,
       awaitPromise: true,
     });
@@ -214,7 +213,6 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
       url: value.url,
       title: String(value.title || ""),
       readyState: String(value.readyState || "unknown"),
-      bodyText: String(value.bodyText || ""),
       httpStatus: this.lastDocumentStatus,
     };
   }
