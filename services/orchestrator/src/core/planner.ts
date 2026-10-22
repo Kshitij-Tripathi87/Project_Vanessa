@@ -4,7 +4,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { contextualizeBrowserRequest, extractExplicitHttpUrl, isYouTubeWatchUrl } from "./contextualizer.js";
+import { contextualizeBrowserRequest, isYouTubeWatchUrl } from "./contextualizer.js";
 
 const PLANNER_SYSTEM_PROMPT = `You are Vanessa's task planner. Convert the user's command into a dependency-aware JSON task DAG.
 Available specialist agents:
