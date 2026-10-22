@@ -34,6 +34,7 @@ export interface BrowserDriver {
   getPageState(): Promise<BrowserPageState>;
   getYouTubeResults(timeoutMs?: number): Promise<YouTubeCandidate[]>;
   getVideoState(): Promise<VideoState>;
+  startVideoPlayback(): Promise<{ attempted: boolean; details: string }>;
 }
 
 type CdpMessage = { id?: number; method?: string; params?: any; result?: any; error?: { message?: string } };
@@ -254,6 +255,67 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
       currentTime: Number(value.currentTime || 0),
       readyState: Number(value.readyState || 0),
       error: value.error == null ? null : String(value.error),
+    };
+  }
+
+  async startVideoPlayback(): Promise<{ attempted: boolean; details: string }> {
+    const connection = await this.ensureConnected();
+
+    // Prefer a real browser input event on YouTube's visible play control. This
+    // can satisfy user-activation requirements that a bare video.play() call may not.
+    const buttonResponse = await connection.send<any>("Runtime.evaluate", {
+      expression: `(() => {
+        const button = document.querySelector('.ytp-play-button');
+        if (!button) return { found: false };
+        const rect = button.getBoundingClientRect();
+        const style = getComputedStyle(button);
+        if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') {
+          return { found: false };
+        }
+        return { found: true, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, label: button.getAttribute('aria-label') || '' };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    const button = buttonResponse?.result?.value;
+    if (button?.found && Number.isFinite(button.x) && Number.isFinite(button.y)) {
+      await connection.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: button.x,
+        y: button.y,
+        button: "left",
+        clickCount: 1,
+      });
+      await connection.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: button.x,
+        y: button.y,
+        button: "left",
+        clickCount: 1,
+      });
+      return { attempted: true, details: `Dispatched a browser input click to the visible YouTube player control (${button.label || "play button"}); playback state still requires verification.` };
+    }
+
+    // Generic fallback: attempt the HTMLMediaElement API but never treat its
+    // resolution as final proof; the caller must inspect currentTime and paused.
+    const playResponse = await connection.send<any>("Runtime.evaluate", {
+      expression: `(() => {
+        const video = document.querySelector('video.html5-main-video, video');
+        if (!video) return { attempted: false, details: 'No video element was present.' };
+        return video.play().then(
+          () => ({ attempted: true, details: 'video.play() resolved; playback state still requires verification.' }),
+          (error) => ({ attempted: true, details: 'video.play() rejected: ' + String(error && (error.message || error.name) || error) })
+        );
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+      timeout: 5000,
+    }, 6000);
+    const result = playResponse?.result?.value;
+    return {
+      attempted: Boolean(result?.attempted),
+      details: String(result?.details || "Could not invoke a video playback control."),
     };
   }
 
