@@ -101,15 +101,22 @@ function makeDirectUrlPlan(command: string, planId: string, url: string): Plan {
 
 function makeYouTubeIntentTask(command: string): Task | undefined {
   const lower = command.toLowerCase();
-  if (!lower.includes("youtube")) return undefined;
-
   const openingHome = /\b(?:open|go to|visit|launch)\s+(?:the\s+)?youtube\b/.test(lower);
   const wantsSearch = /\bsearch\b/.test(lower);
   const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
     /\bfind\b.*\bvideo\b/.test(lower) ||
     /\bopen\b.*\bvideo\b/.test(lower);
-
-  if (!openingHome && !wantsSearch && !wantsPlayback) return undefined;
+  const targetsYoutubeSearch =
+    /\bsearch\s+(?:on\s+)?youtube\b/.test(lower) ||
+    /\bsearch\b.*\bon\s+youtube\b/.test(lower) ||
+    /\byoutube\b.*\bsearch\s+for\b/.test(lower);
+  const targetsYoutubePlayback =
+    /\b(?:play|watch|listen to|find|open)\b.*\byoutube\b/.test(lower) ||
+    /\byoutube\b.*\b(?:play|watch|find|open)\b/.test(lower);
+  const targetsYouTube = openingHome ||
+    (wantsSearch && targetsYoutubeSearch) ||
+    (wantsPlayback && targetsYoutubePlayback);
+  if (!targetsYouTube) return undefined;
 
   let action: string;
   let params: Record<string, any>;
@@ -471,7 +478,7 @@ export class VanessaPlanner {
     }
 
     // Browser and YouTube intent classification. Site open, search and playback are separate.
-    if (lower.includes("youtube")) {
+    if (makeYouTubeIntentTask(command)) {
       const searchMatch = command.match(/search(?:\s+on)?\s+(?:youtube\s+)?(?:for\s+)?(.+?)(?:\s+on\s+youtube)?[.!?]*$/i);
       const wantsSearch = /\bsearch\b/.test(lower);
       const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
@@ -519,6 +526,22 @@ export class VanessaPlanner {
           status: "pending",
           allowedTools: ["browser_navigate"],
           acceptanceCriteria: ["Open YouTube homepage, not search results", "Verify actual loaded page URL"],
+        });
+      }
+    } else if (/\bsearch\b/.test(lower)) {
+      const match = command.match(/\bsearch\s+(?:(google|bing|duckduckgo)\s+)?(?:for\s+)?(.+?)[.!?]*$/i);
+      const engine = (match?.[1] || "google").toLowerCase();
+      const query = (match?.[2] || "").replace(/\s+(?:on|in)\s+(?:google|bing|duckduckgo)$/i, "").trim();
+      if (query) {
+        tasks.push({
+          id: "t_web_search",
+          agent: "browser",
+          action: "browser.search",
+          params: { query, engine: engine === "duckduckgo" ? "google" : engine },
+          dependsOn: [],
+          status: "pending",
+          allowedTools: ["browser_navigate"],
+          acceptanceCriteria: ["Open results for the requested query", "Verify the actual search page URL/title"],
         });
       }
     } else if (lower.includes("chrome") || lower.includes("browser")) {
