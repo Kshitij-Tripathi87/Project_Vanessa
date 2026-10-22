@@ -196,7 +196,7 @@ function inferTargetDevice(command: string, options: ContextualizationOptions): 
     return {
       kind: "specific_device",
       deviceId: options.targetDeviceId,
-      reason: "A validated target device was supplied by the command envelope.",
+      reason: "The command envelope names a target device; the relay and target host must authenticate and authorize it before dispatch.",
     };
   }
 
@@ -225,7 +225,8 @@ function inferTargetDevice(command: string, options: ContextualizationOptions): 
         : "The desktop-originated command explicitly targets a paired phone.",
     };
   }
-  if (source) return { kind: "origin_device", reason: "No other target was stated; prefer the device that originated the request." };
+  if (fromPhone) return { kind: "unspecified", reason: "A phone-originated command does not by itself identify whether the task belongs on the phone or a paired PC; the mobile router should set an explicit target." };
+  if (source) return { kind: "origin_device", reason: "No other target was stated; prefer the device that originated the request when it supports the requested capability." };
   return { kind: "unspecified", reason: "The source device is unknown; choose only after capability and device context is resolved." };
 }
 
@@ -235,7 +236,7 @@ function inferTargetDevice(command: string, options: ContextualizationOptions): 
 export function contextualizeRequest(command: string, options: ContextualizationOptions = {}): NormalizedRequestContext {
   const browser = contextualizeBrowserRequest(command);
   const domains = inferDomains(command, browser);
-  const primaryPriority: RequestDomain[] = ["incident", "it_ops", "system", "developer", "cloud", "files", "browser", "memory", "knowledge", "testing", "general"];
+  const primaryPriority: RequestDomain[] = ["incident", "it_ops", "system", "testing", "developer", "cloud", "files", "browser", "memory", "knowledge", "general"];
   const primaryDomain = primaryPriority.find((candidate) => domains.includes(candidate)) || "general";
 
   const entities: NormalizedRequestContext["entities"] = {};
