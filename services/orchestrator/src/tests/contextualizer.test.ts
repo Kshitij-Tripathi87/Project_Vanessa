@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { contextualizeBrowserRequest, extractExplicitHttpUrl, isYouTubeWatchUrl } from "../core/contextualizer.js";
+import { contextualizeBrowserRequest, contextualizeRequest, extractExplicitHttpUrl, isYouTubeWatchUrl } from "../core/contextualizer.js";
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
@@ -75,6 +75,61 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: "incident requests produce multiple relevant agent domains",
+    run: () => {
+      const context = contextualizeRequest("Investigate why checkout is failing; check the logs, runbook, code changes and tests.");
+      assert.equal(context.primaryDomain, "incident");
+      assert.ok(context.domains.includes("incident"));
+      assert.ok(context.domains.includes("it_ops"));
+      assert.ok(context.domains.includes("knowledge"));
+      assert.ok(context.domains.includes("testing"));
+    },
+  },
+  {
+    name: "phone-originated laptop command targets the paired PC",
+    run: () => {
+      const context = contextualizeRequest("Run the unit tests on my laptop", { source: "phone", originDeviceId: "phone-1" });
+      assert.equal(context.targetDevice.kind, "paired_pc");
+      assert.ok(context.domains.includes("testing"));
+    },
+  },
+  {
+    name: "desktop-originated request for the phone targets a paired mobile device",
+    run: () => {
+      const context = contextualizeRequest("Create a reminder on my phone", { source: "desktop", originDeviceId: "desktop-1" });
+      assert.equal(context.targetDevice.kind, "paired_mobile");
+    },
+  },
+  {
+    name: "phone-local reminder defaults to the origin device",
+    run: () => {
+      const context = contextualizeRequest("Remind me to submit the form at 6 PM", { source: "phone", originDeviceId: "phone-1" });
+      assert.equal(context.targetDevice.kind, "origin_device");
+    },
+  },
+  {
+    name: "validated envelope target overrides inferred target",
+    run: () => {
+      const context = contextualizeRequest("Open YouTube", {
+        source: "phone",
+        targetDeviceId: "laptop-9",
+      });
+      assert.deepEqual(context.targetDevice, {
+        kind: "specific_device",
+        deviceId: "laptop-9",
+        reason: "A validated target device was supplied by the command envelope.",
+      });
+    },
+  },
+  {
+    name: "cross-agent contextualizer does not grant permissions",
+    run: () => {
+      const context = contextualizeRequest("Restart my Wi-Fi adapter", { source: "desktop" });
+      assert.ok(context.domains.includes("system"));
+      assert.ok(context.notes.some((note) => note.includes("relay connectivity")));
+      assert.equal("allowedTools" in context, false);
+    },
+  },
     name: "YouTube URL recognition accepts watch and short links only",
     run: () => {
       assert.equal(isYouTubeWatchUrl("https://www.youtube.com/watch?v=abc123"), true);
