@@ -17,10 +17,11 @@
     "test:drills": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/failureDrills.test.ts",
     "test:drills:process": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/processFailureDrills.test.ts",
     "test:checkout:gate": "pnpm --filter @vanessa/orchestrator exec tsx src/tests/checkoutIncidentGate.test.ts",
+    "test:browser-agent": "pnpm --filter @vanessa/orchestrator test:browser-agent",
     "test:voice:real": ".venv-voice\\Scripts\\python.exe scripts/test_real_voice_pipeline.py test_wifi.wav",
     "test:voice:behavior": "pnpm --filter @vanessa/voice-agent test:behavior",
     "test:voice:fish:acceptance": "RUN_REAL_PROVIDER_TESTS=1 pnpm --filter @vanessa/voice-agent test:fish:acceptance",
-    "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm test:drills:process && pnpm --filter @vanessa/voice-agent test && pnpm --filter @vanessa/voice-agent test:behavior",
+    "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm test:drills:process && pnpm --filter @vanessa/voice-agent test && pnpm --filter @vanessa/voice-agent test:behavior && pnpm test:browser-agent",
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {
