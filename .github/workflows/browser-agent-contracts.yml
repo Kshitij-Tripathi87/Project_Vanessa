@@ -1,0 +1,55 @@
+name: Browser agent contracts
+
+on:
+  pull_request:
+    paths:
+      - "services/orchestrator/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/browser-agent-contracts.yml"
+  push:
+    branches:
+      - "feature/kshitij-voice-agent-plane"
+    paths:
+      - "services/orchestrator/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/browser-agent-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  browser-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @vanessa/shared build
+
+      - name: Type-check orchestrator
+        run: pnpm --filter @vanessa/orchestrator build
+
+      - name: Test Browser agent behavior
+        run: pnpm test:browser-agent
+
+      - name: Test planner Browser routing
+        run: pnpm test:planner-browser
