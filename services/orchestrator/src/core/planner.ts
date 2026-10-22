@@ -113,9 +113,12 @@ function makeYouTubeIntentTask(command: string): Task | undefined {
   const targetsYoutubePlayback =
     /\b(?:play|watch|listen to|find|open)\b.*\byoutube\b/.test(lower) ||
     /\byoutube\b.*\b(?:play|watch|find|open)\b/.test(lower);
+  const mentionsAnotherVideoPlatform = /\b(?:vimeo|netflix|tiktok|dailymotion|twitch)\b/.test(lower);
+  const refersToLocalVideo = /\b(?:video file|local video|downloaded video|mp4 file|from downloads|on my pc)\b/.test(lower);
+  const implicitYoutubePlayback = wantsPlayback && !mentionsAnotherVideoPlatform && !refersToLocalVideo;
   const targetsYouTube = openingHome ||
     (wantsSearch && targetsYoutubeSearch) ||
-    (wantsPlayback && targetsYoutubePlayback);
+    (wantsPlayback && (targetsYoutubePlayback || implicitYoutubePlayback));
   if (!targetsYouTube) return undefined;
 
   let action: string;
