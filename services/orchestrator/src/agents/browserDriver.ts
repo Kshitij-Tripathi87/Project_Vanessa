@@ -74,6 +74,10 @@ class CdpConnection {
     return new CdpConnection(socket);
   }
 
+  isOpen(): boolean {
+    return this.socket.readyState === WebSocket.OPEN;
+  }
+
   send<T = any>(method: string, params: Record<string, unknown> = {}, timeoutMs = 12000): Promise<T> {
     if (this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Browser debugging socket is not open"));
     const id = ++this.nextId;
@@ -261,12 +265,20 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
     // Keep the browser profile so the user can retain Vanessa-specific site state.
   }
 
-  private async ensureConnected(): Promise<CdpConnection> {
-    if (this.connection) return this.connection;
-    if (process.platform !== "win32") {
-      throw new Error("The current browser driver supports Windows only; macOS requires its platform adapter.");
-    }
+  private async connectToExistingPage(): Promise<CdpConnection> {
+    if (!this.port || !this.child) throw new Error("Browser process is not available for reconnection");
+    const targets = await waitForJson(`http://127.0.0.1:${this.port}/json/list`, this.child, 5000);
+    const target = (targets as CdpTarget[]).find((item) => item.type === "page" && item.webSocketDebuggerUrl);
+    if (!target?.webSocketDebuggerUrl) throw new Error("No browser page target is available for reconnection");
+    const connection = await CdpConnection.connect(target.webSocketDebuggerUrl);
+    await connection.send("Page.enable");
+    await connection.send("Runtime.enable");
+    await connection.send("Network.enable");
+    this.connection = connection;
+    return connection;
+  }
 
+  private async launchManagedBrowser(): Promise<CdpConnection> {
     const executable = resolveEdgePath();
     this.profileDir = process.env.VANESSA_BROWSER_PROFILE || path.join(os.homedir(), ".vanessa", "browser-profile");
     await fs.mkdir(this.profileDir, { recursive: true });
@@ -284,15 +296,38 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
       this.connection?.close();
       this.connection = undefined;
     });
+    this.child.once("exit", () => {
+      this.connection?.close();
+      this.connection = undefined;
+    });
 
     await waitForJson(`http://127.0.0.1:${this.port}/json/version`, this.child);
-    const targets = await waitForJson(`http://127.0.0.1:${this.port}/json/list`, this.child);
-    const target = (targets as CdpTarget[]).find((item) => item.type === "page" && item.webSocketDebuggerUrl);
-    if (!target?.webSocketDebuggerUrl) throw new Error("No browser page target is available");
-    this.connection = await CdpConnection.connect(target.webSocketDebuggerUrl);
-    await this.connection.send("Page.enable");
-    await this.connection.send("Runtime.enable");
-    await this.connection.send("Network.enable");
-    return this.connection;
+    return this.connectToExistingPage();
+  }
+
+  private async ensureConnected(): Promise<CdpConnection> {
+    if (this.connection?.isOpen()) return this.connection;
+    if (this.connection) {
+      this.connection.close();
+      this.connection = undefined;
+    }
+    if (process.platform !== "win32") {
+      throw new Error("The current browser driver supports Windows only; macOS requires its platform adapter.");
+    }
+
+    if (this.child && this.child.exitCode === null && this.port) {
+      try {
+        // Recover a dropped DevTools WebSocket by reattaching to the still-running browser.
+        await waitForJson(`http://127.0.0.1:${this.port}/json/version`, this.child, 4000);
+        return await this.connectToExistingPage();
+      } catch {
+        // If the browser or debugging endpoint is gone, relaunch the managed instance below.
+      }
+      try { this.child.kill(); } catch { /* process may already have exited */ }
+      this.child = undefined;
+      this.port = undefined;
+    }
+
+    return this.launchManagedBrowser();
   }
 }
