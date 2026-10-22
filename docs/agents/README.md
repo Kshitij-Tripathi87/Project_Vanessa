@@ -25,6 +25,7 @@ Root `AGENTS.md` instructs coding assistants how to modify this repository. File
 - `macos.md` — macOS adapter requirements.
 - `browser-acceptance.md` — Browser/YouTube release tests.
 - `implementation-order.md` — staged implementation and exit gates.
+- `browser-acceptance.md` — acceptance matrix for exact links, search and playback.
 
 These are target contracts, not proof every capability is implemented. Verify source and tests and distinguish simulated from live results.
 
