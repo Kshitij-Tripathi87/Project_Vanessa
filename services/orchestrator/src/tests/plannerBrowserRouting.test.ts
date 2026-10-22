@@ -86,7 +86,12 @@ async function main() {
     modelRouter.callLLM = originalCallLLM;
   }
   console.log(`Browser planner routing tests: ${cases.length - failed}/${cases.length} passed`);
-  if (failed > 0) process.exitCode = 1;
+  // Importing the planner initializes shared runtime services that can keep the
+  // one-shot test process alive; mirror the repository's standalone test pattern.
+  process.exit(failed > 0 ? 1 : 0);
 }
 
-void main();
+void main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
