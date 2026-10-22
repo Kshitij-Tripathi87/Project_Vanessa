@@ -105,7 +105,7 @@ function makeYouTubeIntentTask(command: string): Task | undefined {
   const wantsSearch = /\bsearch\b/.test(lower);
   const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
     /\bfind\b.*\bvideo\b/.test(lower) ||
-    /\bopen\b.*\bvideo\b/.test(lower);
+    /\bopen\s+(?:(?:me|this|that)\s+)?(?:the\s+|a\s+)?video\b/.test(lower);
   const targetsYoutubeSearch =
     /\bsearch\s+(?:on\s+)?youtube\b/.test(lower) ||
     /\bsearch\b.*\bon\s+youtube\b/.test(lower) ||
@@ -486,7 +486,7 @@ export class VanessaPlanner {
       const wantsSearch = /\bsearch\b/.test(lower);
       const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
         /\bfind\b.*\bvideo\b/.test(lower) ||
-        /\bopen\b.*\bvideo\b/.test(lower);
+        /\bopen\s+(?:(?:me|this|that)\s+)?(?:the\s+|a\s+)?video\b/.test(lower);
 
       if (wantsSearch) {
         let query = (searchMatch?.[1] || "").trim();
@@ -532,15 +532,15 @@ export class VanessaPlanner {
         });
       }
     } else if (/\bsearch\b/.test(lower)) {
-      const match = command.match(/\bsearch\s+(?:(google|bing|duckduckgo)\s+)?(?:for\s+)?(.+?)[.!?]*$/i);
+      const match = command.match(/\bsearch\s+(?:(google|bing)\s+)?(?:for\s+)?(.+?)[.!?]*$/i);
       const engine = (match?.[1] || "google").toLowerCase();
-      const query = (match?.[2] || "").replace(/\s+(?:on|in)\s+(?:google|bing|duckduckgo)$/i, "").trim();
+      const query = (match?.[2] || "").replace(/\s+(?:on|in)\s+(?:google|bing)$/i, "").trim();
       if (query) {
         tasks.push({
           id: "t_web_search",
           agent: "browser",
           action: "browser.search",
-          params: { query, engine: engine === "duckduckgo" ? "google" : engine },
+          params: { query, engine },
           dependsOn: [],
           status: "pending",
           allowedTools: ["browser_navigate"],
