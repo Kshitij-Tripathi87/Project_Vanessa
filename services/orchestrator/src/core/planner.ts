@@ -179,7 +179,7 @@ function forceBrowserTask(plan: Plan, forcedTask: Task): Plan {
     const used = new Set(plan.tasks.map((task) => task.id));
     let id = forcedTask.id;
     let suffix = 1;
-    while (used.has(id)) id = \`\${forcedTask.id}_\${suffix++}\`;
+    while (used.has(id)) id = forcedTask.id + "_" + suffix++;
     plan.tasks.push({ ...forcedTask, id });
     plan.intent = "multi_task";
   }
