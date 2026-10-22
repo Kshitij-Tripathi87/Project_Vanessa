@@ -149,6 +149,24 @@ export interface Task {
   approvalExpiresAt?: number;
 }
 
+export interface RequestContextSummary {
+  domains: string[];
+  primaryDomain: string;
+  targetDevice: {
+    kind: string;
+    deviceId?: string;
+    reason: string;
+  };
+  browserIntent: string;
+  entities: {
+    url?: string;
+    searchQuery?: string;
+    videoQuery?: string;
+    targetApp?: string;
+  };
+  notes: string[];
+}
+
 export interface Plan {
   id: string;
   command: string;
@@ -159,6 +177,8 @@ export interface Plan {
   createdAt?: number;
   completedAt?: number;
   requestId?: string;
+  /** Derived routing hints; policy and device authorization must still be revalidated at execution time. */
+  contextualization?: RequestContextSummary;
 }
 
 export interface AgentMessage {
