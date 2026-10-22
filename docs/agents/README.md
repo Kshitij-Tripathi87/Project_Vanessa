@@ -18,7 +18,10 @@ Root `AGENTS.md` instructs coding assistants how to modify this repository. File
 - `knowledge.md` — runbook/document retrieval.
 - `files.md` — scoped filesystem and Drive operations.
 - `incident.md` — composite incident workflow.
-- `cloud-integrations.md` — Gmail, Drive, messaging and connectors.
+- `cloud-integrations.md` — Gmail, Drive and messaging adapters.
+- `connector.md` — external connector alias and adapter contract.
+- `tools.md` — registered tool catalog and execution boundary.
+- `vanessa.md` — general assistant, schedules and OpenJarvis-backed goal/tool bridge.
 - `openjarvis-adapter.md` — Python/OpenJarvis bridge.
 - `relay.md` — device pairing and phone-to-PC delivery.
 - `mobile-agent.md` — Android/iOS local task scope.
