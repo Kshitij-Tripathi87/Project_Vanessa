@@ -19,7 +19,13 @@ function normalizeHttpUrl(input: unknown): string {
     throw new Error("A non-empty URL is required.");
   }
   const trimmed = input.trim();
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  // If the user explicitly supplied a URI scheme, do not reinterpret a dangerous
+  // scheme such as javascript: as an HTTPS hostname by prefixing it.
+  const explicitScheme = trimmed.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+  if (explicitScheme && explicitScheme !== "http" && explicitScheme !== "https") {
+    throw new Error("Only HTTP and HTTPS URLs are permitted.");
+  }
+  const withScheme = /^https?:\\/\\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   const parsed = new URL(withScheme);
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Only HTTP and HTTPS URLs are permitted.");
