@@ -99,6 +99,93 @@ function makeDirectUrlPlan(command: string, planId: string, url: string): Plan {
   };
 }
 
+function makeYouTubeIntentTask(command: string): Task | undefined {
+  const lower = command.toLowerCase();
+  if (!lower.includes("youtube")) return undefined;
+
+  const openingHome = /\b(?:open|go to|visit|launch)\s+(?:the\s+)?youtube\b/.test(lower);
+  const wantsSearch = /\bsearch\b/.test(lower);
+  const wantsPlayback = /\b(play|watch|listen to)\b/.test(lower) ||
+    /\bfind\b.*\bvideo\b/.test(lower) ||
+    /\bopen\b.*\bvideo\b/.test(lower);
+
+  if (!openingHome && !wantsSearch && !wantsPlayback) return undefined;
+
+  let action: string;
+  let params: Record<string, any>;
+  let acceptanceCriteria: string[];
+
+  if (wantsSearch && !wantsPlayback) {
+    let query = command.match(/\bsearch\s+(.+?)(?:[.!?]*)$/i)?.[1] || "";
+    query = query
+      .replace(/^\s*(?:on\s+)?(?:youtube\s+)?(?:for\s+)?/i, "")
+      .replace(/\s+(?:on|in)\s+youtube\b.*$/i, "")
+      .replace(/[.!?]+$/g, "")
+      .trim();
+    action = "youtube.search";
+    params = { query };
+    acceptanceCriteria = ["Open YouTube search results", "Verify result entries exist", "Do not claim playback"];
+  } else if (wantsPlayback) {
+    let query = command.match(/\b(?:play|watch|listen to)\s+(.+?)(?:\s+(?:on|in)\s+youtube)?[.!?]*$/i)?.[1] ||
+      command.match(/\b(?:find|open)\b.*?\bvideo\b(?:\s+(?:about|on|for)\s+)?(.+?)(?:\s+on\s+youtube)?[.!?]*$/i)?.[1] ||
+      "";
+    query = query
+      .replace(/^(?:(?:a|the)\s+)?(?:latest\s+)?(?:video|song|clip)\s+(?:about|on|for)\s+/i, "")
+      .replace(/^(?:me\s+)?(?:a\s+|the\s+)?/i, "")
+      .replace(/\s+(?:on|in)\s+youtube\b.*$/i, "")
+      .replace(/[.!?]+$/g, "")
+      .trim();
+    action = "youtube.search_and_play";
+    params = { query };
+    acceptanceCriteria = ["Choose a relevant video", "Open its watch page", "Verify playback progress before claiming it is playing"];
+  } else {
+    action = "browser.open_url";
+    params = { url: "https://www.youtube.com/" };
+    acceptanceCriteria = ["Open YouTube home page", "Verify actual URL and title"];
+  }
+
+  return {
+    id: "t_youtube_intent",
+    agent: "browser",
+    action,
+    params,
+    dependsOn: [],
+    status: "pending",
+    allowedTools: action === "youtube.search_and_play"
+      ? ["browser_navigate", "browser_click"]
+      : ["browser_navigate"],
+    acceptanceCriteria,
+  };
+}
+
+function forceBrowserTask(plan: Plan, forcedTask: Task): Plan {
+  const browserIndices = plan.tasks
+    .map((task, index) => task.agent === "browser" ? index : -1)
+    .filter((index) => index >= 0);
+  if (browserIndices.length > 0) {
+    const firstIndex = browserIndices[0];
+    const existing = plan.tasks[firstIndex];
+    plan.tasks[firstIndex] = {
+      ...existing,
+      ...forcedTask,
+      id: existing.id,
+      parentId: existing.parentId,
+      dependsOn: existing.dependsOn || forcedTask.dependsOn,
+      status: existing.status || "pending",
+    };
+    // A single user intent must not generate multiple conflicting browser actions.
+    for (const index of browserIndices.slice(1).reverse()) plan.tasks.splice(index, 1);
+  } else if (plan.tasks.length < 12) {
+    const used = new Set(plan.tasks.map((task) => task.id));
+    let id = forcedTask.id;
+    let suffix = 1;
+    while (used.has(id)) id = \`\${forcedTask.id}_\${suffix++}\`;
+    plan.tasks.push({ ...forcedTask, id });
+    plan.intent = "multi_task";
+  }
+  return plan;
+}
+
 export class VanessaPlanner {
   private enrichTask(t: Task, command: string): Task {
     const task: Task = { ...t };
@@ -133,7 +220,9 @@ export class VanessaPlanner {
     const directOpenIntent = /\b(open|go to|navigate to|visit|load)\b/.test(lowerCommand);
     const conflictingIntent = /\b(search|summari[sz]e|extract|download|compare|read the page)\b/.test(lowerCommand);
     const directPlayIntent = /\b(play|watch)\b/.test(lowerCommand) && Boolean(explicitUrl && isYouTubeWatchUrl(explicitUrl));
-    if (explicitUrl && ((directOpenIntent && !conflictingIntent) || directPlayIntent)) {
+    const commandWithoutUrl = explicitUrl ? lowerCommand.replace(explicitUrl.toLowerCase(), "") : lowerCommand;
+    const compoundIntent = /\b(and then|then|also|and)\b/.test(commandWithoutUrl);
+    if (explicitUrl && !conflictingIntent && !compoundIntent && (directOpenIntent || directPlayIntent)) {
       const directPlan = makeDirectUrlPlan(command, planId, explicitUrl);
       eventBus.emitEvent("plan:created", directPlan, requestId);
       return directPlan;
@@ -172,6 +261,12 @@ export class VanessaPlanner {
             tasks,
             createdAt: Date.now(),
           };
+          if (explicitUrl && !conflictingIntent && (directOpenIntent || directPlayIntent)) {
+            forceBrowserTask(plan, makeDirectUrlPlan(command, planId, explicitUrl).tasks[0]);
+          } else {
+            const youtubeTask = makeYouTubeIntentTask(command);
+            if (youtubeTask) forceBrowserTask(plan, youtubeTask);
+          }
           eventBus.emitEvent("plan:created", plan, requestId);
           return plan;
         }
@@ -183,6 +278,12 @@ export class VanessaPlanner {
     // Heuristic & Pattern-based deterministic planner
     const plan = this.createHeuristicPlan(command, planId);
     plan.tasks = plan.tasks.map((t: Task) => this.enrichTask(t, command));
+    if (explicitUrl && !conflictingIntent && (directOpenIntent || directPlayIntent)) {
+      forceBrowserTask(plan, makeDirectUrlPlan(command, planId, explicitUrl).tasks[0]);
+    } else {
+      const youtubeTask = makeYouTubeIntentTask(command);
+      if (youtubeTask) forceBrowserTask(plan, youtubeTask);
+    }
     eventBus.emitEvent("plan:created", plan, requestId);
     return plan;
   }
