@@ -224,7 +224,7 @@ export class EdgeCdpBrowserDriver implements BrowserDriver {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const response = await connection.send<any>("Runtime.evaluate", {
-        expression: "Array.from(document.querySelectorAll('ytd-video-renderer a#video-title, a#video-title[href*="/watch"]')).map(a => ({title: (a.textContent || a.getAttribute('title') || '').trim(), url: a.href || '', channel: (a.closest('ytd-video-renderer')?.querySelector('#channel-name')?.textContent || '').trim()})).filter(v => v.title && v.url)",
+        expression: `Array.from(document.querySelectorAll('ytd-video-renderer a#video-title, a#video-title[href*="/watch"]')).map(a => ({title: (a.textContent || a.getAttribute('title') || '').trim(), url: a.href || '', channel: (a.closest('ytd-video-renderer')?.querySelector('#channel-name')?.textContent || '').trim()})).filter(v => v.title && v.url)`,
         returnByValue: true,
         awaitPromise: true,
       });
