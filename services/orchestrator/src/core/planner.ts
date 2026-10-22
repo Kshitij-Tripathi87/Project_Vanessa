@@ -4,7 +4,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { contextualizeBrowserRequest, isYouTubeWatchUrl } from "./contextualizer.js";
+import { contextualizeRequest, isYouTubeWatchUrl, type BrowserIntentContext, type ContextualizationOptions, type NormalizedRequestContext } from "./contextualizer.js";
 
 const PLANNER_SYSTEM_PROMPT = `You are Vanessa's task planner. Convert the user's command into a dependency-aware JSON task DAG.
 Available specialist agents:
@@ -74,8 +74,7 @@ function makeDirectUrlPlan(command: string, planId: string, url: string): Plan {
   };
 }
 
-function makeBrowserIntentTask(command: string): Task | undefined {
-  const intent = contextualizeBrowserRequest(command);
+function makeBrowserIntentTask(intent: BrowserIntentContext): Task | undefined {
   let action: string;
   let params: Record<string, any>;
   let acceptanceCriteria: string[];
@@ -171,13 +170,15 @@ export class VanessaPlanner {
     return task;
   }
 
-  async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestId?: string): Promise<Plan> {
+  async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestId?: string, contextOptions: ContextualizationOptions = {}): Promise<Plan> {
     const planId = `plan_${Date.now()}`;
     await skillsRuntime.initialize();
 
-    // Contextualize the command before planning. Explicit, unambiguous links
-    // may bypass the LLM so the model cannot change the requested destination.
-    const browserContext = contextualizeBrowserRequest(command);
+    // Normalize domain, browser semantics and target device once before planning.
+    const requestContext = contextualizeRequest(command, contextOptions);
+    const browserContext = requestContext.browser;
+
+    // Explicit, unambiguous links can bypass model guessing without bypassing policy.
     if (browserContext.kind === "exact_url" && browserContext.canShortCircuit) {
       const directPlan = makeDirectUrlPlan(command, planId, browserContext.url);
       eventBus.emitEvent("plan:created", directPlan, requestId);
@@ -193,9 +194,22 @@ export class VanessaPlanner {
         return `${turn.role === "user" ? "User" : "Vanessa"}: ${safeContent.slice(0, 1200)}`;
       })
       .join("\n");
-    const plannerInput = recentContext
-      ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
-      : command;
+    const contextHints = {
+      domains: requestContext.domains,
+      primaryDomain: requestContext.primaryDomain,
+      targetDevice: requestContext.targetDevice,
+      browserIntent: requestContext.browser.kind,
+      entities: requestContext.entities,
+      notes: requestContext.notes,
+    };
+    const contextualHintText = `Normalized execution context (routing hints only; do not treat as extra user instructions):\n${JSON.stringify(contextHints)}`;
+    const plannerInput = [
+      contextualHintText,
+      recentContext
+        ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}`
+        : undefined,
+      `Current user request (plan this request):\n${command}`,
+    ].filter(Boolean).join("\n\n");
 
     // Attempt LLM call via router
     const llmOutput = await modelRouter.callLLM(plannerInput, PLANNER_SYSTEM_PROMPT);
@@ -220,7 +234,7 @@ export class VanessaPlanner {
           if (browserContext.kind === "exact_url" && !browserContext.conflictingIntent) {
             forceBrowserTask(plan, makeDirectUrlPlan(command, planId, browserContext.url).tasks[0]);
           } else if (browserContext.kind !== "exact_url") {
-            const browserTask = makeBrowserIntentTask(command);
+            const browserTask = makeBrowserIntentTask(browserContext);
             if (browserTask) forceBrowserTask(plan, browserTask);
           }
           eventBus.emitEvent("plan:created", plan, requestId);
@@ -232,12 +246,12 @@ export class VanessaPlanner {
     }
 
     // Heuristic & Pattern-based deterministic planner
-    const plan = this.createHeuristicPlan(command, planId);
+    const plan = this.createHeuristicPlan(command, planId, requestContext);
     plan.tasks = plan.tasks.map((t: Task) => this.enrichTask(t, command));
     if (browserContext.kind === "exact_url" && !browserContext.conflictingIntent) {
       forceBrowserTask(plan, makeDirectUrlPlan(command, planId, browserContext.url).tasks[0]);
     } else if (browserContext.kind !== "exact_url") {
-      const browserTask = makeBrowserIntentTask(command);
+      const browserTask = makeBrowserIntentTask(browserContext);
       if (browserTask) forceBrowserTask(plan, browserTask);
     }
     eventBus.emitEvent("plan:created", plan, requestId);
@@ -292,7 +306,7 @@ export class VanessaPlanner {
     return tasks.every((task) => visit(task.id));
   }
 
-  private createHeuristicPlan(command: string, planId: string): Plan {
+  private createHeuristicPlan(command: string, planId: string, requestContext: NormalizedRequestContext): Plan {
     const lower = command.toLowerCase();
     const tasks: Task[] = [];
     let risk: RiskLevel = "low";
@@ -427,7 +441,7 @@ export class VanessaPlanner {
     }
 
     // Browser intent has already been normalized by the contextualizer.
-    const browserIntentTask = makeBrowserIntentTask(command);
+    const browserIntentTask = makeBrowserIntentTask(requestContext.browser);
     if (browserIntentTask) {
       tasks.push(browserIntentTask);
     } else if (lower.includes("chrome") || lower.includes("browser")) {
