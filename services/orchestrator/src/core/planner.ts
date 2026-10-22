@@ -312,6 +312,14 @@ export class VanessaPlanner {
         if (match && match[1]) {
           query = match[1].replace(/this video|video/gi, "").trim() || query;
         }
+      } else if (lower.includes("search")) {
+        const match = command.match(/search\s+(?:for\s+)?(.*?)(?:\.|$|and\s)/i);
+        if (match && match[1]) {
+          query = match[1].replace(/this video|video/gi, "").trim() || query;
+        }
+      } else if (lower.includes("youtube")) {
+        // "open youtube" without specific query - use trending
+        query = "trending";
       }
       // If Wi-Fi is also present with "then", dependsOn Wi-Fi
       const dependsOn = lower.includes("then") && hasWifi ? ["t_wifi"] : [];
