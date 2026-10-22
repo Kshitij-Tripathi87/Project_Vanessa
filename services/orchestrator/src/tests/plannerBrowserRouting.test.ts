@@ -60,6 +60,21 @@ async function main() {
       },
     },
     {
+      name: "plan preserves normalized domains and phone-to-PC target hints",
+      run: async () => {
+        const plan = await planner.createPlan(
+          "Run the unit tests on my laptop",
+          [],
+          undefined,
+          { source: "phone", originDeviceId: "phone-1" }
+        );
+        assert.ok(plan.contextualization);
+        assert.ok(plan.contextualization?.domains.includes("testing"));
+        assert.equal(plan.contextualization?.targetDevice.kind, "paired_pc");
+        assert.equal(plan.contextualization?.targetDevice.deviceId, undefined);
+      },
+    },
+    {
       name: "a supplied YouTube watch link with play intent is opened directly",
       run: async () => {
         const target = "https://www.youtube.com/watch?v=abc123";
