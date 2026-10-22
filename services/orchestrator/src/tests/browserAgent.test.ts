@@ -20,6 +20,7 @@ class FakeBrowserDriver implements BrowserDriver {
     currentTime: 0,
     readyState: 4,
   };
+  playbackWillStart = false;
 
   async navigate(url: string): Promise<BrowserPageState> {
     this.calls.push(url);
@@ -36,6 +37,14 @@ class FakeBrowserDriver implements BrowserDriver {
   async getPageState(): Promise<BrowserPageState> { return this.page; }
   async getYouTubeResults(): Promise<YouTubeCandidate[]> { return this.candidates; }
   async getVideoState(): Promise<VideoState> { return { ...this.video, url: this.page.url, title: this.page.title }; }
+  async startVideoPlayback(): Promise<{ attempted: boolean; details: string }> {
+    if (this.playbackWillStart) {
+      this.video.paused = false;
+      this.video.currentTime = 1.1;
+      return { attempted: true, details: "Fake driver simulated a browser play click." };
+    }
+    return { attempted: true, details: "Fake driver simulated an autoplay block." };
+  }
 }
 
 async function main() {
@@ -91,6 +100,20 @@ async function main() {
         assert.equal(result.success, false);
         assert.equal((result.data as any).playbackVerified, false);
         assert.match(result.spokenSummary, /didn't start/i);
+      },
+    },
+    {
+      name: "reports playback success only after video time advances",
+      run: async () => {
+        const driver = new FakeBrowserDriver();
+        driver.playbackWillStart = true;
+        const agent = new BrowserAgent(driver);
+        const result = await agent.execute("youtube.search_and_play", { query: "Python async tutorial" });
+        assert.equal(result.status, "completed");
+        assert.equal(result.success, true);
+        assert.equal((result.data as any).playbackVerified, true);
+        assert.ok((result.data as any).video.currentTime > 0.25);
+        assert.match(result.summary || "", /Playing/i);
       },
     },
     {
