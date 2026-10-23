@@ -19,7 +19,7 @@ export class WakeWordDetector {
       if (lower.startsWith(phrase)) {
         this.touchActiveSession();
         // Clean off the wake word prefix and punctuation
-        const remainder = lower.substring(phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
+        const remainder = trimmed.substring(phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
           cleanedText: remainder,
@@ -27,7 +27,8 @@ export class WakeWordDetector {
       }
       if (lower.includes(phrase)) {
         this.touchActiveSession();
-        const parts = lower.split(phrase);
+        const phraseIndex = lower.indexOf(phrase);
+        const remainder = trimmed.substring(phraseIndex + phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         const remainder = parts.slice(1).join(" ").replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
