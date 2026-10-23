@@ -135,14 +135,18 @@ export class WindowsAgent implements SpecialistAgent {
         const res = await this.changeBrightness(mode, value);
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
-          success: res.success,
-          summary: res.success
-            ? "Display brightness verified at " + res.observed + "%."
-            : "Display brightness could not be verified: " + res.output,
-          spokenSummary: res.success
-            ? "Brightness is " + res.observed + " percent."
-            : "I couldn't verify the display brightness, so I can't confirm the change.",
+          status: res.simulated ? "partial" : (res.success ? "completed" : "failed"),
+          success: res.success && !res.simulated,
+          summary: res.simulated
+            ? "SIMULATED ONLY: Display brightness would be " + res.observed + "%."
+            : (res.success
+              ? "Display brightness verified at " + res.observed + "%."
+              : "Display brightness could not be verified: " + res.output),
+          spokenSummary: res.simulated
+            ? "This is a simulation; I did not change display brightness."
+            : (res.success
+              ? "Brightness is " + res.observed + " percent."
+              : "I couldn't verify the display brightness, so I can't confirm the change."),
           evidence: [{
             description: res.output,
             source: res.simulated ? "simulated Windows brightness adapter" : "Windows WMI monitor brightness read-back",
@@ -157,7 +161,7 @@ export class WindowsAgent implements SpecialistAgent {
             requestedBrightness: res.target,
             observedBrightness: res.observed,
             simulated: res.simulated,
-            failures: res.success ? [] : [res.output],
+            failures: res.success && !res.simulated ? [] : [res.output],
           },
           verification: {
             passed: res.success && res.observed === res.target && !res.simulated,
