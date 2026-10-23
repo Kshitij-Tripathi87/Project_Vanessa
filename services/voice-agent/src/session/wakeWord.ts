@@ -12,7 +12,8 @@ export class WakeWordDetector {
    * Check if transcript contains the wake word "Hey Vanessa"
    */
   processTranscript(text: string): WakeWordResult {
-    const lower = text.toLowerCase().trim();
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
 
     for (const phrase of this.wakeWords) {
       if (lower.startsWith(phrase)) {
