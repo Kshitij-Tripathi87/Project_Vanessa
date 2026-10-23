@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Vanessa - Voice to Codex Test
+title Vanessa - Desktop Control Layer
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (

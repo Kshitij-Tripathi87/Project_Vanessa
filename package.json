@@ -4,6 +4,7 @@
   "private": true,
   "description": "Vanessa: Voice-native AI control layer for personal computers",
   "scripts": {
+    "test:launcher": "node --test scripts/launcher.test.cjs",
     "dev": "concurrently -n \"RELAY,ORCHESTRATOR,VOICE,DESKTOP\" -c \"blue,cyan,yellow,magenta\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/voice-agent dev\" \"pnpm --filter @vanessa/desktop dev\"",
     "dev:relay": "pnpm --filter @vanessa/relay dev",
     "dev:orchestrator": "pnpm --filter @vanessa/orchestrator dev",

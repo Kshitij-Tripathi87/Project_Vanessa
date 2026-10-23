@@ -1,6 +1,8 @@
 import { session } from "electron";
 
 export function configureSecurity() {
+  // Vite's React refresh preamble is inline only in explicit development mode.
+  const developmentScripts = process.env.VANESSA_DEV_MODE === "1" ? " 'unsafe-inline'" : "";
   const isTrustedApp = (url: string) => {
     if (url.startsWith("file://")) return true;
     try {
@@ -35,7 +37,7 @@ export function configureSecurity() {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self' 'unsafe-inline' http://127.0.0.1:* ws://127.0.0.1:* https://*.fish.audio wss://*.fish.audio https://unpkg.com https://api.elevenlabs.io https://fonts.googleapis.com https://fonts.gstatic.com data: blob:; script-src 'self' https://unpkg.com; object-src 'none'; base-uri 'self'",
+          `default-src 'self' 'unsafe-inline' http://127.0.0.1:* ws://127.0.0.1:* https://*.fish.audio wss://*.fish.audio https://unpkg.com https://api.elevenlabs.io https://fonts.googleapis.com https://fonts.gstatic.com data: blob:; script-src 'self' https://unpkg.com${developmentScripts}; object-src 'none'; base-uri 'self'`,
         ],
       },
     });
