@@ -243,6 +243,10 @@ async function runTests() {
   assert.strictEqual(res2.detected, true, "'vanessa' wake word should be detected");
   assert.strictEqual(res2.cleanedText, "open chrome and play youtube", "Wake word prefix must be stripped");
 
+  const casePreserving = wakeWord.processTranscript("HEY VANESSA, Turn off Bluetooth and open YouTube.com");
+  assert.strictEqual(casePreserving.detected, true);
+  assert.strictEqual(casePreserving.cleanedText, "Turn off Bluetooth and open YouTube.com", "Wake-word matching must preserve the original command text");
+
   const res3 = wakeWord.processTranscript("what is the weather today?");
   // Because active session is maintained after wake word, subsequent turn is active
   assert.strictEqual(res3.detected, true, "Active conversation session should continue without repeated wake word");
