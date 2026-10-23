@@ -51,7 +51,9 @@ export function useElevenLabs() {
           setTimeout(() => setVoiceState("idle"), 2500);
         }
 
-        return { status: result.status, spokenSummary: result.spokenSummary };
+        // Match the voice client's complete result instead of dropping plan,
+        // pendingTasks, requestId, and verification at this boundary.
+        return result;
       } catch (err: any) {
         setVoiceState("error");
         setLastResponse(`Error executing command: ${err.message}`);

@@ -5,6 +5,7 @@ import {
   Plan,
   SystemStatus,
   Task,
+  createCommandRequest,
 } from "@vanessa/shared";
 import { planner } from "./planner.js";
 import {
@@ -44,6 +45,8 @@ export class VanessaOrchestrator {
   }
 
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
+    // Also normalize direct API/legacy callers, not just the two desktop clients.
+    payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
     const requestId = payload.requestId || envelope?.requestId;
@@ -97,7 +100,7 @@ export class VanessaOrchestrator {
     // 1. Generate task plan
     let plan: Plan;
     try {
-      plan = await planner.createPlan(command, conversationContext);
+      plan = await planner.createPlan(command, conversationContext, payload);
     } catch {
       const result: ExecuteCommandResult = {
         status: "failed",
@@ -216,6 +219,10 @@ export class VanessaOrchestrator {
     const lower = command.toLowerCase();
     const prefix = sentiment?.urgency === "critical" ? "Immediate status: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
 
+    if (successTasks.some((task) => task.action === "codex.open")) {
+      return `${prefix}${successTasks.map((task) => task.spokenSummary || `${task.action} returned a result.`).join(" ")}`;
+    }
+
     if (language === "hi" || language === "hinglish") {
       if (lower.includes("wifi") || lower.includes("wi-fi")) {
         return `${prefix}Wi-Fi adapter restart ho gaya hai aur YouTube open kar diya hai.`;
@@ -226,7 +233,7 @@ export class VanessaOrchestrator {
       return `${prefix}Aapka task complete ho gaya hai.`;
     }
 
-    if (lower.includes("investigate") || lower.includes("checkout")) {
+    if ((lower.includes("investigate") || lower.includes("checkout")) && successTasks.some((task) => task.agent === "coding" || task.agent === "incident")) {
       return `${prefix}I investigated the checkout failure. The root cause was an unhandled null promo object in calculateTotal, matching previous incident INC-842 and the runbook. I prepared a fix in an isolated branch, ran the regression tests which passed completely, and kept deployment blocked.`;
     }
 

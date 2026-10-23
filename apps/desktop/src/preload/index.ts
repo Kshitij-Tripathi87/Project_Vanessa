@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { ExecuteCommandPayload } from "@vanessa/shared";
 
 contextBridge.exposeInMainWorld("vanessa", {
-  executeCommand: (payload: { command: string; language?: string }) =>
+  executeCommand: (payload: ExecuteCommandPayload) =>
     ipcRenderer.invoke("vanessa:execute-command", payload),
 
   approveTask: (taskId: string) =>
