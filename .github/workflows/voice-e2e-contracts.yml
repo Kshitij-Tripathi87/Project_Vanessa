@@ -1,0 +1,36 @@
+name: Voice and OS contract tests
+
+on:
+  pull_request:
+    paths:
+      - "services/orchestrator/**"
+      - "services/voice-agent/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - "feature/voice-e2e-windows-safety"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable && corepack prepare pnpm@11.24.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @vanessa/shared build
+      - run: pnpm --filter @vanessa/orchestrator build
+      - run: pnpm --filter @vanessa/voice-agent build
+      - run: pnpm test:browser-agent
+      - run: pnpm test:windows-agent
+      - run: pnpm test:compound-voice-plan
+      - run: pnpm --filter @vanessa/voice-agent test
+      - run: pnpm --filter @vanessa/voice-agent test:behavior
