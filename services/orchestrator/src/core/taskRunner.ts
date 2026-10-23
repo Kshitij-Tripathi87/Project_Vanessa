@@ -57,6 +57,21 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
 
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
+
+  // Preserve an agent's explicit partial result before generic failure/success logic.
+  // A launched browser process or unverified page load is not equivalent to a completed task.
+  if (structured?.status === "partial") {
+    const detail = verificationDetails || structured.summary || "Agent reported partial execution.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: 1,
+      artifacts: task.artifacts,
+      outcome: "partial",
+      details: detail,
+    };
+    return "partial";
+  }
   if (verification?.passed === true && verificationDetails) {
     const successReported = structured.success !== false;
     task.verification = {
