@@ -12,7 +12,8 @@
     "start": "node dist/server.js",
     "test:scenarios": "tsx src/tests/scenarios.test.ts",
     "test:skills": "tsx src/tests/skillsRuntime.test.ts",
-    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts"
+    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
+    "test:compound-plan": "tsx --test src/tests/compoundTaskPlanning.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
