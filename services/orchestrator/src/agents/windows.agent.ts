@@ -109,10 +109,10 @@ export class WindowsAgent implements SpecialistAgent {
         const res = await this.setBluetoothState(enable);
         return {
           agentId: this.id,
-          status: "completed",
-          success: res.success,
-          summary: res.success ? `Bluetooth radio is ${res.state}` : `Bluetooth state could not be verified: ${res.state}`,
-          spokenSummary: res.success ? `Bluetooth ${res.state}.` : "I could not verify the Bluetooth radio state.",
+          status: res.simulated ? "partial" : (res.success ? "completed" : "failed"),
+          success: res.success && !res.simulated,
+          summary: res.simulated ? `SIMULATED ONLY: Bluetooth would be ${res.state}.` : (res.success ? `Bluetooth radio is ${res.state}` : `Bluetooth state could not be verified: ${res.state}`),
+          spokenSummary: res.simulated ? "This was a simulation; I did not change the Bluetooth radio." : (res.success ? `Bluetooth ${res.state}.` : "I could not verify the Bluetooth radio state."),
           evidence: [],
           artifacts: [],
           data: {
@@ -122,7 +122,7 @@ export class WindowsAgent implements SpecialistAgent {
             state: res.state,
           },
           verification: {
-            passed: res.success,
+            passed: res.success && !res.simulated,
             details: res.output,
           },
         };
@@ -298,30 +298,51 @@ export class WindowsAgent implements SpecialistAgent {
     }
   }
 
-  private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string; output: string }> {
+  private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string; output: string; simulated?: boolean }> {
     if (process.env.FAKE === "1") {
       const state = enable ? "enabled" : "disabled";
-      return { success: true, state: `simulated ${state}`, output: `FAKE mode: Bluetooth ${state} was simulated and verified.` };
+      return {
+        success: true, state: "simulated " + state, simulated: true,
+        output: "SIMULATED ONLY: Bluetooth would be " + state + "; no radio state was changed.",
+      };
     }
+    if (process.platform !== "win32") {
+      return { success: false, state: "unknown", simulated: false, output: "Bluetooth controls are supported only on Windows." };
+    }
+
     const stateStr = enable ? "On" : "Off";
     try {
-      const { stdout } = await runPowerShell(
-        "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'} | Select-Object -First 1; if (-not $bt) { [pscustomobject]@{ State = '" + stateStr + "', Fallback = $true } | ConvertTo-Json -Compress } else { try { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::" + stateStr + ").GetAwaiter().GetResult() | Out-Null } catch {}; [pscustomobject]@{ State = $bt.State.ToString() } | ConvertTo-Json -Compress }",
-        {},
-        6000
-      );
-      const parsed = JSON.parse(stdout.trim());
-      const observed = (parsed.State as string) || (enable ? "On" : "Off");
+      const script = [
+        "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null",
+        "$radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult()",
+        "$bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'} | Select-Object -First 1",
+        "if (-not $bt) { throw 'Bluetooth radio not detected; requested state cannot be verified.' }",
+        "$bt.SetStateAsync([Windows.Devices.Radios.RadioState]::" + stateStr + ").GetAwaiter().GetResult() | Out-Null",
+        "Start-Sleep -Milliseconds 250",
+        "$after = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult() | Where-Object {$_.Kind -eq 'Bluetooth'} | Select-Object -First 1",
+        "if (-not $after) { throw 'Bluetooth read-back failed; radio not detected after change.' }",
+        "[pscustomobject]@{ State = $after.State.ToString() } | ConvertTo-Json -Compress",
+      ].join("; ");
+      const { stdout } = await runPowerShell(script, {}, 6000);
+      const parsed = JSON.parse(stdout.trim()) as { State?: string };
+      const observed = String(parsed.State || "unknown");
+      const expected = enable ? "on" : "off";
+      const verified = observed.toLowerCase() === expected;
       return {
-        success: true,
-        state: observed.toLowerCase() === "on" ? "enabled" : observed.toLowerCase() === "off" ? "disabled" : observed,
-        output: `Bluetooth radio reported state ${observed} after requesting ${enable ? "On" : "Off"}.`,
+        success: verified,
+        state: observed.toLowerCase() === "on" ? "enabled" : observed.toLowerCase() === "off" ? "disabled" : "unknown",
+        simulated: false,
+        output: verified
+          ? "Bluetooth radio read-back confirmed " + observed + "."
+          : "Requested Bluetooth " + stateStr + ", but read-back returned " + observed + ".",
       };
-    } catch (err: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
-        success: true,
-        state: enable ? "enabled" : "disabled",
-        output: `Bluetooth radio configured to ${enable ? "enabled" : "disabled"}.`,
+        success: false,
+        state: "unknown",
+        simulated: false,
+        output: "Bluetooth state could not be changed/read back: " + message,
       };
     }
   }
