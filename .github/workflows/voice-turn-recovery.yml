@@ -1,0 +1,46 @@
+name: Voice turn recovery
+
+on:
+  pull_request:
+    paths:
+      - "services/voice-agent/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/voice-turn-recovery.yml"
+  push:
+    branches:
+      - "feature/voice-turn-recovery-stacked"
+    paths:
+      - "services/voice-agent/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/voice-turn-recovery.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  voice-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build shared contracts
+        run: pnpm --filter @vanessa/shared build
+      - name: Type-check voice service
+        run: pnpm --filter @vanessa/voice-agent build
+      - name: Test turn recovery and failure handling
+        run: pnpm test:voice:recovery
