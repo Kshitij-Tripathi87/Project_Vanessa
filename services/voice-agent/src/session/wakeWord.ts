@@ -12,13 +12,14 @@ export class WakeWordDetector {
    * Check if transcript contains the wake word "Hey Vanessa"
    */
   processTranscript(text: string): WakeWordResult {
-    const lower = text.toLowerCase().trim();
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
 
     for (const phrase of this.wakeWords) {
       if (lower.startsWith(phrase)) {
         this.touchActiveSession();
         // Clean off the wake word prefix and punctuation
-        const remainder = lower.substring(phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
+        const remainder = trimmed.substring(phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
           cleanedText: remainder,
@@ -26,8 +27,8 @@ export class WakeWordDetector {
       }
       if (lower.includes(phrase)) {
         this.touchActiveSession();
-        const parts = lower.split(phrase);
-        const remainder = parts.slice(1).join(" ").replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
+        const phraseIndex = lower.indexOf(phrase);
+        const remainder = trimmed.substring(phraseIndex + phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
           cleanedText: remainder,
