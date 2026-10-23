@@ -5,6 +5,7 @@ import { BargeInDetector } from "./bargeIn.js";
 import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
+import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
 import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
@@ -58,14 +59,16 @@ export class VanessaVoiceSession {
   private queuedUtterances: Array<{ text: string; language: string }> = [];
 
   constructor(options?: {
-    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
+    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     ttsProvider?: "elevenlabs" | "fish";
     handlers?: VoiceSessionHandlers;
   }) {
     this.handlers = options?.handlers || {};
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
-    if (asrType === "fish") {
+    if (asrType === "sarvam") {
+      this.asr = new SarvamAsrAdapter();
+    } else if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
       this.asr = new ElevenLabsAsrAdapter();

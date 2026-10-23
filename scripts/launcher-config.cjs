@@ -7,11 +7,12 @@ function launcherConfig(env, args, root, exists) {
   const strict = args.includes('--codex-test');
   const asr = env.VOICE_ASR_PROVIDER || 'fish';
   const tts = env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'fish';
-  if (voice && !['fish', 'voice', 'whisper', 'elevenlabs'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
+  if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
   if (voice && !['fish', 'elevenlabs'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const missing = [];
   if (!env.GEMINI_API_KEY?.trim()) missing.push('GEMINI_API_KEY (planning unavailable)');
   if (voice) {
+    if (asr === 'sarvam' && !env.SARVAM_API_KEY?.trim()) missing.push('SARVAM_API_KEY (recognition unavailable)');
     if (asr === 'fish' && !env.FISH_API_KEY?.trim() && env.VOICE_ALLOW_FALLBACK !== 'true') missing.push('FISH_API_KEY (recognition unavailable)');
     if (asr === 'elevenlabs' && !env.ELEVENLABS_API_KEY?.trim()) missing.push('ELEVENLABS_API_KEY (recognition unavailable)');
     if (tts === 'fish' && env.VOICE_TTS_FALLBACK_PROVIDER !== 'browser') {

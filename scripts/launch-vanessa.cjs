@@ -168,7 +168,7 @@ Usage: Launch-Vanessa.bat [options]
   --help            Show this help.
 
 Root .env is loaded for all managed processes. Existing .env files are never rewritten.
-Fish, ElevenLabs, and local voice/whisper providers follow VOICE_ASR_PROVIDER / VOICE_TTS_PROVIDER.
+Sarvam, Fish, ElevenLabs, and local voice/whisper providers follow VOICE_ASR_PROVIDER / VOICE_TTS_PROVIDER.
 Local Whisper uses VOICE_URL (or WHISPER_URL), voice_server.py (legacy whisper_server.py fallback),
 and VOICE_PYTHON or .venv-voice / .venv-whisper. Install its Python dependencies beforehand.
 Missing cloud keys warn during ordinary startup; unavailable providers cannot serve requests.

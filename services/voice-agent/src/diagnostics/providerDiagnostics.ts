@@ -11,14 +11,14 @@ export function safeProviderDetail(value: unknown, extraSecrets: string[] = []):
     .replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 600);
 }
 
-export function providerHttpHint(status: number): string {
+export function providerHttpHint(status: number, provider = "Fish"): string {
   switch (status) {
-    case 401: return "Authentication rejected. Check FISH_API_KEY and restart Vanessa after editing .env.";
+    case 401: return `Authentication rejected. Check ${provider === "Sarvam" ? "SARVAM_API_KEY" : "FISH_API_KEY"} and restart Vanessa after editing .env.`;
     case 402: return "Payment/access rejected. Check API balance and realtime ASR access for the account owning this key; another key on the same account may have the same restriction.";
     case 403: return "Access forbidden. Check account/model permissions.";
-    case 404: return "Endpoint not found. Check the configured Fish WebSocket URL.";
+    case 404: return `Endpoint not found. Check the configured ${provider} WebSocket URL.`;
     case 429: return "Rate/concurrency limit reached. Close other sessions and retry later.";
-    default: return status >= 500 ? "Fish service error. Retry later." : "Inspect the provider message and endpoint configuration.";
+    default: return status >= 500 ? `${provider} service error. Retry later.` : "Inspect the provider message and endpoint configuration.";
   }
 }
 
@@ -29,10 +29,10 @@ export function providerTransportError(error: Error, secrets: string[] = []): st
 }
 
 /** ws otherwise discards the HTTP rejection body during upgrade failure. */
-export function diagnoseUpgradeRejection(socket: WebSocket, stage: string, apiKey: string, reject: (error: Error) => void): void {
+export function diagnoseUpgradeRejection(socket: WebSocket, stage: string, apiKey: string, reject: (error: Error) => void, provider = "Fish"): void {
   socket.on("unexpected-response", (_request, response) => {
     const status = response.statusCode || 0;
-    const hint = providerHttpHint(status);
+    const hint = providerHttpHint(status, provider);
     const requestId = response.headers["x-request-id"] || response.headers["request-id"] || "not supplied";
     console.error(`[${stage}] HTTP upgrade rejected status=${status} requestId=${safeProviderDetail(requestId, [apiKey])}. ${hint}`);
     const chunks: Buffer[] = [];
@@ -50,7 +50,7 @@ export function diagnoseUpgradeRejection(socket: WebSocket, stage: string, apiKe
       } catch { detail = detail.replace(/<[^>]*>/g, " "); }
       const safe = safeProviderDetail(detail, [apiKey]) || "No provider explanation returned.";
       console.error(`[${stage}] providerMessage=${safe}`);
-      reject(new Error(`Fish ${stage} HTTP ${status}: ${safe} ${hint}`));
+      reject(new Error(`${provider} ${stage} HTTP ${status}: ${safe} ${hint}`));
       response.destroy();
       socket.terminate();
     };

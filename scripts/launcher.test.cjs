@@ -8,6 +8,15 @@ const { ensureService } = require('./launch-vanessa.cjs');
 const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
+test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
+  const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
+  assert.deepEqual(config(env, ['--codex-test']).missing, []);
+  assert.equal(config(env).localAsr, undefined);
+  assert.throws(() => config({ ...env, SARVAM_API_KEY: '' }, ['--codex-test']), /SARVAM_API_KEY/);
+  assert(config({ ...env, VOICE_TTS_FALLBACK_PROVIDER: 'none' }).missing.some(key => key.includes('FISH_API_KEY')));
+  assert.equal(config({ ...env, VOICE_ASR_PROVIDER: 'fish', FISH_API_KEY: 'test' }).asr, 'fish');
+});
+
 test('ordinary launch and text-only do not require Fish or Codex-specific credentials', () => {
   assert(config().missing.length > 0);
   const text = config({ GEMINI_API_KEY: 'test' }, ['--text-only', '--codex-test']);
