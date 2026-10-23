@@ -5,6 +5,9 @@ export interface ActionParameter {
   type: ParameterType;
   description: string;
   required: boolean;
+  min?: number;
+  max?: number;
+  integer?: boolean;
 }
 export interface CatalogAction {
   name: string;
@@ -22,7 +25,7 @@ export interface CatalogAgent {
   actions: CatalogAction[];
 }
 
-const p = (type: ParameterType, description: string, required = false): ActionParameter => ({ type, description, required });
+const p = (type: ParameterType, description: string, required = false, constraints: Pick<ActionParameter, "min" | "max" | "integer"> = {}): ActionParameter => ({ type, description, required, ...constraints });
 const action = (
   name: string, description: string, parameters: CatalogAction["parameters"], returns: string,
   risk: RiskLevel = "low", selectable = true, tools: string[] = [],
@@ -66,8 +69,8 @@ export const AGENT_CATALOG: CatalogAgent[] = [
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
       action("bluetooth.enable", "Attempt to enable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
       action("bluetooth.disable", "Attempt to disable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
-      action("brightness.set", "Set internal display brightness to a percentage and verify the monitor value by reading it back.", { level: p("number", "Integer percentage from 0 to 100.", true) }, "AgentResult with currentBrightness, requestedBrightness, observedBrightness and verification; unsupported displays fail explicitly.", "low", true, ["windows_setting_toggle"]),
-      action("brightness.adjust", "Adjust display brightness by percentage points. When the user only says increase brightness, use +10.", { delta: p("number", "Integer adjustment from -100 to 100; use +10 for an unspecified increase.", true) }, "AgentResult with currentBrightness, requestedBrightness, observedBrightness and read-back verification.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.set", "Set internal display brightness to a percentage and verify the monitor value by reading it back.", { level: p("number", "Integer percentage from 0 to 100.", true, { min: 0, max: 100, integer: true }) }, "AgentResult with currentBrightness, requestedBrightness, observedBrightness and verification; unsupported displays fail explicitly.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.adjust", "Adjust display brightness by percentage points. When the user only says increase brightness, use +10.", { delta: p("number", "Integer adjustment from -100 to 100; use +10 for an unspecified increase.", true, { min: -100, max: 100, integer: true }) }, "AgentResult with currentBrightness, requestedBrightness, observedBrightness and read-back verification.", "low", true, ["windows_setting_toggle"]),
       action("volume.set", "Attempt volume adjustment through media-key events.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "AgentResult; actual output volume is not read back.", "low", true, ["audio_volume_set"]),
       action("app.open", "Launch an application by executable name; use browser actions for URLs.", { name: p("string", "Executable or supported name such as notepad, calculator, edge, or terminal.", true) }, "AgentResult indicating whether Windows accepted the launch request.", "low", true, ["windows_app_launch"]),
       action("app.close", "Attempt to stop an application process.", { name: p("string", "Process name to close.", true) }, "AgentResult with process operation output; fallback can overstate success.", "high", true, ["process_control"]),
@@ -206,6 +209,11 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
       : typeof value !== field.type) return false;
     if (field.type === "string" && field.required && !(value as string).trim()) return false;
     if (field.type === "number" && !Number.isFinite(value)) return false;
+    if (field.type === "number" && typeof value === "number") {
+      if (field.min !== undefined && value < field.min) return false;
+      if (field.max !== undefined && value > field.max) return false;
+      if (field.integer && !Number.isInteger(value)) return false;
+    }
   }
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
   if (params.autoDeploy === true) return false;
