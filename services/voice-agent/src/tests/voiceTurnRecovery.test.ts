@@ -55,7 +55,7 @@ async function main() {
       run: async () => {
         const asr = new FakeAsr(); asr.failConnect = true;
         const tts = new FakeTts();
-        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts, initializeWakeWord: false });
+        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts });
         await assert.rejects(session.activateSession(1000), /test ASR handshake rejection/);
         assert.equal(session.getState(), "idle");
         assert.equal(tts.texts.length, 0);
@@ -66,7 +66,7 @@ async function main() {
       name: "orchestrator HTTP failure is spoken as a failure rather than success",
       run: async () => {
         const asr = new FakeAsr(); const tts = new FakeTts();
-        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts, initializeWakeWord: false });
+        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts });
         globalThis.fetch = (async () => new Response(JSON.stringify({ error: "offline" }), { status: 503 })) as typeof fetch;
         await session.handleFinalUtterance("Hey Vanessa, open YouTube", "en", "turn-failure-1");
         assert.equal(tts.texts.length, 1);
@@ -82,7 +82,7 @@ async function main() {
         const hud: Array<{ state: string; transcript: string }> = [];
         const unavailable: string[] = [];
         const session = new VanessaVoiceSession({
-          asrAdapter: asr, ttsAdapter: tts, initializeWakeWord: false,
+          asrAdapter: asr, ttsAdapter: tts,
           handlers: { onHudUpdate: (item) => hud.push(item), onTtsUnavailable: (detail) => unavailable.push(detail) },
         });
         globalThis.fetch = (async () => new Response(JSON.stringify({ status: "success", spokenSummary: "Bluetooth is off.", requestId: "tts-fail" }), { status: 200 })) as typeof fetch;
@@ -108,7 +108,7 @@ async function main() {
           if (fetchCount === 1) await firstResponse;
           return new Response(JSON.stringify({ status: "success", spokenSummary: fetchCount === 1 ? "Bluetooth is off." : "YouTube is open.", requestId: body.requestId }), { status: 200 });
         }) as typeof fetch;
-        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts, initializeWakeWord: false });
+        const session = new VanessaVoiceSession({ asrAdapter: asr, ttsAdapter: tts });
         const first = session.handleFinalUtterance("Hey Vanessa, turn off Bluetooth", "en", "turn-queue-1");
         await waitUntil(() => fetchCount === 1);
         await session.handleFinalUtterance("Hey Vanessa, open YouTube", "en", "turn-queue-2");
