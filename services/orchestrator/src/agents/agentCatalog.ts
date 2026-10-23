@@ -76,11 +76,12 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "browser",
-    purpose: "Open URLs or search results, including YouTube searches. Delegate limited web research to the Python bridge.",
-    limitations: "Navigation prefers Edge then the default URL handler; it does not verify page loading. YouTube opens search results, not verified playback. The handler does not implement general click/fill/extract automation despite those declared tool names.",
+    purpose: "Request URL navigation and search pages. The current handler can launch the browser but does not observe the active page.",
+    limitations: "Navigation prefers Edge then the default URL handler; it does not verify page loading. YouTube search returns partial until the active page and results are actually observed. The legacy youtube.search_and_play action still only opens search results and must not be reported as playback. General click/fill/extract automation is not implemented despite declared tool names.",
     actions: [
       action("browser.open_url", "Open a URL in the browser.", { url: p("string", "Complete http(s) URL.", true) }, "AgentResult with data.url, artifacts, and navigation claims; page contents are not returned.", "low", true, ["browser_navigate"]),
       action("browser.search", "Open Google search results for a query.", { query: p("string", "Search terms.", true) }, "AgentResult with query/search URL; not extracted search facts.", "low", true, ["browser_navigate"]),
+      action("youtube.search", "Open YouTube search results for the requested terms without implying playback.", { query: p("string", "YouTube search terms.", true) }, "Returns the requested search URL and a partial result until active page/results are actually verified.", "low", true, ["browser_navigate"]),
       action("youtube.search_and_play", "Open YouTube search results. Retained action name does not imply actual playback.", { query: p("string", "Video or music search terms.", true) }, "AgentResult with data.query and data.url; do not claim playback was verified.", "low", true, ["browser_navigate"]),
       action("browser.research", "Invoke a limited Python web-search goal branch.", { goal: p("string", "Research request.", true) }, "AgentResult wrapping bridge steps/final_answer; bridge synthesis and success reports are limited and require Python dependencies.", "medium"),
       action("browser.read_title", "Placeholder tab-title inspection.", { url: p("string", "Optional reference URL.") }, "Fixed title Browser Active Tab; no actual tab inspection.", "low", false),
