@@ -29,7 +29,6 @@ export class WakeWordDetector {
         this.touchActiveSession();
         const phraseIndex = lower.indexOf(phrase);
         const remainder = trimmed.substring(phraseIndex + phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
-        const remainder = parts.slice(1).join(" ").replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
           cleanedText: remainder,
