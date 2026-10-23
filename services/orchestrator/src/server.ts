@@ -40,6 +40,13 @@ const connectedClients = new Set<any>();
 
 // Pipe eventBus events directly to WebSocket clients
 const forwardEvent = (event: VanessaEvent) => {
+  // Lifecycle metadata only: event bodies can contain prompts and results.
+  const payload = event.payload as any;
+  if (event.type === "task:update") {
+    console.log(`[Runner] task=${payload.id} agent=${payload.agent} action=${payload.action} status=${payload.status} lifecycle=${payload.lifecycleState || "none"}`);
+  } else if (event.type.startsWith("approval:")) {
+    console.log(`[Approval] event=${event.type} task=${payload.taskId || payload.id || payload.task?.id || "unknown"}`);
+  }
   const message = JSON.stringify(event);
   for (const client of connectedClients) {
     if (client.readyState === 1) {

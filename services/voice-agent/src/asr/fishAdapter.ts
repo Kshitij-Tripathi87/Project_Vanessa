@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import { decode, encode } from "@msgpack/msgpack";
 import { AsrAdapter, ProviderRuntimeStatus, TranscriptResult } from "./types.js";
 import { VoiceAdapter } from "./voiceAdapter.js";
+import { diagnoseUpgradeRejection, safeProviderDetail, providerTransportError } from "../diagnostics/providerDiagnostics.js";
 
 export interface FishAsrOptions {
   apiKey?: string;
@@ -136,6 +137,9 @@ export class FishAsrAdapter implements AsrAdapter {
     }, 10000);
 
     let ws: WebSocket;
+    let upgradeRejected = false;
+    const connectionStarted = Date.now();
+    console.log(`[Fish ASR] connecting endpoint=${new URL(this.url).origin}${new URL(this.url).pathname} model=${this.model} sampleRate=${this.sampleRate} fallback=${this.allowFallback}`);
     try {
       ws = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.apiKey}` } });
     } catch (err: any) {
@@ -150,6 +154,13 @@ export class FishAsrAdapter implements AsrAdapter {
       return promise;
     }
     this.ws = ws;
+    diagnoseUpgradeRejection(ws, "ASR", this.apiKey, (error) => {
+      upgradeRejected = true;
+      this.isConnected = false;
+      this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: error.message });
+      if (this.allowFallback) { this.initFallback(error.message); finish(); }
+      else finish(error);
+    });
     this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting" });
 
       ws.on("open", () => {
@@ -185,6 +196,7 @@ export class FishAsrAdapter implements AsrAdapter {
           const eventType = msg.type;
 
           if (eventType === "session_started") {
+            console.log(`[Fish ASR] session ready elapsedMs=${Date.now() - connectionStarted}; speech recognition accepted by provider`);
             this.sessionStarted = true;
             this.providerSessionId = typeof msg.session_id === "string" ? msg.session_id : undefined;
             this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "ready" });
@@ -194,7 +206,8 @@ export class FishAsrAdapter implements AsrAdapter {
           }
 
           if (eventType === "error") {
-            const detail = typeof msg.message === "string" ? msg.message : "Fish Audio returned an ASR session error.";
+            const detail = safeProviderDetail(typeof msg.message === "string" ? msg.message : "Fish Audio returned an ASR session error.", [this.apiKey]);
+            console.error(`[Fish ASR] session rejected: ${detail}`);
             this.isConnected = false;
             if (this.allowFallback) {
               this.initFallback(`${detail} Local Whisper fallback is enabled.`);
@@ -211,7 +224,7 @@ export class FishAsrAdapter implements AsrAdapter {
           if (eventType === "draft") {
             this.handlers?.onPartial({ text, isFinal: false, language: msg.language_code || "en" });
           } else if (eventType === "committed" && msg.user_turn !== false) {
-            console.log(`[FishAsrAdapter] Committed Turn: "${text}"`);
+            console.log(`[Fish ASR] transcript committed characters=${text.length}`);
             this.handlers?.onFinal({
               text,
               isFinal: true,
@@ -226,9 +239,11 @@ export class FishAsrAdapter implements AsrAdapter {
 
       ws.on("error", (err) => {
         if (this.ws !== ws) return;
-        console.warn(`[FishAsrAdapter] WebSocket error: ${err.message}`);
+        if (upgradeRejected) return;
+        const transportDetail = providerTransportError(err, [this.apiKey]);
+        console.warn(`[FishAsrAdapter] WebSocket transport failed: ${transportDetail}`);
         this.isConnected = false;
-        const error = new Error(`Fish Audio connection failed: ${err.message}`);
+        const error = new Error(`Fish Audio connection failed: ${transportDetail}`);
         if (!settled) {
           if (this.allowFallback) {
             this.initFallback(`${error.message} Local Whisper fallback is enabled.`);
@@ -248,7 +263,8 @@ export class FishAsrAdapter implements AsrAdapter {
         if (this.ws !== ws) return;
         this.isConnected = false;
         this.sessionStarted = false;
-        console.log(`[FishAsrAdapter] Disconnected (code: ${code}, reason: ${reason || "none"}).`);
+        console.log(`[Fish ASR] disconnected code=${code} reason=${safeProviderDetail(reason.toString(), [this.apiKey]) || "none"} elapsedMs=${Date.now() - connectionStarted}${upgradeRejected ? "; caused by HTTP rejection above; no automatic reconnect" : ""}`);
+        if (upgradeRejected) return;
         if (!settled) {
           const error = new Error(`Fish Audio closed before session readiness (${code}: ${reason.toString()}).`);
           if (this.allowFallback) {

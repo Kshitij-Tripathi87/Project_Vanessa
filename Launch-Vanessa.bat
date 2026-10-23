@@ -1,21 +1,16 @@
 @echo off
-title Vanessa AI - Desktop Control Layer
-echo ========================================================
-echo           Starting Vanessa AI Desktop App
-echo ========================================================
-
+setlocal
+title Vanessa - Voice to Codex Test
 cd /d "%~dp0"
-
-echo [1/4] Checking Faster-Whisper ASR daemon (port 4505)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4505 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \".venv-whisper\Scripts\python.exe services/voice-agent/whisper_server.py\"'; Start-Sleep -Seconds 2 }"
-
-echo [2/4] Checking Vanessa Orchestrator daemon (port 4319)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4319 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \"pnpm --filter @vanessa/orchestrator dev\"'; Start-Sleep -Seconds 2 }"
-
-echo [3/4] Checking Vanessa Voice Agent daemon (port 4500)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4500 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \"pnpm --filter @vanessa/voice-agent dev\"'; Start-Sleep -Seconds 2 }"
-
-echo [4/4] Launching Vanessa Native Desktop App...
-pnpm --filter @vanessa/desktop start
-
-echo Vanessa Desktop session closed.
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js is not on PATH. Install Node.js and reopen this terminal.
+  pause
+  exit /b 1
+)
+node scripts\launch-vanessa.cjs %*
+set "VANESSA_EXIT=%ERRORLEVEL%"
+echo.
+echo [Launcher] Session ended with exit code %VANESSA_EXIT%.
+if not "%VANESSA_EXIT%"=="0" pause
+exit /b %VANESSA_EXIT%

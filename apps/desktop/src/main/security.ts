@@ -35,7 +35,7 @@ export function configureSecurity() {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:* ws://127.0.0.1:* https://*.fish.audio wss://*.fish.audio https://unpkg.com https://api.elevenlabs.io https://fonts.googleapis.com https://fonts.gstatic.com data: blob:",
+          "default-src 'self' 'unsafe-inline' http://127.0.0.1:* ws://127.0.0.1:* https://*.fish.audio wss://*.fish.audio https://unpkg.com https://api.elevenlabs.io https://fonts.googleapis.com https://fonts.gstatic.com data: blob:; script-src 'self' https://unpkg.com; object-src 'none'; base-uri 'self'",
         ],
       },
     });

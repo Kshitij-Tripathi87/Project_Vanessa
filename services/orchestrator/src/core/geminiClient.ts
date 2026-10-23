@@ -33,6 +33,8 @@ export class GeminiClient {
       throw new GeminiError("Set GEMINI_API_KEY in the root .env file before using Gemini.");
     }
     const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+    const startedAt = Date.now();
+    console.log(`[Gemini] request model=${model} mode=${json ? "plan-json" : "conversation"} keepAlive=true`);
     const url = new URL(`models/${encodeURIComponent(model)}:generateContent`, this.baseUrl);
     const configuredTimeout = Number(process.env.GEMINI_TIMEOUT_MS);
     const timeoutMs = this.options.timeoutMs ?? (
@@ -73,6 +75,7 @@ export class GeminiClient {
         res.on("end", () => {
           clearTimeout(timer);
           if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+            console.error(`[Gemini] failed HTTP=${res.statusCode || "unknown"} elapsedMs=${Date.now() - startedAt}`);
             // Never expose the provider body, request headers, or credential.
             reject(new GeminiError(`Gemini request failed (HTTP ${res.statusCode || "unknown"}).`));
             return;
@@ -89,6 +92,7 @@ export class GeminiClient {
         req.destroy(new GeminiError(`Gemini request timed out after ${timeoutMs} ms.`));
       }, timeoutMs);
       req.on("error", (error) => {
+        console.error(`[Gemini] transport failed elapsedMs=${Date.now() - startedAt} reason=${error instanceof GeminiError ? error.message : "connection error"}`);
         clearTimeout(timer);
         reject(error instanceof GeminiError ? error : new GeminiError("Could not connect to Gemini."));
       });
@@ -103,6 +107,7 @@ export class GeminiClient {
       ?.filter((part: any) => !part.thought && typeof part.text === "string")
       .map((part: any) => part.text).join("").trim();
     if (!text) throw new GeminiError("Gemini returned no usable text. No fallback was used.");
+    console.log(`[Gemini] complete elapsedMs=${Date.now() - startedAt} responseCharacters=${text.length}`);
     return text;
   }
 

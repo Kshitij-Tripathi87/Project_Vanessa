@@ -214,7 +214,7 @@ export class VanessaVoiceSession {
     }
     const generation = this.sessionGeneration;
     this.isFinalizingTurn = false;
-    console.log(`[VanessaVoiceSession] Processing utterance: "${rawText}"`);
+    console.log(`[VanessaVoiceSession] Processing utterance characters=${rawText.length}`);
     this.isProcessing = true;
 
     // Filter wake word prefix
@@ -266,6 +266,8 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
+        const submitStarted = Date.now();
+        console.log(`[Voice] submitting request=${requestId} historyTurns=${this.conversationContext.length}`);
         const execution = await orchestratorClient.executeCommand({
           command,
           requestId,
@@ -275,6 +277,7 @@ export class VanessaVoiceSession {
           conversationContext: this.conversationContext,
         });
 
+        console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
         this.handlers.onHudUpdate?.({
           state: "responding",
@@ -296,7 +299,9 @@ export class VanessaVoiceSession {
           this.asr.setConversationContext?.(this.conversationContext);
         }
         try {
+          console.log(`[Voice] TTS start request=${requestId} characters=${responseText.length}`);
           await this.speak(responseText);
+          console.log(`[Voice] TTS complete request=${requestId}`);
         } catch (err: any) {
           console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
         this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");

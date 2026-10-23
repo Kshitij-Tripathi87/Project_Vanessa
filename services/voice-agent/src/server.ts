@@ -1,11 +1,10 @@
+import "./config/env.js";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
-import dotenv from "dotenv";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
 import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
-
-dotenv.config();
+import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -158,12 +157,14 @@ export async function createVoiceAgentServer() {
     const session = new VanessaVoiceSession({
       handlers: {
         onStateChange: (state) => {
+          console.log(`[Voice] state=${state}`);
           sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
         },
         onPartialTranscript: (text) => {
           sendJson(socket, { type: "transcript_partial", text });
         },
         onFinalTranscript: (text, requestId) => {
+          console.log(`[Voice] transcript committed request=${requestId} characters=${text.length}`);
           sendJson(socket, { type: "transcript_final", text, requestId });
         },
         onAudioChunkOut: (chunk) => {
@@ -176,6 +177,9 @@ export async function createVoiceAgentServer() {
           sendJson(socket, { type: "hud_update", ...hud });
         },
         onProviderStatus: (providers) => {
+          for (const [kind, provider] of Object.entries(providers)) {
+            console.log(`[Voice Provider] ${kind} state=${provider.state} active=${provider.active} detail=${safeProviderDetail(provider.detail || "none")}`);
+          }
           sendJson(socket, { type: "provider_status", providers });
         },
       },
@@ -204,7 +208,8 @@ export async function createVoiceAgentServer() {
 
     socket.on("message", async (data: any, isBinary: boolean) => {
       try {
-        if (isBinary || Buffer.isBuffer(data)) {
+        // ws also delivers text frames as Buffers; use the protocol flag.
+        if (isBinary) {
           // Slice incoming buffer into exact 20ms chunks without dropping unaligned bytes
           const chunks = accumulator.feed(Buffer.from(data));
           for (const chunk of chunks) {
@@ -212,6 +217,7 @@ export async function createVoiceAgentServer() {
           }
         } else {
           const json = JSON.parse(data.toString());
+          console.log(`[Voice] control=${String(json.type).replace(/[^a-z_]/gi, "").slice(0, 40)}`);
           if (json.type === "activate" || json.type === "reset") {
             accumulator.reset();
             try {
@@ -221,7 +227,7 @@ export async function createVoiceAgentServer() {
               console.warn("[VoiceAgentServer] ASR activation failed:", err.message);
               sendJson(socket, {
                 type: "voice_error",
-                message: "Speech recognition could not start. Check the configured ASR provider and try again.",
+                message: `Speech recognition could not start: ${safeProviderDetail(err.message)}`,
               });
             }
           } else if (json.type === "finalize") {

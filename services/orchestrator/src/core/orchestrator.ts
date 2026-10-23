@@ -50,6 +50,7 @@ export class VanessaOrchestrator {
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
     const requestId = payload.requestId || envelope?.requestId;
+    console.log(`[Orchestrator] received request=${requestId} source=${payload.source} characters=${command.length} historyTurns=${conversationContext.length}`);
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
     const idempotencyKey = payload.idempotencyKey || envelope?.idempotencyKey;
@@ -75,6 +76,7 @@ export class VanessaOrchestrator {
 
       const idemCheck = memoryPalace.checkAndRecordIdempotency(envelopeRecord);
       if (idemCheck.isDuplicate) {
+        console.log(`[Orchestrator] duplicate request=${requestId} cached=${Boolean(idemCheck.cachedResult)} pending=${Boolean(idemCheck.isPending)}`);
         if (idemCheck.cachedResult) {
           return idemCheck.cachedResult;
         }
@@ -100,8 +102,11 @@ export class VanessaOrchestrator {
     // 1. Generate task plan
     let plan: Plan;
     try {
+      console.log(`[Planner] start request=${requestId}`);
       plan = await planner.createPlan(command, conversationContext, payload);
+      console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
     } catch {
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check Gemini status above or plan validation.`);
       const result: ExecuteCommandResult = {
         status: "failed",
         requestId,
@@ -186,6 +191,7 @@ export class VanessaOrchestrator {
       memoryPalace.completeIdempotentCommand(idempotencyKey, status, finalResult);
     }
 
+    console.log(`[Orchestrator] response request=${requestId} plan=${plan.id} status=${status} awaitingApproval=${pendingApproval.length} elapsedMs=${Date.now() - startTime}`);
     return finalResult;
   }
 
