@@ -1,0 +1,48 @@
+name: Orchestrator compound task gate
+
+on:
+  pull_request:
+    paths:
+      - "services/orchestrator/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/orchestrator-compound-task.yml"
+  push:
+    branches:
+      - "feature/orchestrator-compound-task-gate"
+    paths:
+      - "services/orchestrator/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/orchestrator-compound-task.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compound-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build shared contracts
+        run: pnpm --filter @vanessa/shared build
+      - name: Type-check orchestrator
+        run: pnpm --filter @vanessa/orchestrator build
+      - name: Verify canonical action catalog
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
+      - name: Test compound voice task planning
+        run: pnpm test:compound-plan
