@@ -10,7 +10,7 @@ import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
-import { orchestratorClient } from "../orchestratorClient.js";
+import { orchestratorClient, type OrchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -46,6 +46,7 @@ export class VanessaVoiceSession {
   private porcupineWakeWordType: "porcupine" | "transcript" = "transcript";
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
+  private orchestrator: Pick<OrchestratorClient, "executeCommand">;
 
   private state: SessionState = "idle";
   private partialTranscript = "";
@@ -64,11 +65,19 @@ export class VanessaVoiceSession {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
     ttsProvider?: "elevenlabs" | "fish";
     handlers?: VoiceSessionHandlers;
+    /** Injectable adapters let CI exercise the committed-turn → orchestrator → TTS path without live providers. */
+    asrAdapter?: AsrAdapter;
+    ttsAdapter?: VoiceTtsAdapter;
+    orchestrator?: Pick<OrchestratorClient, "executeCommand">;
+    initializeWakeWord?: boolean;
   }) {
     this.handlers = options?.handlers || {};
+    this.orchestrator = options?.orchestrator || orchestratorClient;
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
-    if (asrType === "fish") {
+    if (options?.asrAdapter) {
+      this.asr = options.asrAdapter;
+    } else if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
       this.asr = new ElevenLabsAsrAdapter();
@@ -80,7 +89,9 @@ export class VanessaVoiceSession {
       console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
     }
     const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
-    if (ttsType === "fish") {
+    if (options?.ttsAdapter) {
+      this.tts = options.ttsAdapter;
+    } else if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
     } else {
       this.tts = new ElevenLabsTtsAdapter();
@@ -89,10 +100,12 @@ export class VanessaVoiceSession {
     this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
 
-    // Initialize optional audio-level wake word (Porcupine)
-    this.initPorcupineWakeWord().catch((err) => {
-      console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
-    });
+    // Initialize optional audio-level wake word (Porcupine). Tests may disable this optional provider.
+    if (options?.initializeWakeWord !== false) {
+      this.initPorcupineWakeWord().catch((err) => {
+        console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
+      });
+    }
   }
 
   private async initPorcupineWakeWord(): Promise<void> {
@@ -306,7 +319,7 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
-        const execution = await orchestratorClient.executeCommand({
+        const execution = await this.orchestrator.executeCommand({
           command,
           requestId,
           idempotencyKey,
