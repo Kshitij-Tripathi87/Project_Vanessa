@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
+import { openCodex } from "./codex-launcher.js";
 
 const execAsync = promisify(exec);
 
@@ -9,6 +10,15 @@ export class DeveloperAgent {
 
   async execute(action: string, params: Record<string, any> = {}): Promise<any> {
     switch (action) {
+      case "codex.open":
+        console.log(`[Codex] handoff project=${params.projectPath} promptCharacters=${typeof params.prompt === "string" ? params.prompt.length : 0}`);
+        {
+          const result = await openCodex(params);
+          console.log(`[Codex] returned success=${result.success} status=${result.status || "none"} terminalPid=${result.terminalPid || "none"}; coding completion is not verified`);
+          if (!result.success) console.error(`[Codex] launch failed: ${result.error}`);
+          return result;
+        }
+
       case "vscode.open_project": {
         const projectPath = params.path || process.cwd();
         try {

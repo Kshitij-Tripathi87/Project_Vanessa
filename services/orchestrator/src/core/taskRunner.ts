@@ -48,6 +48,9 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
+  if (task.action === "codex.open" && structured?.success === true && structured?.status === "started") {
+    task.spokenSummary = "I started a Codex terminal with your request. Coding completion is not yet reported to Vanessa.";
+  }
   const evidence = Array.isArray(structured?.evidence) ? structured.evidence : [];
   task.evidence = evidence;
   task.artifacts = Array.isArray(structured?.artifacts) ? structured.artifacts : [];

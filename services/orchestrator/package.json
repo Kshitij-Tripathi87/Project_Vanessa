@@ -5,6 +5,8 @@
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
+    "smoke:codex": "tsx src/scripts/codex-smoke.ts",
+    "test:codex": "tsx --test src/tests/codexLauncher.test.ts",
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",

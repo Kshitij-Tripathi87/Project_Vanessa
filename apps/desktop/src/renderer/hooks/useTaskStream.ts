@@ -2,23 +2,6 @@ import { useEffect } from "react";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 import { VanessaEvent } from "@vanessa/shared";
 
-declare global {
-  interface Window {
-    vanessa: {
-      executeCommand: (payload: { command: string; language?: string }) => Promise<any>;
-      approveTask: (taskId: string) => Promise<any>;
-      rejectTask: (taskId: string) => Promise<any>;
-      cancelTask: (taskId?: string) => Promise<any>;
-      onEvent: (callback: (event: VanessaEvent) => void) => () => void;
-      onTriggerPTT?: (callback: () => void) => () => void;
-      onTriggerCancel?: (callback: () => void) => () => void;
-      resizeWindow?: (size: { width: number; height: number }) => Promise<any>;
-      dockCorner?: (corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => Promise<any>;
-      minimizeWindow?: () => Promise<any>;
-      closeWindow?: () => Promise<any>;
-    };
-  }
-}
 
 export function useTaskStream() {
   const { updateTask, setPendingApproval, addAuditLog, setActivePlan, setVoiceState } =

@@ -1,5 +1,9 @@
 import { ipcMain, BrowserWindow, screen } from "electron";
 import WebSocket from "ws";
+import type { ExecuteCommandPayload } from "@vanessa/shared";
+
+// The Electron main build is CommonJS; load the ESM shared package once.
+const commandClient = import("@vanessa/shared");
 
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4139";
 const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4139/events";
@@ -8,14 +12,14 @@ let wsClient: WebSocket | null = null;
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // 1. Execute Command
-  ipcMain.handle("vanessa:execute-command", async (_, payload: { command: string; language?: string }) => {
+  ipcMain.handle("vanessa:execute-command", async (_, payload: ExecuteCommandPayload) => {
     try {
-      const res = await fetch(`${ORCHESTRATOR_URL}/api/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const { submitCommandRequest } = await commandClient;
+      return await submitCommandRequest(ORCHESTRATOR_URL, {
+        ...payload,
+        source: "desktop",
+        originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
       });
-      return await res.json();
     } catch (err: any) {
       return { status: "failed", spokenSummary: `Connection to orchestrator failed: ${err.message}` };
     }

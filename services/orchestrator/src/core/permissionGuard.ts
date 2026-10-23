@@ -9,6 +9,7 @@ export class PermissionGuard {
 
   // Actions that require explicit user confirmation before executing
   private confirmActions = new Set<string>([
+    "codex.open",
     "wifi.restart_adapter",
     "drive.upload",
     "gmail.send",
