@@ -95,7 +95,31 @@ export class VanessaOrchestrator {
     });
 
     // 1. Generate task plan
-    const plan = await planner.createPlan(command, conversationContext);
+    let plan: Plan;
+    try {
+      plan = await planner.createPlan(command, conversationContext);
+    } catch {
+      const result: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "I couldn't create a plan with Gemini. No tasks were started. Check the Gemini configuration or try again.",
+        verification: {
+          verified: false,
+          postconditions: ["Planning failed before task execution."],
+          outcome: "failed",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: `planning-failed-${Date.now()}`,
+        timestamp: Date.now(),
+        agent: "orchestrator",
+        action: "planning.failed",
+        status: "error",
+        details: "Gemini planning failed; no task execution or keyword fallback was attempted.",
+      });
+      if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
+      return result;
+    }
 
     // 2. Execute plan through parallel DAG task runner
     const tasks = await runPlan(plan);

@@ -35,10 +35,12 @@ export class VanessaAgent {
       case "jarvis.ask":
       case "openjarvis.ask": {
         const query = params.query || params.prompt || params.command || "System status check";
-        const intelligentReply = await modelRouter.callConversationalLLM(query);
-        if (intelligentReply) {
-          return { success: true, content: intelligentReply, mode: "nvidia_nemotron_550b" };
-        }
+        // Previous NVIDIA reply and Python-bridge fallback retained, disabled.
+        // const intelligentReply = await modelRouter.callConversationalLLM(query);
+        // if (intelligentReply) {
+        //   return { success: true, content: intelligentReply, mode: "nvidia_nemotron_550b" };
+        // }
+        // return this.ask(query);
         return this.ask(query);
       }
 
@@ -170,7 +172,11 @@ export class VanessaAgent {
   }
 
   async ask(query: string): Promise<any> {
-    return this.runBridge("ask", { query });
+    // Previous Python/NVIDIA conversational fallback retained, disabled.
+    // return this.runBridge("ask", { query });
+    const content = await modelRouter.callConversationalLLM(query);
+    if (!content) throw new Error("Gemini returned no conversational reply.");
+    return { success: true, content, mode: "gemini-3.5-flash-lite" };
   }
 
   async runTool(tool: string, params: Record<string, any> = {}): Promise<any> {
