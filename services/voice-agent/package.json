@@ -11,6 +11,7 @@
     "test": "tsx src/tests/voiceAgent.test.ts",
     "test:behavior": "tsx src/tests/voiceBehavior.test.ts",
     "test:pipeline-e2e": "tsx src/tests/voicePipelineE2e.test.ts",
+    "test:turn-recovery": "tsx src/tests/voiceTurnRecovery.test.ts",
     "test:fish:acceptance": "tsx ../../scripts/test_fish_acceptance.ts"
   },
   "dependencies": {
