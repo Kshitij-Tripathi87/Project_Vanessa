@@ -64,11 +64,16 @@ export class VanessaVoiceSession {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
     ttsProvider?: "elevenlabs" | "fish";
     handlers?: VoiceSessionHandlers;
+    /** Injectable ASR/TTS adapters let recovery tests exercise provider failures without live credentials. */
+    asrAdapter?: AsrAdapter;
+    ttsAdapter?: VoiceTtsAdapter;
   }) {
     this.handlers = options?.handlers || {};
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
-    if (asrType === "fish") {
+    if (options?.asrAdapter) {
+      this.asr = options.asrAdapter;
+    } else if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
       this.asr = new ElevenLabsAsrAdapter();
@@ -80,7 +85,9 @@ export class VanessaVoiceSession {
       console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
     }
     const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
-    if (ttsType === "fish") {
+    if (options?.ttsAdapter) {
+      this.tts = options.ttsAdapter;
+    } else if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
     } else {
       this.tts = new ElevenLabsTtsAdapter();
