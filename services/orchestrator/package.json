@@ -14,9 +14,7 @@
     "test:playwright": "tsx src/tests/playwright.test.ts",
     "test:browser-agent": "tsx src/tests/browserAgent.test.ts",
     "test:windows-agent": "tsx src/tests/windowsAgent.test.ts",
-    "test:compound-voice-plan": "tsx src/tests/compoundVoicePlan.test.ts",
-    "test:playwright": "tsx src/tests/playwright.test.ts"
-  },
+    "test:compound-voice-plan": "tsx src/tests/compoundVoicePlan.test.ts"
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@fastify/websocket": "^11.0.2",
