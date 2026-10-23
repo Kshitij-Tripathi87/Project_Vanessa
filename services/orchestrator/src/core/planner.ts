@@ -633,7 +633,7 @@ export class VanessaPlanner {
         dependsOn: [],
         status: "pending",
       });
-    } else if (lower.includes("vanessa") || lower.includes("jarvis") || lower.includes("openjarvis") || lower.includes("tools") || lower.includes("connector")) {
+    } else if ((lower.includes("vanessa") && !/^\s*(?:hey\s+)?vanessa\b[,\s:.-]*/.test(lower)) || lower.includes("jarvis") || lower.includes("openjarvis") || lower.includes("tools") || lower.includes("connector") || /\b(status|health|remember|memory|git)\b/.test(lower)) {
       if (lower.includes("status") || lower.includes("health")) {
         tasks.push({
           id: "t_vanessa_status",
