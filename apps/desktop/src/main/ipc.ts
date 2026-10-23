@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow, screen } from "electron";
 import WebSocket from "ws";
 
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319";
-const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4139";
+const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4139/events";
 
 let wsClient: WebSocket | null = null;
 

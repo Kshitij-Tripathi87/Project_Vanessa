@@ -11,7 +11,7 @@ export interface OrchestratorCommandResult {
 }
 
 export class OrchestratorClient {
-  constructor(private baseUrl = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319") {}
+  constructor(private baseUrl = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4139") {}
 
   /**
    * Execute voice command directly through Vanessa Orchestrator

@@ -24,7 +24,7 @@ for (let i = 0; i < 4; i++) {
   envDir = path.dirname(envDir);
 }
 
-const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
+const PORT = parseInt(process.env.VANESSA_PORT || "4139", 10);
 const fastify = Fastify({ logger: false });
 
 await fastify.register(cors, {
