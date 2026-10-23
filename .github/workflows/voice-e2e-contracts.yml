@@ -33,4 +33,5 @@ jobs:
       - run: pnpm test:windows-agent
       - run: pnpm test:compound-voice-plan
       - run: pnpm --filter @vanessa/voice-agent test
+      - run: pnpm test:voice:pipeline-e2e
       - run: pnpm --filter @vanessa/voice-agent test:behavior
