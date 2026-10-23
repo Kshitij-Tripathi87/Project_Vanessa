@@ -10,7 +10,7 @@ import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
-import { orchestratorClient } from "../orchestratorClient.js";
+import { orchestratorClient, type OrchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -46,6 +46,7 @@ export class VanessaVoiceSession {
   private porcupineWakeWordType: "porcupine" | "transcript" = "transcript";
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
+  private orchestrator: Pick<OrchestratorClient, "executeCommand">;
 
   private state: SessionState = "idle";
   private partialTranscript = "";
@@ -306,7 +307,7 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
-        const execution = await orchestratorClient.executeCommand({
+        const execution = await this.orchestrator.executeCommand({
           command,
           requestId,
           idempotencyKey,
