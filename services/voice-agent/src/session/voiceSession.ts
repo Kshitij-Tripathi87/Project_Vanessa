@@ -10,7 +10,7 @@ import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
-import { orchestratorClient } from "../orchestratorClient.js";
+import { orchestratorClient, type OrchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -46,6 +46,7 @@ export class VanessaVoiceSession {
   private porcupineWakeWordType: "porcupine" | "transcript" = "transcript";
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
+  private orchestrator: Pick<OrchestratorClient, "executeCommand">;
 
   private state: SessionState = "idle";
   private partialTranscript = "";
@@ -67,8 +68,11 @@ export class VanessaVoiceSession {
     /** Injectable adapters make the voice-to-orchestrator contract deterministic in tests. */
     asrAdapter?: AsrAdapter;
     ttsAdapter?: VoiceTtsAdapter;
+    orchestrator?: Pick<OrchestratorClient, "executeCommand">;
+    initializeWakeWord?: boolean;
   }) {
     this.handlers = options?.handlers || {};
+    this.orchestrator = options?.orchestrator || orchestratorClient;
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
     if (options?.asrAdapter) {
@@ -96,10 +100,13 @@ export class VanessaVoiceSession {
     this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
 
-    // Initialize optional audio-level wake word (Porcupine)
-    this.initPorcupineWakeWord().catch((err) => {
-      console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
-    });
+    // Initialize optional audio-level wake word (Porcupine). Tests can disable this
+    // optional integration while injecting deterministic ASR/TTS/orchestrator adapters.
+    if (options?.initializeWakeWord !== false) {
+      this.initPorcupineWakeWord().catch((err) => {
+        console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
+      });
+    }
   }
 
   private async initPorcupineWakeWord(): Promise<void> {
@@ -313,7 +320,7 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
-        const execution = await orchestratorClient.executeCommand({
+        const execution = await this.orchestrator.executeCommand({
           command,
           requestId,
           idempotencyKey,
