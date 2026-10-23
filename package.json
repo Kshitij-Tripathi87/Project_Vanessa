@@ -17,8 +17,6 @@
     "test:browser-agent": "pnpm --filter @vanessa/orchestrator test:browser-agent",
     "test:windows-agent": "pnpm --filter @vanessa/orchestrator test:windows-agent",
     "test:compound-voice-plan": "pnpm --filter @vanessa/orchestrator test:compound-voice-plan",
-    "test:planner-browser": "pnpm --filter @vanessa/orchestrator test:planner-browser",
-    "test:contextualizer": "pnpm --filter @vanessa/orchestrator test:contextualizer",
     "test:drills": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/failureDrills.test.ts",
     "test:drills:process": "pnpm --filter @vanessa/orchestrator exec tsx ../../evals/drills/processFailureDrills.test.ts",
     "test:checkout:gate": "pnpm --filter @vanessa/orchestrator exec tsx src/tests/checkoutIncidentGate.test.ts",
