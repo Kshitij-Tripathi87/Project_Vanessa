@@ -86,6 +86,65 @@ export class BrowserAgent implements SpecialistAgent {
         };
       }
 
+      case "youtube.search": {
+        const query = String(params.query || "").trim();
+        if (!query) {
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: "YouTube search needs a non-empty query.",
+            spokenSummary: "What should I search for on YouTube?",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: "Missing YouTube search query." },
+          };
+        }
+        const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query);
+        let launch: { success: boolean; url: string };
+        try {
+          launch = await this.openUrl(url);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: "Could not request YouTube search navigation: " + detail,
+            spokenSummary: "I couldn't open YouTube search.",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+          };
+        }
+        return {
+          agentId: this.id,
+          status: "partial",
+          success: false,
+          summary: "Requested YouTube search for " + query + ", but the active page and results have not been verified.",
+          spokenSummary: "I asked the browser to open YouTube search results for " + query + ", but I couldn't verify that the results loaded.",
+          evidence: [{
+            description: "The browser-launch handler accepted the navigation request; this does not prove that the YouTube results page loaded.",
+            source: "Windows browser launch request",
+            timestamp: startTime,
+            confidence: 0.5,
+            data: { requestedUrl: launch.url, query },
+          }],
+          artifacts: [url],
+          data: {
+            query,
+            requestedUrl: url,
+            navigationRequestAccepted: launch.success,
+            pageLoaded: false,
+            resultsVerified: false,
+          },
+          verification: {
+            passed: false,
+            details: "Only the browser process launch was acknowledged; active URL and visible YouTube results were not inspected.",
+          },
+        };
+      }
+
       case "browser.research":
       case "vanessa.run_goal": {
         const query = params.goal || params.query || params.prompt || "web research";
