@@ -28,3 +28,24 @@ test("YouTube search still takes the specialized direct-navigation path", async 
   assert.equal(plan.tasks[0].action, "youtube.search_and_play");
   assert.equal(plan.tasks[0].params.query, "rainforest sounds");
 });
+
+test("common Windows controls bypass model guessing and use reviewed actions", async () => {
+  const openExplorer = await planner.createPlan("Open File Explorer");
+  assert.equal(openExplorer.tasks[0].agent, "windows");
+  assert.equal(openExplorer.tasks[0].action, "app.open");
+  assert.equal(openExplorer.tasks[0].params.name, "explorer");
+
+  const bluetooth = await planner.createPlan("Turn off Bluetooth");
+  assert.equal(bluetooth.tasks[0].agent, "windows");
+  assert.equal(bluetooth.tasks[0].action, "bluetooth.disable");
+
+  const brightness = await planner.createPlan("Set brightness to 60 percent");
+  assert.equal(brightness.tasks[0].agent, "windows");
+  assert.equal(brightness.tasks[0].action, "brightness.set");
+  assert.equal(brightness.tasks[0].params.level, 60);
+
+  const adjust = await planner.createPlan("Increase brightness");
+  assert.equal(adjust.tasks[0].agent, "windows");
+  assert.equal(adjust.tasks[0].action, "brightness.adjust");
+  assert.equal(adjust.tasks[0].params.delta, 10);
+});
