@@ -1,5 +1,5 @@
-/** Keep provider diagnostics useful without writing credentials or request bodies. */
-export function redactLlmDiagnostic(message: string, extraSecrets: string[] = []): string {
+/** Redact credentials; response logging can use Infinity to avoid truncation. */
+export function redactLlmDiagnostic(message: string, extraSecrets: string[] = [], maxLength = 8192): string {
   const secrets = [
     ...extraSecrets,
     ...Object.entries(process.env)
@@ -13,7 +13,7 @@ export function redactLlmDiagnostic(message: string, extraSecrets: string[] = []
   return safe
     .replace(/\b(?:nvapi-|sk-|ghp_)[A-Za-z0-9_-]+/g, "[REDACTED]")
     .replace(/Bearer\s+[^\s"',;]+/gi, "Bearer [REDACTED]")
-    .slice(0, 8192);
+    .slice(0, maxLength);
 }
 
 export function formatLlmError(error: unknown, extraSecrets: string[] = []): string {

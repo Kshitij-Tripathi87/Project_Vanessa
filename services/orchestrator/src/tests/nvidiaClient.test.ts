@@ -92,6 +92,27 @@ test("logs the provider error and matching request ID while redacting credential
   } finally { await f.close(); }
 });
 
+test("prints indented assistant JSON with parsed content, without truncation or exposed credentials", async (t) => {
+  const logs: string[] = [];
+  t.mock.method(console, "log", (...args: unknown[]) => { logs.push(args.join(" ")); });
+  const plan = { intent: "single_task", tasks: [{ id: "t1", agent: "windows", action: "app.open", params: { name: "brave" } }], detail: "x".repeat(9000) + " END-OF-RESPONSE test-key" };
+  const content = JSON.stringify(plan);
+  const responseBody = " \n" + JSON.stringify({ id: "chatcmpl-test", choices: [{ finish_reason: "stop", message: { content, role: "assistant" } }], usage: { total_tokens: 100 } }) + "\n";
+  const f = await fixture((_req, res) => { res.end(responseBody); });
+  try {
+    assert.equal(await f.client.generate("request", "system", true, "response-request"), content);
+    const responseLog = logs.find((line) => line.startsWith("[NVIDIA] response "));
+    assert(responseLog);
+    assert.match(responseLog, /request=response-request/);
+    assert.match(responseLog, /HTTP=200/);
+    assert.equal(responseLog.slice(responseLog.indexOf("\n") + 1), JSON.stringify({ content: plan, role: "assistant" }, null, 2).replaceAll("test-key", "[REDACTED]"));
+    assert(!responseLog.includes("chatcmpl-test"));
+    assert(!responseLog.includes('"usage"'));
+    assert(responseLog.includes("END-OF-RESPONSE"));
+    assert(!responseLog.includes("test-key"));
+  } finally { await f.close(); }
+});
+
 test("rejects truncated, refused, empty, and malformed responses", async () => {
   const responses = [
     JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "partial" } }] }),

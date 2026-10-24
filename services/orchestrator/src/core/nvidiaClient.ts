@@ -90,6 +90,21 @@ export class NvidiaClient {
         res.on("end", () => {
           clearTimeout(timer);
           const responseBody = Buffer.concat(chunks).toString("utf8");
+          let readableResponse = responseBody;
+          try {
+            const parsed = JSON.parse(responseBody);
+            const message = parsed?.choices?.[0]?.message;
+            if (message) {
+              let content = message.content;
+              if (typeof content === "string") {
+                try { content = JSON.parse(content); } catch { /* Conversational replies remain plain text. */ }
+              }
+              readableResponse = JSON.stringify({ content, role: message.role }, null, 2);
+            } else {
+              readableResponse = JSON.stringify(parsed, null, 2);
+            }
+          } catch { /* Preserve malformed responses for debugging. */ }
+          console.log(`[NVIDIA] response ${context} HTTP=${res.statusCode ?? "unknown"}\n${redactLlmDiagnostic(readableResponse, [key], Number.POSITIVE_INFINITY)}`);
           if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
             let providerMessage = responseBody;
             try {
