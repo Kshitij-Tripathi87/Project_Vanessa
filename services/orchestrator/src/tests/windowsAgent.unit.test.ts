@@ -62,6 +62,21 @@ test("volume rejects out-of-range values without touching Windows", async () => 
   assert.equal(result.verification?.passed, false);
 });
 
+test("volume uses a successful Core Audio read-back as verification evidence", async () => {
+  const agent = new WindowsAgent({
+    runPowerShell: outputPowerShell('{"Requested":0.35,"Observed":0.35}'),
+    fakeMode: false,
+  });
+  const result = await agent.execute("volume.set", { level: 35 });
+  assert.equal(result.success, true);
+  assert.equal(result.status, "completed");
+  assert.equal(result.verification?.passed, true);
+  assert.equal((result.data as { readBackVerified: boolean }).readBackVerified, true);
+  assert.equal((result.data as { actualObservedLevel: number }).actualObservedLevel, 35);
+  assert.match(result.summary || "", /35%/);
+  assert.equal(result.evidence?.[0]?.source, "Windows Core Audio master-volume read-back");
+});
+
 test("volume provider errors are propagated and never silently successful", async () => {
   const agent = new WindowsAgent({ runPowerShell: deniedPowerShell, fakeMode: false });
   const result = await agent.execute("volume.set", { level: 30 });
