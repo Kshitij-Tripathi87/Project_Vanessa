@@ -67,7 +67,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "runAfterFinish": true
+      "runAfterFinish": false
     },
     "extraResources": [
       {
