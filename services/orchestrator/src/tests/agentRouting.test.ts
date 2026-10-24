@@ -159,14 +159,23 @@ test("compound Windows actions are split only when every clause is recognized", 
   assert.equal(inferCommonActionSequence("Turn off Bluetooth and send an email"), null);
 });
 
-test("browser + Windows sequences preserve explicit ordering groups", () => {
+test("explicit Chrome and Edge targets are fused into browser tasks", () => {
   assert.deepEqual(inferCommonActionSequence("Open Chrome and search Google for TypeScript tutorials"), [
-    { agent: "windows", action: "app.open", params: { name: "chrome" }, group: 0 },
-    { agent: "browser", action: "browser.search", params: { query: "TypeScript tutorials" }, group: 0 },
+    { agent: "browser", action: "browser.search", params: { query: "TypeScript tutorials", browser: "chrome" }, group: 0 },
   ]);
-  assert.deepEqual(inferCommonActionSequence("Open https://example.com then search Google for documentation"), [
-    { agent: "browser", action: "browser.open_url", params: { url: "https://example.com/" }, group: 0 },
-    { agent: "browser", action: "browser.search", params: { query: "documentation" }, group: 1 },
+  assert.deepEqual(inferCommonActionSequence("Open Edge then open https://example.com"), [
+    { agent: "browser", action: "browser.open_url", params: { url: "https://example.com/", browser: "edge" }, group: 0 },
+  ]);
+});
+
+test("multi-action routing preserves sequential dependency groups", () => {
+  assert.deepEqual(inferCommonActionSequence("Turn off Bluetooth and increase brightness"), [
+    { agent: "windows", action: "bluetooth.disable", params: {}, group: 0 },
+    { agent: "windows", action: "brightness.adjust", params: { delta: 10 }, group: 0 },
+  ]);
+  assert.deepEqual(inferCommonActionSequence("Turn off Bluetooth then increase brightness"), [
+    { agent: "windows", action: "bluetooth.disable", params: {}, group: 0 },
+    { agent: "windows", action: "brightness.adjust", params: { delta: 10 }, group: 1 },
   ]);
 });
 
