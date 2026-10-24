@@ -1021,3 +1021,115 @@ input {
   color: #e2e8f0;
   background: #0c1725;
 }
+
+
+/* Accessibility-backed foreground-window inspector */
+.control-ui-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.control-ui-window {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(56, 189, 248, 0.17);
+  border-radius: 10px;
+  background: rgba(2, 132, 199, 0.055);
+}
+.control-ui-window-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #6ee7b7;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.control-ui-window-status svg { flex: 0 0 auto; }
+.control-ui-window strong {
+  color: #e8f3ff;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.control-ui-window > span:not(.control-ui-window-status) {
+  color: #7f94ad;
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.control-ui-window .control-ui-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  color: #a5f3fc;
+}
+.control-ui-privacy svg { flex: 0 0 auto; margin-top: 1px; }
+.control-ui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.control-ui-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.11);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.016);
+}
+.control-ui-state {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.control-ui-state.is-enabled { background: #34d399; box-shadow: 0 0 7px rgba(52, 211, 153, 0.4); }
+.control-ui-state.is-disabled { background: #64748b; }
+.control-ui-item-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.control-ui-item-copy strong {
+  color: #dbeafe;
+  font-size: 10px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.control-ui-item-copy span {
+  color: #70859e;
+  font-size: 8px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+.control-ui-click {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 7px;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.14);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.control-ui-click:hover {
+  border-color: rgba(251, 191, 36, 0.48);
+  background: rgba(120, 53, 15, 0.24);
+}
+.control-ui-truncated {
+  margin: 0;
+  color: #fcd34d;
+  font-size: 9px;
+  line-height: 1.5;
+}
