@@ -212,16 +212,18 @@ export function App() {
   }, [setPendingApproval, setLastResponse]);
 
   const handleKillSwitch = useCallback(async () => {
-    if (window.vanessa?.cancelTask) {
-      await window.vanessa.cancelTask();
-    } else {
-      try {
-        await fetch("http://127.0.0.1:4139/api/cancel", { method: "POST" });
-      } catch (err) {
-        console.error("Failed to trigger kill switch:", err);
-      }
+    if (!window.vanessa?.cancelTask) {
+      setLastResponse("The emergency stop bridge is unavailable. Check Vanessa's local runtime.");
+      return;
     }
-  }, []);
+    try {
+      const result = await window.vanessa.cancelTask();
+      if (!result.success) setLastResponse(result.error || "Vanessa could not confirm the emergency stop request.");
+      else setLastResponse(result.message || "Emergency stop requested. Check each task's final status.");
+    } catch {
+      setLastResponse("Vanessa could not reach the orchestrator to request an emergency stop.");
+    }
+  }, [setLastResponse]);
 
   useEffect(() => {
     const unsubscribePtt = window.vanessa?.onTriggerPTT?.(() => {
@@ -239,18 +241,17 @@ export function App() {
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
     try {
-      const res = await fetch("http://127.0.0.1:4139/api/privacy/folders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: newFolderInput.trim() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAllowedFolders(data.allowedFolders);
+      const result = await window.vanessa.addAllowedFolder(newFolderInput.trim());
+      if (result.success && result.allowedFolders) {
+        setAllowedFolders(result.allowedFolders);
         setNewFolderInput("");
+        setLastResponse("Folder added to Vanessa's approved filesystem roots.");
+      } else {
+        setLastResponse(result.error || "That folder could not be added to the approved roots.");
       }
-    } catch (err) {
-      console.error("Failed to add folder:", err);
+      void refreshControlStatus();
+    } catch {
+      setLastResponse("Vanessa could not update the approved folder list.");
     }
   };
 
@@ -574,7 +575,11 @@ export function App() {
               fontWeight: 600,
             }}
           >
-            AUTONOMOUS MODE ACTIVE
+            {controlStatus?.autonomousMode === true
+              ? "AUTONOMY ENABLED"
+              : controlStatus?.autonomousMode === false
+                ? "APPROVAL GATES ACTIVE"
+                : "POLICY STATUS UNKNOWN"}
           </span>
         </div>
 
@@ -759,6 +764,7 @@ export function App() {
         }}
       >
         {[
+          { id: "control", label: "Windows & Browser", icon: <Monitor size={12} /> },
           { id: "memory", label: "Memory Palace (30D)", icon: <Brain size={12} /> },
           { id: "audit", label: "Audit Ledger", icon: <ShieldCheck size={12} /> },
           { id: "plan", label: "Active Task DAG", icon: <Layers size={12} /> },
@@ -791,6 +797,17 @@ export function App() {
 
       {/* Tab Panels */}
       <main style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {activeTab === "control" && (
+          <ControlDeck
+            status={controlStatus}
+            statusLoading={controlStatusLoading}
+            statusError={controlStatusError}
+            tasks={tasks}
+            onRefresh={() => { void refreshControlStatus(); }}
+            onExecute={(command) => { void handleExecute(command); }}
+          />
+        )}
+
         {activeTab === "memory" && <MemoryPalaceViewer />}
 
         {activeTab === "audit" && (
@@ -933,8 +950,14 @@ export function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "var(--text-muted)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <Activity size={12} color="var(--cyan-glow)" />
-            <span>Port 4139 Online</span>
+            <Activity size={12} color={controlStatus?.orchestratorOnline ? "#34d399" : "#fb7185"} />
+            <span>
+              {controlStatus?.orchestratorOnline
+                ? "Orchestrator · " + controlStatus.orchestratorPort + " online"
+                : controlStatus
+                  ? "Orchestrator · " + controlStatus.orchestratorPort + " offline"
+                  : "Orchestrator status loading"}
+            </span>
           </div>
           <span>•</span>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
