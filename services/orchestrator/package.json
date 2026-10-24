@@ -12,7 +12,10 @@
     "start": "node dist/server.js",
     "test:scenarios": "tsx src/tests/scenarios.test.ts",
     "test:skills": "tsx src/tests/skillsRuntime.test.ts",
-    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts"
+    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
+    "test:powershell": "tsx --test src/tests/powershellExecutor.test.ts",
+    "test:powershell:windows": "tsx --test src/tests/powershellExecutor.windows.test.ts",
+    "smoke:powershell": "tsx src/scripts/powershell-smoke.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
