@@ -181,7 +181,7 @@ async function runTests() {
 
   // 2. VAD Detection test
   console.log("🧪 Test 2: VAD Speech & Energy Detection...");
-  const vad = new SileroVadDetector({ energyThreshold: 500 });
+  const vad = new SileroVadDetector({ energyThreshold: 500, skipCalibration: true });
   const silencePcm = new Int16Array(320); // all zeros
   const speechPcm = new Int16Array(320);
   for (let i = 0; i < 320; i++) {

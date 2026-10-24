@@ -5,8 +5,8 @@ import type { ExecuteCommandPayload } from "@vanessa/shared";
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
 
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319";
-const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4139";
+const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4139/events";
 
 let wsClient: WebSocket | null = null;
 

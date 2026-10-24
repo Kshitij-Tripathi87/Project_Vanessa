@@ -1,10 +1,19 @@
-import "./config/env.js";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
+import dotenv from "dotenv";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
 import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
-import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
+
+// Load .env from project root. Prefer cwd (Launch-Vanessa.bat sets it to repo root),
+// fall back to resolving relative to this file's location.
+const cwdEnv = path.join(process.cwd(), ".env");
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const envPath = fs.existsSync(cwdEnv) ? cwdEnv : path.join(projectRoot, ".env");
+dotenv.config({ path: envPath });
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -141,9 +150,19 @@ export async function createVoiceAgentServer() {
     };
   });
 
+  // Liveness probe - process is alive
+  fastify.get("/live", async () => {
+    return { status: "alive", timestamp: Date.now() };
+  });
+
+  // Readiness probe - service can handle requests
   fastify.get("/ready", async (_request, reply) => {
     const readiness = getProviderReadiness();
-    if (!readiness.ready) reply.status(503);
+    // Also check if Fish ASR WebSocket is actually connected when required
+    if (!readiness.ready) {
+      reply.status(503);
+      return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
+    }
     return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
   });
 
@@ -157,30 +176,25 @@ export async function createVoiceAgentServer() {
     const session = new VanessaVoiceSession({
       handlers: {
         onStateChange: (state) => {
-          console.log(`[Voice] state=${state}`);
           sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
         },
         onPartialTranscript: (text) => {
-          sendJson(socket, { type: "transcript_partial", text });
+          sendJson(socket, { type: "transcript_partial", text, timestamp: Date.now() });
         },
         onFinalTranscript: (text, requestId) => {
-          console.log(`[Voice] transcript committed request=${requestId} characters=${text.length}`);
-          sendJson(socket, { type: "transcript_final", text, requestId });
+          sendJson(socket, { type: "transcript_final", text, requestId, timestamp: Date.now() });
         },
         onAudioChunkOut: (chunk) => {
-          sendJson(socket, { type: "tts_chunk", ...chunk });
+          sendJson(socket, { type: "tts_chunk", ...chunk, timestamp: Date.now() });
         },
         onTtsUnavailable: (detail) => {
-          sendJson(socket, { type: "tts_unavailable", detail });
+          sendJson(socket, { type: "tts_unavailable", detail, timestamp: Date.now() });
         },
         onHudUpdate: (hud) => {
-          sendJson(socket, { type: "hud_update", ...hud });
+          sendJson(socket, { type: "hud_update", ...hud, timestamp: Date.now() });
         },
         onProviderStatus: (providers) => {
-          for (const [kind, provider] of Object.entries(providers)) {
-            console.log(`[Voice Provider] ${kind} state=${provider.state} active=${provider.active} detail=${safeProviderDetail(provider.detail || "none")}`);
-          }
-          sendJson(socket, { type: "provider_status", providers });
+          sendJson(socket, { type: "provider_status", providers, timestamp: Date.now() });
         },
       },
     });
@@ -208,8 +222,7 @@ export async function createVoiceAgentServer() {
 
     socket.on("message", async (data: any, isBinary: boolean) => {
       try {
-        // ws also delivers text frames as Buffers; use the protocol flag.
-        if (isBinary) {
+        if (isBinary || Buffer.isBuffer(data)) {
           // Slice incoming buffer into exact 20ms chunks without dropping unaligned bytes
           const chunks = accumulator.feed(Buffer.from(data));
           for (const chunk of chunks) {
@@ -217,7 +230,6 @@ export async function createVoiceAgentServer() {
           }
         } else {
           const json = JSON.parse(data.toString());
-          console.log(`[Voice] control=${String(json.type).replace(/[^a-z_]/gi, "").slice(0, 40)}`);
           if (json.type === "activate" || json.type === "reset") {
             accumulator.reset();
             try {
@@ -227,7 +239,7 @@ export async function createVoiceAgentServer() {
               console.warn("[VoiceAgentServer] ASR activation failed:", err.message);
               sendJson(socket, {
                 type: "voice_error",
-                message: `Speech recognition could not start: ${safeProviderDetail(err.message)}`,
+                message: "Speech recognition could not start. Check the configured ASR provider and try again.",
               });
             }
           } else if (json.type === "finalize") {

@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist/main/index.js",
+  "description": "Vanessa - Voice-native AI control layer",
+  "author": "Vanessa Labs",
   "scripts": {
     "start": "electron .",
     "dev": "vite",
     "dev:electron": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build": "tsc && tsc -p tsconfig.node.json && vite build",
+    "build:installer": "electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +23,7 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "electron-builder": "^24.13.3",
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
@@ -30,5 +34,29 @@
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
     "wait-on": "^8.0.2"
+  },
+  "build": {
+    "productName": "Vanessa",
+    "appId": "com.vanessa.app",
+    "directories": {
+      "output": "dist/installers",
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ],
+      "sign": false,
+      "verifyUpdateCodeSignature": false,
+      "forceCodeSigning": false
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ]
   }
 }
