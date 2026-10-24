@@ -2,9 +2,10 @@ import { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { BargeInDetector } from "./bargeIn.js";
-import { WakeWordDetector, WakeWordResult } from "./wakeWord.js";
+import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
+import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
 import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
@@ -42,8 +43,6 @@ export class VanessaVoiceSession {
   private vad = new SileroVadDetector();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
-  private porcupineWakeWord: { processChunk(pcm: Int16Array): boolean; release(): void } | null = null;
-  private porcupineWakeWordType: "porcupine" | "transcript" = "transcript";
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
 
@@ -58,17 +57,18 @@ export class VanessaVoiceSession {
   private conversationContext: ConversationTurn[] = [];
   private processedTurnIds = new Set<string>();
   private queuedUtterances: Array<{ text: string; language: string }> = [];
-  private porcupineBuffer: Int16Array | null = null;
 
   constructor(options?: {
-    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
+    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     ttsProvider?: "elevenlabs" | "fish";
     handlers?: VoiceSessionHandlers;
   }) {
     this.handlers = options?.handlers || {};
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
-    if (asrType === "fish") {
+    if (asrType === "sarvam") {
+      this.asr = new SarvamAsrAdapter();
+    } else if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
       this.asr = new ElevenLabsAsrAdapter();
@@ -88,28 +88,6 @@ export class VanessaVoiceSession {
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
     this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
-
-    // Initialize optional audio-level wake word (Porcupine)
-    this.initPorcupineWakeWord().catch((err) => {
-      console.warn("[VanessaVoiceSession] Optional Porcupine wake word init failed:", err.message);
-    });
-  }
-
-  private async initPorcupineWakeWord(): Promise<void> {
-    const provider = process.env.VOICE_WAKE_PROVIDER?.toLowerCase();
-    if (provider !== "porcupine") return;
-
-    try {
-      const { createWakeWordDetector } = await import("./porcupineWakeWord.js");
-      const detector = await createWakeWordDetector();
-      if (detector) {
-        this.porcupineWakeWord = detector.detector;
-        this.porcupineWakeWordType = detector.type;
-        console.log("[VanessaVoiceSession] Audio-level wake word enabled:", detector.type);
-      }
-    } catch (err: any) {
-      console.warn("[VanessaVoiceSession] Porcupine wake word unavailable, using transcript-based:", err.message);
-    }
   }
 
   setHandlers(handlers: VoiceSessionHandlers): void {
@@ -186,33 +164,18 @@ export class VanessaVoiceSession {
     // 1. VAD speech detection
     const vadRes = this.vad.processChunk(chunk.pcm);
 
-    // 2. Optional: Audio-level wake word detection (Porcupine)
-    // Porcupine expects 512 samples @ 16kHz; we accumulate two 320-sample frames
-    if (this.porcupineWakeWord && !this.wakeWord.isSessionActive()) {
-      this.porcupineBuffer = this.porcupineBuffer ? new Int16Array([...this.porcupineBuffer, ...chunk.pcm]) : chunk.pcm;
-      if (this.porcupineBuffer.length >= 512) {
-        const porcupineFrame = this.porcupineBuffer.slice(0, 512);
-        this.porcupineBuffer = this.porcupineBuffer.slice(512);
-        if (this.porcupineWakeWord.processChunk(porcupineFrame)) {
-          console.log("[VanessaVoiceSession] Audio-level wake word detected!");
-          this.wakeWord.touchActiveSession(25000);
-          // Process the remaining audio in this chunk for ASR
-        }
-      }
-    }
-
-    // 3. Hardware Barge-In check: interrupt Vanessa if user starts speaking
+    // 2. Hardware Barge-In check: interrupt Vanessa if user starts speaking
     if (this.bargeIn.shouldInterrupt(vadRes.isSpeech, this.isSpeaking)) {
       this.interrupt();
       return;
     }
 
-    // 4. Stream audio chunk to ASR
+    // 3. Stream audio chunk to ASR
     if (this.wakeWord.isSessionActive()) {
       this.asr.sendAudioChunk(chunk.pcm);
     }
 
-    // 5. Turn detection: silence threshold + transcript completion
+    // 4. Turn detection: silence threshold + transcript completion
     const turnState = this.turnDetector.process({
       isSpeech: vadRes.isSpeech,
       partialTranscript: this.partialTranscript,
@@ -254,7 +217,7 @@ export class VanessaVoiceSession {
     }
     const generation = this.sessionGeneration;
     this.isFinalizingTurn = false;
-    console.log(`[VanessaVoiceSession] Processing utterance: "${rawText}"`);
+    console.log(`[VanessaVoiceSession] Processing utterance characters=${rawText.length}`);
     this.isProcessing = true;
 
     // Filter wake word prefix
@@ -307,6 +270,8 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
+        const submitStarted = Date.now();
+        console.log(`[Voice] submitting request=${requestId} historyTurns=${this.conversationContext.length}`);
         const execution = await orchestratorClient.executeCommand({
           command,
           requestId,
@@ -316,6 +281,7 @@ export class VanessaVoiceSession {
           conversationContext: this.conversationContext,
         });
 
+        console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
         this.handlers.onHudUpdate?.({
           state: "responding",
@@ -337,7 +303,9 @@ export class VanessaVoiceSession {
           this.asr.setConversationContext?.(this.conversationContext);
         }
         try {
+          console.log(`[Voice] TTS start request=${requestId} characters=${responseText.length}`);
           await this.speak(responseText);
+          console.log(`[Voice] TTS complete request=${requestId}`);
         } catch (err: any) {
           console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
         this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");
