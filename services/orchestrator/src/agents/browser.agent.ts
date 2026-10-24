@@ -39,7 +39,16 @@ export async function openDefaultBrowser(url: string): Promise<void> {
   throw new Error("Opening the default browser is not supported on " + process.platform + ".");
 }
 
-export interface BrowserAgentOptions {\n  openExternalBrowser?: (url: string) => Promise<void>;\n}\n\nexport class BrowserAgent implements SpecialistAgent {\n  private readonly openExternalBrowser: (url: string) => Promise<void>;\n\n  constructor(options: BrowserAgentOptions = {}) {\n    this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;\n  }
+export interface BrowserAgentOptions {
+  openExternalBrowser?: (url: string) => Promise<void>;
+}
+
+export class BrowserAgent implements SpecialistAgent {
+  private readonly openExternalBrowser: (url: string) => Promise<void>;
+
+  constructor(options: BrowserAgentOptions = {}) {
+    this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;
+  }
   id = "browser";
   capabilities = ["browser_navigation", "web_search", "page_inspection", "local_html_preview", "playwright_automation"];
   allowedTools = ["browser_navigate", "browser_extract", "browser_click", "browser_open_file"];
