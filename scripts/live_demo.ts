@@ -1,4 +1,4 @@
-const BASE_URL = "http://127.0.0.1:4319";
+const BASE_URL = "http://127.0.0.1:4139";
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,7 +13,7 @@ async function runDemo() {
   console.log("⚡ [1/5] Checking Vanessa Orchestrator Status...");
   const statusRes = await fetch(`${BASE_URL}/api/status`);
   const status: any = await statusRes.json();
-  console.log("  • Status: ONLINE (Port 4319)");
+  console.log("  • Status: ONLINE (Port 4139)");
   console.log(`  • Platform: ${status.platform}`);
   console.log(`  • Active Voice Provider: ${status.activeVoiceProvider}\n`);
 

@@ -9,6 +9,9 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "test": "tsx src/tests/voiceAgent.test.ts",
+    "test:sarvam": "tsx --test src/tests/sarvamAdapter.test.ts",
+    "test:contract": "tsx --test src/tests/commandContract.test.ts",
+    "test:diagnostics": "tsx --test src/tests/providerDiagnostics.test.ts",
     "test:behavior": "tsx src/tests/voiceBehavior.test.ts",
     "test:fish:acceptance": "tsx ../../scripts/test_fish_acceptance.ts"
   },

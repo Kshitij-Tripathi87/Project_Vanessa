@@ -20,7 +20,7 @@ test("voice and desktop text use the same envelope keys, expiry, defaults, and f
   }) as typeof fetch;
   try {
     const voice = await new OrchestratorClient("http://orchestrator.test").executeCommand({
-      command: "Inspect code", requestId: "voice-turn", conversationContext: [{ role: "user", content: "Current project is Vanessa" }],
+      command: "Inspect code", source: "voice", requestId: "voice-turn", conversationContext: [{ role: "user", content: "Current project is Vanessa" }],
     });
     // This is the shared function used by both desktop IPC and browser preview.
     const text = await submitCommandRequest("http://orchestrator.test", {
@@ -63,3 +63,49 @@ test("voice and text surface HTTP failures through the same client contract", as
     await assert.rejects(submitCommandRequest("http://orchestrator.test", { command: "Inspect", source: "desktop" }), /HTTP 503/);
   } finally { globalThis.fetch = fetchBefore; }
 });
+
+test("voice agent default execution formats request to /api/execute on port 4139 matching required contract", async () => {
+  const fetchBefore = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedBody: any = null;
+  globalThis.fetch = (async (url: any, options: any) => {
+    capturedUrl = String(url);
+    capturedBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ status: "success", spokenSummary: "Folder created." }), { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const client = new OrchestratorClient(); // defaults to http://127.0.0.1:4139
+    await client.executeCommand({
+      command: "Combine all PDF files from Downloads into a separate folder.",
+      requestId: "req-123",
+      idempotencyKey: "desktop:req-123",
+      conversationContext: [],
+    });
+
+    assert.equal(capturedUrl, "http://127.0.0.1:4139/api/execute");
+    assert.deepEqual(capturedBody, {
+      command: "Combine all PDF files from Downloads into a separate folder.",
+      source: "desktop",
+      language: "en",
+      conversationContext: [],
+      requestId: "req-123",
+      idempotencyKey: "desktop:req-123",
+      sentiment: null,
+      envelope: {
+        requestId: "req-123",
+        idempotencyKey: "desktop:req-123",
+        originDeviceId: "desktop-local",
+        command: "Combine all PDF files from Downloads into a separate folder.",
+        createdAt: capturedBody.envelope.createdAt,
+        expiresAt: capturedBody.envelope.createdAt + 300000,
+        schemaVersion: "1.0",
+        source: "desktop",
+        language: "en",
+      },
+    });
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+});
+

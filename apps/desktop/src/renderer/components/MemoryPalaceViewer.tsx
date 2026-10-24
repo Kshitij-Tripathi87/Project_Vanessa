@@ -20,7 +20,7 @@ export const MemoryPalaceViewer: React.FC = () => {
   const fetchMemories = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:4319/api/memory");
+      const res = await fetch("http://127.0.0.1:4139/api/memory");
       if (res.ok) {
         const data = await res.json();
         setMemories(data);

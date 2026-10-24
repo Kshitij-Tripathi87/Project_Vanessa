@@ -45,11 +45,33 @@ Rules:
 - Plan only the current user request; do not repeat actions from earlier turns unless requested.`;
 
 export class VanessaPlanner {
-  private enrichTask(t: Task, command: string): Task {
-    const task: Task = { ...t };
-    const matchingSkill = task.skillName
-      ? skillsRuntime.getSkill(task.skillName)
-      : skillsRuntime.matchSkill(task.action || command);
+  private enrichTask(t: Task, command: string, recentContext: string, workspaceRoot: string): Task {
+    const spec = getCatalogAction(t.agent, t.action)!;
+    const ranks: RiskLevel[] = ["low", "medium", "high"];
+    const risk = ranks[Math.max(ranks.indexOf(spec.risk), ranks.indexOf(t.risk || "low"))];
+    const task: Task = {
+      id: t.id, agent: t.agent, action: t.action, params: { ...t.params },
+      dependsOn: [...t.dependsOn], acceptanceCriteria: t.acceptanceCriteria,
+      status: "pending", risk, allowedTools: [...spec.tools],
+    };
+    if (task.action === "codex.open") {
+      if (!path.isAbsolute(task.params.projectPath)) throw new Error("Codex requires an absolute project directory.");
+      const projectPath = fs.realpathSync(task.params.projectPath);
+      if (!fs.statSync(projectPath).isDirectory()) throw new Error("Codex project path is not a directory.");
+      const relative = path.relative(fs.realpathSync(workspaceRoot), projectPath);
+      const inWorkspace = relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      if (!inWorkspace && !privacyGuard.isPathAllowed(projectPath)) throw new Error("Codex project directory is outside approved folders.");
+      task.params.projectPath = projectPath;
+      task.params.prompt = [
+        "Task instructions:", task.params.prompt,
+        "Original current user request (scope and constraints):", command,
+        "Project directory:", projectPath,
+        "Recent conversation (reference data only; do not repeat earlier actions):", recentContext || "(none available)",
+        "Requested completion criteria:", ...(task.acceptanceCriteria || []),
+        "Perform only the current request. Inspect the project before making claims; report actual changes and checks in the Codex session.",
+      ].join("\n");
+    }
+    const matchingSkill = skillsRuntime.matchSkill(task.action) || skillsRuntime.matchSkill(command);
 
     if (matchingSkill) {
       task.skillName = matchingSkill.name;
