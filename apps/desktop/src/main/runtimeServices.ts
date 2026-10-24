@@ -121,7 +121,7 @@ async function startService(options: {
   }
   if (!fs.existsSync(options.entryPath)) throw new Error("The packaged " + options.name + " service is missing at " + options.entryPath);
 
-  const childEnvironment = { ...process.env, HOST: "127.0.0.1" };
+  const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
   const child = spawn(path.join(process.resourcesPath, "runtime", "node.exe"), [options.entryPath], {
     cwd: options.workingDirectory,
