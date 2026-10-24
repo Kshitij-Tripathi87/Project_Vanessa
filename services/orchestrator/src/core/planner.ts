@@ -8,7 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { inferResourceWorkflow, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
+import { inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -145,6 +145,44 @@ export class VanessaPlanner {
     };
   }
 
+  private createBrowserActionPlan(
+    command: string,
+    action: "browser.open_url" | "browser.search",
+    params: Record<string, string>,
+    planId: string,
+    recentContext: string,
+    workspaceRoot: string,
+  ): Plan {
+    const spec = getCatalogAction("browser", action);
+    if (!spec) throw new Error("The requested Browser Agent action is not in the reviewed catalog.");
+    const isOpen = action === "browser.open_url";
+    const task = this.enrichTask({
+      id: planId + (isOpen ? "_browser_open" : "_browser_search"),
+      agent: "browser",
+      action,
+      params,
+      dependsOn: [],
+      acceptanceCriteria: [isOpen
+        ? "Send the exact validated destination to the system default browser and report launch acceptance without claiming page-load verification."
+        : "Send the encoded web-search query to the system default browser and report launch acceptance without claiming result extraction."],
+      status: "pending",
+      risk: spec.risk,
+      allowedTools: [...spec.tools],
+    }, command, recentContext, workspaceRoot);
+
+    if (!this.isValidModelTaskGraph([task])) {
+      throw new Error("The deterministic browser request did not satisfy the reviewed task graph contract.");
+    }
+    return {
+      id: planId,
+      command,
+      intent: "single_task",
+      risk: task.risk || spec.risk,
+      tasks: [task],
+      createdAt: Date.now(),
+    };
+  }
+
   private createYouTubeSearchPlan(command: string, query: string, planId: string, recentContext: string, workspaceRoot: string): Plan {
     const spec = getCatalogAction("browser", "youtube.search_and_play");
     if (!spec) throw new Error("YouTube search is not available in the reviewed Browser Agent catalog.");
@@ -200,6 +238,24 @@ export class VanessaPlanner {
     const youtubeSearch = inferYouTubeSearch(command);
     if (youtubeSearch) {
       const plan = this.createYouTubeSearchPlan(command, youtubeSearch.query, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
+
+    // Explicit general web searches are deterministic: do not make an LLM guess
+    // whether the user asked to browse or to answer from general knowledge.
+    const browserSearch = inferBrowserSearch(command);
+    if (browserSearch) {
+      const plan = this.createBrowserActionPlan(command, "browser.search", { query: browserSearch.query }, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
+
+    // A concrete URL/domain plus an explicit navigation verb must go to the
+    // Browser Agent as navigation, not be converted into a search query.
+    const browserNavigation = inferExplicitBrowserNavigation(command);
+    if (browserNavigation) {
+      const plan = this.createBrowserActionPlan(command, "browser.open_url", { url: browserNavigation.url }, planId, recentContext, workspaceRoot);
       eventBus.emitEvent("plan:created", plan);
       return plan;
     }
