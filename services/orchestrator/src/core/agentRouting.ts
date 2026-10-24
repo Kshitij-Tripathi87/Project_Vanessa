@@ -6,7 +6,6 @@ export interface ResourceWorkflowRequest {
 }
 
 const KNOWN_EXTENSION = /\.(?:py|ts|tsx|js|jsx|mjs|cjs|rs|go|java|cs|cpp|c|h|hpp|php|rb|swift|kt|scala|sql|sh|ps1|bat|cmd|html|htm|xhtml|css|scss|vue|svelte|json|md|txt|csv|log|pdf|xlsx|xls|docx|doc|pptx|ppt|yaml|yml|toml|xml|ini|cfg|env|png|jpe?g|webp|gif|bmp|svg)$/i;
-const CODE_EXTENSION = /\.(?:py|ts|tsx|js|jsx|mjs|cjs|rs|go|java|cs|cpp|c|h|hpp|php|rb|swift|kt|scala|sql|sh|ps1|bat|cmd|html|htm|xhtml|css|scss|vue|svelte)$/i;
 const HTML_EXTENSION = /\.(?:html?|xhtml)$/i;
 
 function cleanTarget(value: string): string {
@@ -53,8 +52,10 @@ export function inferResourceWorkflow(command: string): ResourceWorkflowRequest 
 
   const codeVerb = /\b(fix|debug|refactor|implement|patch|repair|modify|edit|change|update)\b/.test(lower);
   const codeIntent = /\b(code|coding|program|programming|bug|debug|refactor|implementation|feature)\b/.test(lower);
-  if ((codeVerb && CODE_EXTENSION.test(target)) ||
-      (codeIntent && /\b(?:project|code|program|bug|debug|refactor|implement|feature)\b/.test(lower))) {
+  // The requested operation takes precedence over the file extension. Editing a
+  // Markdown, JSON, CSV, or other non-source file is still coding work when the
+  // user explicitly asks to modify/debug it; passive analysis remains File Agent work.
+  if (codeVerb || (codeIntent && /\b(?:project|code|program|bug|debug|refactor|implement|feature)\b/.test(lower))) {
     return { target, intent: "code" };
   }
 

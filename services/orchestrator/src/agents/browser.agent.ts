@@ -14,7 +14,7 @@ export function buildYouTubeSearchUrl(query: string): string {
   return url.toString();
 }
 
-async function openDefaultBrowser(url: string): Promise<void> {
+export async function openDefaultBrowser(url: string): Promise<void> {
   if (process.platform === "win32") {
     // Keep user text out of a shell command; PowerShell receives the fully
     // constructed, fixed-origin URL through an environment variable.
@@ -39,7 +39,16 @@ async function openDefaultBrowser(url: string): Promise<void> {
   throw new Error("Opening the default browser is not supported on " + process.platform + ".");
 }
 
+export interface BrowserAgentOptions {
+  openExternalBrowser?: (url: string) => Promise<void>;
+}
+
 export class BrowserAgent implements SpecialistAgent {
+  private readonly openExternalBrowser: (url: string) => Promise<void>;
+
+  constructor(options: BrowserAgentOptions = {}) {
+    this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;
+  }
   id = "browser";
   capabilities = ["browser_navigation", "web_search", "page_inspection", "local_html_preview", "playwright_automation"];
   allowedTools = ["browser_navigate", "browser_extract", "browser_click", "browser_open_file"];
@@ -89,7 +98,7 @@ export class BrowserAgent implements SpecialistAgent {
         const query = String(params.query || "").trim();
         const url = buildYouTubeSearchUrl(query);
         try {
-          await openDefaultBrowser(url);
+          await this.openExternalBrowser(url);
           return this.result(
             true,
             "Opened YouTube search results for " + query + " in the default browser.",

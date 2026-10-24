@@ -60,3 +60,24 @@ test("extracts explicit YouTube search queries from natural voice commands", () 
   assert.equal(inferYouTubeSearch("Search Google for rainforest sounds"), null);
 });
 
+
+test("routes explicit edits of non-source files to Coding Agent", () => {
+  assert.deepEqual(inferResourceWorkflow("Edit README.md to add setup instructions"), {
+    target: "README.md", intent: "code",
+  });
+  assert.deepEqual(inferResourceWorkflow("Fix config.json because the parser is broken"), {
+    target: "config.json", intent: "code",
+  });
+  assert.deepEqual(inferResourceWorkflow("Modify reports/monthly.csv to correct the transformation"), {
+    target: "reports/monthly.csv", intent: "code",
+  });
+});
+
+test("keeps passive inspection of source and data files with File Agent", () => {
+  assert.deepEqual(inferResourceWorkflow("Explain README.md"), {
+    target: "README.md", intent: "analysis",
+  });
+  assert.deepEqual(inferResourceWorkflow("Summarize config.json"), {
+    target: "config.json", intent: "analysis",
+  });
+});
