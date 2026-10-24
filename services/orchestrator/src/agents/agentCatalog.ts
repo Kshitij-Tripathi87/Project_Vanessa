@@ -59,8 +59,8 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "windows",
-    purpose: "Perform bounded Windows settings, application, and screenshot actions through PowerShell.",
-    limitations: "Windows only. Wi-Fi and Bluetooth radio actions depend on Windows hardware/API support and permissions. Brightness control uses WMI and may be unsupported on external displays. Volume uses the Windows Core Audio endpoint API and verifies the returned level. Arbitrary desktop clicking is not implemented.",
+    purpose: "Perform bounded Windows settings, application, screenshot, and accessibility-based foreground-window interactions.",
+    limitations: "Windows only. Wi-Fi/Bluetooth depend on hardware and permissions; WMI brightness may be unsupported on external displays. UI Automation is limited to a bounded foreground-window accessibility tree; it never reads field values or uses coordinate clicks. UI clicks require high-risk approval and exact window identity plus a unique, enabled, onscreen control.",
     actions: [
       action("wifi.restart_adapter", "Restart the detected Wi-Fi adapter; temporarily interrupts connectivity.", {}, "AgentResult succeeds only when the adapter is found and its observed post-restart state is Up; internet reachability is not independently verified.", "high", true, ["net_adapter_control"]),
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
@@ -72,6 +72,15 @@ export const AGENT_CATALOG: CatalogAgent[] = [
       action("app.open", "Launch a supported Windows application or utility; use browser actions for website URLs.", { name: p("string", "Application alias such as File Explorer, Chrome, Edge, Calculator, Notepad, Windows Terminal, Task Manager, Settings, or VS Code.", true) }, "AgentResult records whether Windows accepted the launch request; it does not prove the window is visible or focused.", "low", true, ["windows_app_launch"]),
       action("app.close", "Stop an application process and check that it no longer exists.", { name: p("string", "Process name to close.", true) }, "AgentResult succeeds when the process is absent after the stop request; invalid names and OS failures are returned as failures.", "high", true, ["process_control"]),
       action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),
+      action("ui.inspect", "Inspect the bounded UI Automation Control View tree of the current foreground window. Do not read input-field values.", {}, "Returns data.windowTitle, data.windowHandle, data.processId, up to 120 control descriptors, truncation status, and valuesRead=false. The window identity can be used by a dependent ui.click task.", "low", true, ["windows_ui_automation"]),
+      action("ui.click", "Invoke exactly one enabled, onscreen UI Automation control in a previously inspected window. Must depend on ui.inspect and use its exact window identity.", {
+        windowHandle: p("string", "Reference to the prior ui.inspect result windowHandle.", true),
+        expectedWindowTitle: p("string", "Reference to the prior ui.inspect result windowTitle.", true),
+        expectedProcessId: p("number", "Reference to the prior ui.inspect result processId.", true),
+        automationId: p("string", "Optional exact AutomationId selector. If omitted, exact name and ControlType are required."),
+        name: p("string", "Exact case-sensitive control name selector."),
+        controlType: p("string", "Exact UI Automation type such as ControlType.Button, ControlType.Link, or ControlType.TabItem."),
+      }, "High-risk and requires user approval. Returns success only if window handle/title/process still match, exactly one enabled onscreen control matches, and InvokePattern.Invoke returns. This does not prove that the app visual state changed.", "high", true, ["windows_ui_automation"]),
     ],
   },
   {
@@ -232,8 +241,18 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
   if (name === "brightness.set" && typeof params.level === "number" &&
       (!Number.isInteger(params.level) || params.level < 0 || params.level > 100)) return false;
-  if (name === "brightness.adjust" && typeof params.delta === "number" &&
-      (!Number.isInteger(params.delta) || params.delta === 0 || params.delta < -100 || params.delta > 100)) return false;
+  if (name === "ui.click") {
+    const isRef = (value: unknown, field: string) =>
+      typeof value === "string" && value.startsWith("$") && value.endsWith(".result." + field) &&
+      /^\$[a-zA-Z0-9_]+\.result\.[a-zA-Z0-9_.]+$/.test(value);
+    if (!isRef(params.windowHandle, "windowHandle") ||
+        !isRef(params.expectedWindowTitle, "windowTitle") ||
+        !isRef(params.expectedProcessId, "processId")) return false;
+    const hasId = typeof params.automationId === "string" && params.automationId.trim().length > 0;
+    const hasNameAndType = typeof params.name === "string" && params.name.trim().length > 0 &&
+      typeof params.controlType === "string" && /^ControlType\.[A-Za-z0-9]+$/.test(params.controlType);
+    if (!hasId && !hasNameAndType) return false;
+  }
   if (["browser.open_url", "browser.search", "youtube.search_and_play"].includes(name) &&
       params.browser !== undefined && params.browser !== "chrome" && params.browser !== "edge") return false;
   if (params.autoDeploy === true) return false;
