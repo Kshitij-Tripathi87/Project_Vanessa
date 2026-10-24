@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractResourceTarget, inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferYouTubeSearch } from "../core/agentRouting.js";
+import { extractResourceTarget, inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch } from "../core/agentRouting.js";
 
 test("routes code changes to the coding workflow", () => {
   assert.deepEqual(inferResourceWorkflow('Fix the bug in "src/example.ts" and add a regression test.'), {
@@ -87,4 +87,42 @@ test("routes explicit Google/web searches to the browser agent and preserves the
   });
   assert.equal(inferBrowserSearch("What is Bluetooth?"), null);
   assert.equal(inferBrowserSearch("Open https://example.com"), null);
+});
+
+test("routes single-intent Windows controls deterministically", () => {
+  assert.deepEqual(inferWindowsControl("Open File Explorer"), {
+    action: "app.open", params: { name: "explorer" },
+  });
+  assert.deepEqual(inferWindowsControl("Open Chrome"), {
+    action: "app.open", params: { name: "chrome" },
+  });
+  assert.deepEqual(inferWindowsControl("Turn off Bluetooth"), {
+    action: "bluetooth.disable", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("Enable Bluetooth"), {
+    action: "bluetooth.enable", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("Check my Wi-Fi adapter status"), {
+    action: "wifi.status", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("Set system volume to 35 percent"), {
+    action: "volume.set", params: { level: 35 },
+  });
+  assert.deepEqual(inferWindowsControl("Set brightness to 60 percent"), {
+    action: "brightness.set", params: { level: 60 },
+  });
+  assert.deepEqual(inferWindowsControl("Increase brightness"), {
+    action: "brightness.adjust", params: { delta: 10 },
+  });
+  assert.deepEqual(inferWindowsControl("Decrease brightness"), {
+    action: "brightness.adjust", params: { delta: -10 },
+  });
+  assert.deepEqual(inferWindowsControl("Capture a screenshot of my desktop"), {
+    action: "screenshot.capture", params: {},
+  });
+});
+
+test("does not collapse multi-action requests into a single Windows action", () => {
+  assert.equal(inferWindowsControl("Turn off Bluetooth and increase brightness"), null);
+  assert.equal(inferWindowsControl("Open Chrome and search for TypeScript tutorials"), null);
 });
