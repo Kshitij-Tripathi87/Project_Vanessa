@@ -95,25 +95,66 @@ jobs:
 
           $installDir = Join-Path $env:RUNNER_TEMP "VanessaSmokeInstall"
           if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
-          # Wait for the setup process itself, not its process tree: runAfterFinish may launch Vanessa.
           $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -PassThru
-          if (!$install.WaitForExit(90000)) {
-            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-            throw "NSIS installer did not exit within 90 seconds."
-          }
-          if ($install.ExitCode -ne 0) { throw "NSIS installer exited with code $($install.ExitCode)." }
 
           $appPath = Join-Path $installDir "Vanessa.exe"
-          if (!(Test-Path $appPath)) {
-            Get-ChildItem $installDir -Recurse -Force | Format-Table FullName
-            throw "Vanessa.exe was not found in the installed application directory."
+          $requiredFiles = @(
+            $appPath,
+            (Join-Path $installDir "resources\app.asar"),
+            (Join-Path $installDir "resources\runtime\node.exe"),
+            (Join-Path $installDir "resources\runtime\orchestrator\dist\server.js"),
+            (Join-Path $installDir "resources\runtime\voice-agent\dist\server.js")
+          )
+          $installDeadline = [DateTime]::UtcNow.AddSeconds(90)
+          while ([DateTime]::UtcNow -lt $installDeadline) {
+            $missingFiles = @($requiredFiles | Where-Object { !(Test-Path $_) })
+            if ($missingFiles.Count -eq 0) { break }
+            $install.Refresh()
+            if ($install.HasExited -and $install.ExitCode -ne 0) {
+              throw "NSIS installer exited with code $($install.ExitCode) before placing all application files."
+            }
+            Start-Sleep -Seconds 1
           }
 
-          $app = $null
+          $missingFiles = @($requiredFiles | Where-Object { !(Test-Path $_) })
+          if ($missingFiles.Count -gt 0) {
+            Write-Host "Missing installed files:"
+            $missingFiles | ForEach-Object { Write-Host " - $_" }
+            Get-ChildItem $installDir -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 100 FullName | Format-Table
+            if (!$install.HasExited) { Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue }
+            throw "NSIS installer did not lay down the complete Vanessa application within 90 seconds."
+          }
+
+          $install.Refresh()
+          if ($install.HasExited -and $install.ExitCode -ne 0) {
+            throw "NSIS installer exited with code $($install.ExitCode)."
+          }
+
+          $existingAppProcess = Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -eq "Vanessa.exe" -and $_.ExecutablePath -eq $appPath
+          } | Select-Object -First 1
+          if (!$install.HasExited -and !$existingAppProcess) {
+            $launchDeadline = [DateTime]::UtcNow.AddSeconds(15)
+            while (!$existingAppProcess -and [DateTime]::UtcNow -lt $launchDeadline) {
+              Start-Sleep -Seconds 1
+              $existingAppProcess = Get-CimInstance Win32_Process | Where-Object {
+                $_.Name -eq "Vanessa.exe" -and $_.ExecutablePath -eq $appPath
+              } | Select-Object -First 1
+            }
+          }
+          if (!$install.HasExited -and !$existingAppProcess) {
+            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+            throw "Installed files are present, but setup stayed active without launching Vanessa."
+          }
+
+          $app = if ($existingAppProcess) {
+            Get-Process -Id $existingAppProcess.ProcessId
+          } else {
+            Start-Process -FilePath $appPath -PassThru
+          }
           $orchestratorHealthy = $false
           $voiceHealthy = $false
           try {
-            $app = Start-Process -FilePath $appPath -PassThru
             $deadline = [DateTime]::UtcNow.AddSeconds(60)
             while ([DateTime]::UtcNow -lt $deadline) {
               if (!$orchestratorHealthy) {
@@ -135,10 +176,13 @@ jobs:
 
             if (!$orchestratorHealthy) { throw "Installed orchestrator did not become healthy on 127.0.0.1:4139." }
             if (!$voiceHealthy) { throw "Installed voice agent did not become healthy on 127.0.0.1:4500." }
-            Write-Host "NSIS install completed; installed Vanessa launched; orchestrator and voice-agent health checks passed."
+            Write-Host "NSIS installer placed the app/runtime files; installed Vanessa launched; orchestrator and voice-agent health checks passed."
           } finally {
             if ($app -and !$app.HasExited) {
               & taskkill.exe /F /T /PID $app.Id | Out-Null
+            }
+            if ($install -and !$install.HasExited) {
+              Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
             }
             $runtimeProcesses = Get-CimInstance Win32_Process | Where-Object {
               $_.Name -eq "node.exe" -and $_.CommandLine -match "[\\/]runtime[\\/](orchestrator|voice-agent)[\\/]"
