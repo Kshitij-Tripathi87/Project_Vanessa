@@ -49,5 +49,11 @@ test("validates action identity, required parameter types, unsupported placehold
   assert(!catalogAccepts("files", "drive.upload", { file: "report.pdf" }));
   assert(!catalogAccepts("testing", "testing.run_checks", { command: "test", autoDeploy: true }));
   assert(!catalogAccepts("windows", "volume.set", { level: 101 }));
+  assert(catalogAccepts("windows", "brightness.set", { level: 50 }));
+  assert(!catalogAccepts("windows", "brightness.set", { level: 101 }));
+  assert(!catalogAccepts("windows", "brightness.set", { level: 20.5 }));
+  assert(catalogAccepts("windows", "brightness.adjust", { delta: -10 }));
+  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 0 }));
+  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 150 }));
   assert(catalogAccepts("files", "file.search", { query: "report", path: "$folder.result.path" }));
 });
