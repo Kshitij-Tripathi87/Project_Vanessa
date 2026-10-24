@@ -83,6 +83,41 @@ export function App() {
   const [allowedFolders, setAllowedFolders] = useState<string[]>([]);
   const [newFolderInput, setNewFolderInput] = useState("");
 
+  const [controlStatus, setControlStatus] = useState<VanessaControlStatus | null>(null);
+  const [controlStatusLoading, setControlStatusLoading] = useState(false);
+  const [controlStatusError, setControlStatusError] = useState<string | null>(null);
+
+  const refreshControlStatus = useCallback(async () => {
+    setControlStatusLoading(true);
+    try {
+      const result = await window.vanessa.getControlStatus();
+      setControlStatus(result);
+      setAllowedFolders(result.allowedFolders || []);
+      setControlStatusError(result.errors?.length ? result.errors.join(" · ") : null);
+    } catch {
+      setControlStatusError("Could not read Vanessa local runtime status.");
+      setControlStatus({
+        success: false,
+        orchestratorOnline: false,
+        orchestratorPort: 4139,
+        activeTasksCount: 0,
+        platform: "unknown",
+        allowedFolders: [],
+        checkedAt: Date.now(),
+        errors: ["Desktop status IPC is unavailable."],
+      });
+    } finally {
+      setControlStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "dashboard") return;
+    void refreshControlStatus();
+    const refreshTimer = window.setInterval(() => { void refreshControlStatus(); }, 15000);
+    return () => window.clearInterval(refreshTimer);
+  }, [viewMode, refreshControlStatus]);
+
   // Speak aloud helper
   const speakText = (text: string) => {
     if ("speechSynthesis" in window) {
