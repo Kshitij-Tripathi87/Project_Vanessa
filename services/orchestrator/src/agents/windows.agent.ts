@@ -201,13 +201,13 @@ export class WindowsAgent implements SpecialistAgent {
           " in \"" + windowTitle + "\". The resulting screen state was not independently verified.";
         return {
           agentId: this.id,
-          status: "completed",
+          status: "partial",
           success: true,
           summary: output,
           spokenSummary: "I invoked the selected control in " + windowTitle + ". I have not independently verified what changed on screen.",
           evidence: [{ description: output, source: "Windows UI Automation InvokePattern", timestamp: startTime, confidence: 1, data: { controlType: control?.controlType, automationId: control?.automationId } }],
           artifacts: [],
-          verification: { passed: true, details: "Exactly one enabled, onscreen control matched the inspected window and selector; InvokePattern.Invoke returned without exception. The downstream screen effect was not independently verified." },
+          verification: { passed: false, details: "Exactly one enabled, onscreen control matched the inspected window and selector; InvokePattern.Invoke returned without exception. The downstream screen effect was not independently verified." },
           data: { output, windowTitle, processId: invoked.processId, control, invocationAccepted: true, postClickStateVerified: false, message: invoked.message },
         };
       }
