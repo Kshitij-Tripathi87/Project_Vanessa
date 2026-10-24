@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import type { DockPosition } from "@vanessa/shared";
 import { useVanessaStore } from "./stores/vanessaStore.js";
 import { useTaskStream } from "./hooks/useTaskStream.js";
 import { useElevenLabs } from "./hooks/useElevenLabs.js";
 import { useAudioCapture } from "./hooks/useAudioCapture.js";
 import { VoiceOrb } from "./components/VoiceOrb.js";
+import { ChatPanel } from "./components/ChatPanel.js";
 import { TaskPlan } from "./components/TaskPlan.js";
 import { AuditLog } from "./components/AuditLog.js";
 import { MemoryPalaceViewer } from "./components/MemoryPalaceViewer.js";
@@ -42,6 +44,14 @@ export function App() {
     setPendingApproval,
   } = useVanessaStore();
 
+  useEffect(() => {
+    let mounted = true;
+    void window.vanessa?.getDockPosition?.().then((result) => {
+      if (mounted && result?.success && result.dockPosition) setCurrentCorner(result.dockPosition);
+    }).catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
+
   useTaskStream();
   const { executeSpeechCommand } = useElevenLabs();
   const {
@@ -50,14 +60,21 @@ export function App() {
     liveSentiment,
     partialTranscript,
     providerStatus,
+    micError,
     toggleRecording,
     resumeAudio,
+    wakeWordStatus,
+    wakeWordActivationId,
+    lastFinalTranscript,
   } = useAudioCapture();
 
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [currentCorner, setCurrentCorner] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("bottom-right");
+  type ViewMode = "orb" | "chat" | "dashboard";
+  const [viewMode, setViewMode] = useState<ViewMode>("orb");
+  const [currentCorner, setCurrentCorner] = useState<DockPosition>("bottom-right");
   const [activeTab, setActiveTab] = useState<"memory" | "audit" | "plan" | "privacy" | "scenarios">("memory");
   const [typedCommand, setTypedCommand] = useState("");
+  const [lastCommand, setLastCommand] = useState("");
+  const lastSeenFinalTranscriptRef = useRef("");
   const [justActivated, setJustActivated] = useState(false);
   const [isPairingOpen, setIsPairingOpen] = useState(false);
   const [allowedFolders, setAllowedFolders] = useState<string[]>([
@@ -77,55 +94,67 @@ export function App() {
     }
   };
 
-  const handleDockCorner = useCallback((corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
-    setCurrentCorner(corner);
-    window.vanessa?.dockCorner?.(corner);
+  const handleDockCorner = useCallback((position: DockPosition) => {
+    setCurrentCorner(position);
+    void window.vanessa?.dockCorner?.(position);
   }, []);
 
-  // Resize window when toggling between Compact Orb and Expanded Drawer
-  const handleToggleExpand = useCallback(
-    (expand: boolean) => {
-      setIsExpanded(expand);
-      if (expand) {
-        window.vanessa?.resizeWindow?.({ width: 580, height: 680 });
-      } else {
-        window.vanessa?.resizeWindow?.({ width: 90, height: 90 });
-        window.vanessa?.dockCorner?.(currentCorner);
-      }
-    },
-    [currentCorner]
-  );
+  const handleToggleView = useCallback((view: ViewMode) => {
+    setViewMode(view);
+    if (view === "orb") {
+      void window.vanessa?.resizeWindow?.({ width: 90, height: 90 });
+    } else if (view === "chat") {
+      void window.vanessa?.resizeWindow?.({ width: 410, height: 540 });
+    } else {
+      void window.vanessa?.resizeWindow?.({ width: 580, height: 680 });
+    }
+    void window.vanessa?.dockCorner?.(currentCorner);
+  }, [currentCorner]);
 
-  // Orb click: Resumes AudioContext, sets visual active cue, and toggles listening/finalize
-  const handleOrbClick = async () => {
+  const handleOpenChat = useCallback(() => {
+    // Wake-word activation can arrive while the window is hidden in the tray.
+    void window.vanessa?.showWindow?.();
+    handleToggleView("chat");
+  }, [handleToggleView]);
+
+  // The main process owns global shortcuts so they also work while the orb is hidden.
+  const handleOrbClick = useCallback(async () => {
     if (resumeAudio) {
       await resumeAudio();
     }
     setJustActivated(true);
-    setTimeout(() => setJustActivated(false), 2000);
+    window.setTimeout(() => setJustActivated(false), 2000);
     toggleRecording();
-  };
+  }, [resumeAudio, toggleRecording]);
 
-  // Alt+Space keyboard shortcut for Push-to-Talk
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.code === "Space") {
-        e.preventDefault();
-        handleOrbClick();
-      }
-      if (e.code === "Escape") {
-        e.preventDefault();
-        handleKillSwitch();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleRecording]);
+    if (wakeWordActivationId > 0) {
+      handleOpenChat();
+      setJustActivated(true);
+      const activationTimer = window.setTimeout(() => setJustActivated(false), 1800);
+      return () => window.clearTimeout(activationTimer);
+    }
+  }, [wakeWordActivationId, handleOpenChat]);
+
+  useEffect(() => {
+    const transcript = lastFinalTranscript.trim();
+    if (transcript && transcript !== lastSeenFinalTranscriptRef.current) {
+      lastSeenFinalTranscriptRef.current = transcript;
+      setLastCommand(transcript);
+    }
+  }, [lastFinalTranscript]);
+
+  useEffect(() => {
+    const unsubscribe = window.vanessa?.onOpenChat?.(() => handleOpenChat());
+    return () => unsubscribe?.();
+  }, [handleOpenChat]);
 
   const handleExecute = async (cmdToRun?: string) => {
-    const cmd = cmdToRun || typedCommand;
-    if (!cmd.trim()) return;
+    const cmd = (cmdToRun ?? typedCommand).trim();
+    if (!cmd) return;
+    setLastCommand(cmd);
     setTypedCommand("");
+    setViewMode("chat");
     await executeSpeechCommand(cmd);
   };
 
@@ -147,7 +176,7 @@ export function App() {
     }
   }, [setPendingApproval, setLastResponse]);
 
-  const handleKillSwitch = async () => {
+  const handleKillSwitch = useCallback(async () => {
     if (window.vanessa?.cancelTask) {
       await window.vanessa.cancelTask();
     } else {
@@ -157,7 +186,20 @@ export function App() {
         console.error("Failed to trigger kill switch:", err);
       }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribePtt = window.vanessa?.onTriggerPTT?.(() => {
+      void handleOrbClick();
+    });
+    const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(() => {
+      void handleKillSwitch();
+    });
+    return () => {
+      unsubscribePtt?.();
+      unsubscribeCancel?.();
+    };
+  }, [handleOrbClick, handleKillSwitch]);
 
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
@@ -220,17 +262,21 @@ export function App() {
       e.preventDefault();
       e.stopPropagation();
     }
-    const corners: Array<"top-left" | "top-right" | "bottom-left" | "bottom-right"> = [
-      "bottom-right",
-      "bottom-left",
-      "top-left",
-      "top-right",
+    const positions: DockPosition[] = [
+      "bottom-right", "bottom-left", "top-left", "top-right",
+      "left", "right", "top", "bottom",
     ];
-    const nextCorner = corners[(corners.indexOf(currentCorner) + 1) % corners.length];
-    handleDockCorner(nextCorner);
+    const nextPosition = positions[(positions.indexOf(currentCorner) + 1) % positions.length];
+    handleDockCorner(nextPosition);
   };
 
-  if (!isExpanded) {
+  const cornerLabel: Record<DockPosition, string> = {
+    "bottom-right": "↘ BR", "bottom-left": "↙ BL",
+    "top-left": "↖ TL", "top-right": "↗ TR",
+    left: "← LEFT", right: "RIGHT →", top: "↑ TOP", bottom: "↓ BOTTOM",
+  };
+
+  if (viewMode === "orb") {
     return (
       <div
         className="drag-region"
@@ -248,10 +294,10 @@ export function App() {
       >
         {/* Floating Compact Orb (70px) */}
         <div
-          className="no-drag"
-          onClick={handleOrbClick}
+          className={`no-drag ${isMicActive ? "orb-listening" : voiceState === "thinking" || voiceState === "executing" ? "orb-thinking" : "orb-idle"}`}
+          onClick={handleOpenChat}
           onContextMenu={cycleCorner}
-          title={`Vanessa Voice Agent (${currentCorner.toUpperCase()})\nClick to Speak\nRight-click to Switch Corner (BR/BL/TL/TR)`}
+          title={`Vanessa (${currentCorner.toUpperCase()})\nClick to chat\nSay “Hey Vanessa” to activate\nRight-click to change dock position`}
           style={{
             width: "72px",
             height: "72px",
@@ -366,20 +412,14 @@ export function App() {
               pointerEvents: "none",
             }}
           >
-            {currentCorner === "bottom-right"
-              ? "↘ BR"
-              : currentCorner === "bottom-left"
-              ? "↙ BL"
-              : currentCorner === "top-left"
-              ? "↖ TL"
-              : "↗ TR"}
+            {cornerLabel[currentCorner]}
           </div>
         </div>
 
         {/* Mini Drawer Button (Gear) */}
         <button
           className="no-drag"
-          onClick={() => handleToggleExpand(true)}
+          onClick={() => handleToggleView("dashboard")}
           title="Open Vanessa Control Center & Memory Palace"
           style={{
             position: "absolute",
@@ -414,9 +454,29 @@ export function App() {
     );
   }
 
-  // -------------------------------------------------------------
-  // MODE 2: EXPANDED CONFIGURATION & INTELLIGENCE DRAWER (580x680)
-  // -------------------------------------------------------------
+  if (viewMode === "chat") {
+    return (
+      <ChatPanel
+        voiceState={voiceState}
+        isListening={isMicActive}
+        wakeWordStatus={wakeWordStatus}
+        micError={micError}
+        command={typedCommand}
+        setCommand={setTypedCommand}
+        lastCommand={lastCommand}
+        lastResponse={lastResponse}
+        partialTranscript={partialTranscript}
+        corner={currentCorner}
+        onSubmit={() => { void handleExecute(); }}
+        onToggleMic={() => { void handleOrbClick(); }}
+        onCollapse={() => handleToggleView("orb")}
+        onOpenDashboard={() => handleToggleView("dashboard")}
+      />
+    );
+  }
+
+  // The control center remains available from the small settings button.
+  // It is no longer the default interaction surface.
   return (
     <div
       style={{
@@ -486,7 +546,7 @@ export function App() {
         {/* Window controls (Collapse to orb, Minimize, Close) */}
         <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <button
-            onClick={() => handleToggleExpand(false)}
+            onClick={() => handleToggleView("orb")}
             title="Collapse to Floating Orb Widget"
             style={{
               background: "rgba(255, 255, 255, 0.06)",

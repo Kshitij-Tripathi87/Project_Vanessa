@@ -1,5 +1,43 @@
 import { playwrightBrowserAgent } from "./browser-playwright.agent.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { AgentEvidence, AgentResult, AgentRunContext, AgentTask, SpecialistAgent } from "@vanessa/shared";
+
+const execFileAsync = promisify(execFile);
+
+export function buildYouTubeSearchUrl(query: string): string {
+  const normalized = query.trim();
+  if (!normalized) throw new Error("A non-empty YouTube search query is required.");
+  if (normalized.length > 500) throw new Error("YouTube search queries must be 500 characters or shorter.");
+  const url = new URL("https://www.youtube.com/results");
+  url.searchParams.set("search_query", normalized);
+  return url.toString();
+}
+
+async function openDefaultBrowser(url: string): Promise<void> {
+  if (process.platform === "win32") {
+    // Keep user text out of a shell command; PowerShell receives the fully
+    // constructed, fixed-origin URL through an environment variable.
+    await execFileAsync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-Command",
+      "Start-Process -FilePath $env:VANESSA_TARGET_URL",
+    ], {
+      windowsHide: true,
+      timeout: 5000,
+      env: { ...process.env, VANESSA_TARGET_URL: url },
+    });
+    return;
+  }
+  if (process.platform === "darwin") {
+    await execFileAsync("open", [url], { timeout: 5000 });
+    return;
+  }
+  if (process.platform === "linux") {
+    await execFileAsync("xdg-open", [url], { timeout: 5000 });
+    return;
+  }
+  throw new Error("Opening the default browser is not supported on " + process.platform + ".");
+}
 
 export class BrowserAgent implements SpecialistAgent {
   id = "browser";
@@ -48,14 +86,29 @@ export class BrowserAgent implements SpecialistAgent {
       }
 
       case "youtube.search_and_play": {
-        const query = String(params.query || "");
-        const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query);
-        const result = await playwrightBrowserAgent.navigate(url);
-        return this.result(result.success,
-          result.success ? "Opened YouTube search results for " + query : "Could not open YouTube search results for " + query,
-          result.success ? "YouTube search results are open; playback has not been verified." : "I could not open YouTube search results.",
-          result.success ? [{ description: "YouTube search page loaded for " + query, source: "YouTube via Playwright", timestamp, confidence: 0.9 }] : [],
-          result.success ? [result.url] : [], { query, url: result.url, title: result.title, error: result.error });
+        const query = String(params.query || "").trim();
+        const url = buildYouTubeSearchUrl(query);
+        try {
+          await openDefaultBrowser(url);
+          return this.result(
+            true,
+            "Opened YouTube search results for " + query + " in the default browser.",
+            "YouTube search results are open. Video playback has not been verified.",
+            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url } }],
+            [url],
+            { query, url, externalBrowser: true, playbackVerified: false },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(
+            false,
+            "Could not open YouTube search results in the default browser.",
+            "I could not open YouTube in your browser.",
+            [],
+            [],
+            { query, url, externalBrowser: false, error: detail },
+          );
+        }
       }
 
       case "browser.verify_page_state": {

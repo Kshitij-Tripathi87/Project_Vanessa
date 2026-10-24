@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -41,11 +41,27 @@ jobs:
       - name: Build orchestrator
         run: pnpm --filter @vanessa/orchestrator build
 
+      - name: Build voice agent
+        run: pnpm --filter @vanessa/voice-agent build
+
+      - name: Build desktop renderer and Electron main process
+        run: pnpm --filter @vanessa/desktop build
+
+      - name: Test desktop docking and preference persistence
+        run: pnpm --filter @vanessa/desktop test:docking
+
+      - name: Test local wake-word routing and PCM framing
+        run: pnpm --filter @vanessa/voice-agent test:wake-word
+
       - name: Test deterministic agent workflows
         run: pnpm --filter @vanessa/orchestrator test:agent-routing
 
       - name: Test reviewed agent catalog
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
 
+      - name: Test shared voice/text command contract
+        run: pnpm --filter @vanessa/voice-agent test:contract
+
       - name: Regression-test existing coding handoff
         run: pnpm --filter @vanessa/orchestrator test:codex
+

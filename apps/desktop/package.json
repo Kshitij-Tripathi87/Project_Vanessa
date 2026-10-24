@@ -10,8 +10,9 @@
     "dev": "vite",
     "dev:electron": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build": "tsc && tsc -p tsconfig.node.json && vite build",
-    "build:installer": "electron-builder",
-    "preview": "vite preview"
+    "build:installer": "electron-builder --win nsis",
+    "preview": "vite preview",
+    "test:docking": "node --test dist/main/docking.test.js"
   },
   "dependencies": {
     "@vanessa/shared": "workspace:*",
@@ -45,18 +46,70 @@
     "win": {
       "target": [
         {
-          "target": "zip",
-          "arch": ["x64"]
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "sign": false,
       "verifyUpdateCodeSignature": false,
       "forceCodeSigning": false
     },
     "files": [
       "dist/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "assets/**/*"
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": false
+    },
+    "extraResources": [
+      {
+        "from": "runtime/orchestrator",
+        "to": "runtime/orchestrator",
+        "filter": [
+          "**/*",
+          "**/.pnpm/**"
+        ]
+      },
+      {
+        "from": "runtime/voice-agent",
+        "to": "runtime/voice-agent",
+        "filter": [
+          "**/*",
+          "**/.pnpm/**"
+        ]
+      },
+      {
+        "from": "runtime/skills",
+        "to": "runtime/skills"
+      },
+      {
+        "from": "runtime/config",
+        "to": "runtime/config"
+      },
+      {
+        "from": "runtime/build-meta.json",
+        "to": "runtime/build-meta.json"
+      },
+      {
+        "from": "runtime/node.exe",
+        "to": "runtime/node.exe"
+      },
+      {
+        "from": "assets/vanessa-tray.png",
+        "to": "vanessa-tray.png"
+      },
+      {
+        "from": "runtime/vanessa.env.example",
+        "to": "vanessa.env.example"
+      }
     ]
   }
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { normalizeRemoteBrowserUrl } from "../agents/browser-playwright.agent.js";
+import { buildYouTubeSearchUrl } from "../agents/browser.agent.js";
 
 test("accepts normal HTTP and HTTPS URLs", () => {
   assert.equal(normalizeRemoteBrowserUrl("https://example.com"), "https://example.com/");
@@ -19,4 +20,13 @@ test("rejects non-web protocols, embedded credentials, and local network targets
 
 test("local development URLs require explicit opt-in", () => {
   assert.equal(normalizeRemoteBrowserUrl("http://localhost:3000", true), "http://localhost:3000/");
+});
+
+test("builds a safely encoded YouTube search URL on the expected origin", () => {
+  const result = new URL(buildYouTubeSearchUrl("lo-fi & jazz + focus"));
+  assert.equal(result.origin, "https://www.youtube.com");
+  assert.equal(result.pathname, "/results");
+  assert.equal(result.searchParams.get("search_query"), "lo-fi & jazz + focus");
+  assert.throws(() => buildYouTubeSearchUrl("   "), /non-empty/i);
+  assert.throws(() => buildYouTubeSearchUrl("x".repeat(501)), /500 characters/i);
 });
