@@ -268,11 +268,11 @@ export interface ExplicitUiClickRequest {
 export function inferExplicitUiClick(command: string): ExplicitUiClickRequest | null {
   const normalized = String(command || "")
     .trim()
-    .replace(/^\\s*(?:(?:hey|hi|hello|okay|ok)\\s+vanessa)[\\s,.:;!?—-]*/i, "");
+    .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
   if (!normalized || hasExplicitNegation(normalized) || hasAdditionalAction(normalized)) return null;
-  const match = normalized.match(/^\\s*(?:please\\s+)?click\\s+(?:on\\s+)?(?:the\\s+)?(radio\\s+button|menu\\s+item|button|link|tab|checkbox)\\s+(?:(?:named|called|labelled|labeled)\\s+)?(?:[\\"“])?([^\\"”\\r\\n.!?]{1,100}?)(?:[\\"”])?\\s*[.!]?\\s*$/i);
+  const match = normalized.match(/^\s*(?:please\s+)?click\s+(?:on\s+)?(?:the\s+)?(radio\s+button|menu\s+item|button|link|tab|checkbox)\s+(?:(?:named|called|labelled|labeled)\s+)?(?:["“])?([^"”\r\n.!?]{1,100}?)(?:["”])?\s*[.!]?\s*$/i);
   if (!match?.[1] || !match[2]) return null;
-  const kind = match[1].toLowerCase().replace(/\\s+/g, " ");
+  const kind = match[1].toLowerCase().replace(/\s+/g, " ");
   const controlTypeByKind: Record<string, string> = {
     button: "ControlType.Button",
     link: "ControlType.Hyperlink",
