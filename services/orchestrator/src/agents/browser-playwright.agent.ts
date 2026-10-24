@@ -27,15 +27,44 @@ function isPrivateIpv4(host: string): boolean {
 
 function isPrivateIp(host: string): boolean {
   if (isIP(host) === 4) return isPrivateIpv4(host);
-  if (isIP(host) === 6) {
-    const normalized = host.toLowerCase();
-    // Treat IPv6 loopback, unspecified, unique-local, link-local and mapped-private addresses as local.
-    if (normalized === "::" || normalized === "::1" || /^(?:fc|fd|fe[89ab])/i.test(normalized)) return true;
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateIpv4(mapped[1]);
-    // Fail closed on IPv6 literals until zone/scoped and transition addresses can be canonicalized.
-    return true;
+  if (isIP(host) !== 6) return false;
+
+  let address = host.toLowerCase().split("%")[0];
+  const dotted = address.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const octets = dotted[1].split(".").map(Number);
+    if (octets.length !== 4 || octets.some((part) => part < 0 || part > 255)) return true;
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    address = address.slice(0, dotted.index) + high + ":" + low;
   }
+
+  const halves = address.split("::");
+  if (halves.length > 2) return true;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return true;
+  const groups = [...left, ...Array(missing).fill("0"), ...right].map((part) => parseInt(part || "0", 16));
+  if (groups.length !== 8 || groups.some((part) => !Number.isInteger(part) || part < 0 || part > 0xffff)) return true;
+
+  if (groups.every((part) => part === 0)) return true;
+  if (groups.slice(0, 7).every((part) => part === 0) && groups[7] === 1) return true;
+
+  // IPv4-mapped IPv6 address: apply IPv4 policy to the embedded address.
+  if (groups.slice(0, 5).every((part) => part === 0) && groups[5] === 0xffff) {
+    const mappedV4 = [
+      groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255,
+    ].join(".");
+    return isPrivateIpv4(mappedV4);
+  }
+
+  const first = groups[0];
+  // Only globally-routable unicast (2000::/3) is allowed by default.
+  if (first < 0x2000 || first > 0x3fff) return true;
+  // Exclude documentation, benchmarking, ORCHID, and 6to4 transition ranges.
+  if (first === 0x2001 && (groups[1] === 0x0db8 || groups[1] === 0x0002 || (groups[1] >= 0x0010 && groups[1] <= 0x001f) || groups[1] === 0x0020)) return true;
+  if (first === 0x2002) return true;
   return false;
 }
 

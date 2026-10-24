@@ -5,6 +5,7 @@ import { normalizeRemoteBrowserUrl } from "../agents/browser-playwright.agent.js
 test("accepts normal HTTP and HTTPS URLs", () => {
   assert.equal(normalizeRemoteBrowserUrl("https://example.com"), "https://example.com/");
   assert.equal(normalizeRemoteBrowserUrl("http://example.com:8080/path"), "http://example.com:8080/path");
+  assert.equal(normalizeRemoteBrowserUrl("https://[2606:4700:4700::1111]/"), "https://[2606:4700:4700::1111]/");
 });
 
 test("rejects non-web protocols, embedded credentials, and local network targets by default", () => {
