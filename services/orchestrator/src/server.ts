@@ -12,6 +12,7 @@ import { privacyGuard } from "./core/privacy.js";
 import { permissionGuard } from "./core/permissionGuard.js";
 import { memoryPalace } from "./memory/memoryPalace.js";
 import { getRemotePwaHtml } from "./remotePwa.js";
+import { modelRouter } from "./core/router.js";
 
 // Load .env searching current and parent directories
 let envDir = process.cwd();
@@ -94,6 +95,13 @@ fastify.get("/health", async () => {
     version: "0.3.0",
     system: orchestrator.getSystemStatus(),
     timestamp: Date.now(),
+  };
+});
+
+fastify.get("/api/usage", async () => {
+  return {
+    provider: modelRouter.activeProvider,
+    usage: modelRouter.getUsageSnapshot(),
   };
 });
 

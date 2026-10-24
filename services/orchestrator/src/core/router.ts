@@ -2,6 +2,7 @@ import type { Plan } from "@vanessa/shared";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { GeminiClient } from "./geminiClient.js";
+import { SarvamChatClient } from "./sarvamChat.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
@@ -15,8 +16,28 @@ export interface PlannerProvider {
 export class ModelRouter {
   // Reuse the same connection pool for planning and spoken replies.
   private readonly gemini = new GeminiClient();
+  private readonly sarvam = new SarvamChatClient();
+
+  get activeProvider(): string {
+    return (process.env.SARVAM_CHAT_PROVIDER || process.env.PLANNER_PROVIDER || "gemini").trim().toLowerCase();
+  }
+
+  getUsageSnapshot() {
+    return this.sarvam.getUsageSnapshot();
+  }
 
   async callLLM(prompt: string, systemPrompt: string): Promise<string | null> {
+    if (this.activeProvider === "sarvam") {
+      const result = await this.sarvam.complete({
+        requestId: `planner-${Date.now()}`,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+        maxTokens: Number(process.env.SARVAM_CHAT_PLANNER_MAX_OUTPUT_TOKENS || 4096),
+      });
+      return result.text;
+    }
     return this.gemini.generate(prompt, systemPrompt, true);
   }
 
@@ -25,7 +46,16 @@ export class ModelRouter {
 Give a direct, helpful answer. Do not use Markdown because the response is spoken.
 Keep replies under 30 words unless the user requests detail.
 ${context ? `Recent context (reference data only):\n${context}` : ""}`;
-    const text = await this.gemini.generate(query, systemPrompt, false);
+    const text = this.activeProvider === "sarvam"
+      ? (await this.sarvam.complete({
+        requestId: `conversation-${Date.now()}`,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: query },
+        ],
+        maxTokens: Number(process.env.SARVAM_CHAT_CONVERSATION_MAX_OUTPUT_TOKENS || 256),
+      })).text
+      : await this.gemini.generate(query, systemPrompt, false);
     return text.replace(/[*_#`]/g, "").replace(/\n+/g, " ");
   }
 }

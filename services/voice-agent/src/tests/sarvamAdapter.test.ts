@@ -105,3 +105,32 @@ test("Sarvam activation can be cancelled while connecting", { timeout: 5000 }, a
   await new Promise<void>(resolve => server.close(() => resolve()));
   assert.equal(adapter.getProviderStatus().state, "idle");
 });
+
+test("Sarvam retries transient connection loss with bounded backoff", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let connections = 0;
+  server.on("connection", (socket) => {
+    connections++;
+    if (connections === 1) {
+      socket.close();
+      return;
+    }
+    socket.send(JSON.stringify({ event: "session.begin" }));
+  });
+  const adapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${address.port}`,
+    maxReconnectAttempts: 1,
+    reconnectBaseDelayMs: 50,
+  });
+  adapter.connect({ onPartial: () => {}, onFinal: () => {} });
+  try {
+    await adapter.activateStream(1000);
+    assert.equal(connections, 2);
+  } finally {
+    adapter.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

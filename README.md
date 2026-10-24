@@ -79,7 +79,12 @@ Copy `.env.example` to `.env` and fill in any keys you have:
 ```bash
 cp .env.example .env
 ```
-*(Note: Vanessa includes an offline deterministic heuristic planner, so all 4 demo scenarios work even before adding LLM API keys!)*
+
+For the Sarvam voice path, set `VOICE_ASR_PROVIDER=sarvam`,
+`VOICE_TTS_PROVIDER=sarvam`, `PLANNER_PROVIDER=sarvam`, and
+`SARVAM_CHAT_PROVIDER=sarvam`, then replace the `YOUR_SARVAM_*` placeholders
+in `.env`. Sarvam credentials are loaded only by the trusted voice/orchestrator
+processes; they are never sent to the renderer.
 
 ### 4. Run Development Server
 ```bash

@@ -12,7 +12,8 @@
     "start": "node dist/server.js",
     "test:scenarios": "tsx src/tests/scenarios.test.ts",
     "test:skills": "tsx src/tests/skillsRuntime.test.ts",
-    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts"
+    "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
+    "test:sarvam-chat": "tsx --test src/tests/sarvamChat.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

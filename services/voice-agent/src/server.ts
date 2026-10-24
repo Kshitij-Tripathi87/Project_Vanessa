@@ -5,23 +5,33 @@ import cors from "@fastify/cors";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
 import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
 import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
+import { getVoiceUsageBudget } from "./usageBudget.js";
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
 
 function getProviderReadiness() {
   const fishKeyValid = (process.env.FISH_API_KEY || "").startsWith("sk-fish-");
-  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
-  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
+  const sarvamKeyValid = Boolean(process.env.SARVAM_API_KEY && !/placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(process.env.SARVAM_API_KEY));
+  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
+  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
   const asrFallbackConfigured = process.env.VOICE_ALLOW_FALLBACK === "true" && Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
   const ttsFallbackConfigured = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
   const asrConfigured = asrProvider === "fish"
     ? fishKeyValid || asrFallbackConfigured
     : asrProvider === "elevenlabs"
       ? Boolean(process.env.ELEVENLABS_API_KEY)
+      : asrProvider === "sarvam"
+        ? sarvamKeyValid && Boolean(process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime") && !/placeholder|your[_-].*model|replace[-_ ]with/i.test(process.env.SARVAM_ASR_MODEL || "")
       : Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
   const ttsConfigured = ttsProvider === "fish"
     ? (fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) || ttsFallbackConfigured
+    : ttsProvider === "sarvam"
+      ? sarvamKeyValid
+        && Boolean(process.env.SARVAM_TTS_MODEL || "bulbul:v4-flash")
+        && !/placeholder|your[_-].*model|replace[-_ ]with/i.test(process.env.SARVAM_TTS_MODEL || "")
+        && Boolean(process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads")
+        && !/placeholder|your[_-].*speaker|replace[-_ ]with/i.test(process.env.SARVAM_TTS_SPEAKER || "")
     : Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID);
   const fallbackActive = (asrProvider === "fish" && !fishKeyValid && asrFallbackConfigured)
     || (ttsProvider === "fish" && !(fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) && ttsFallbackConfigured);
@@ -44,10 +54,14 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
   const fishAsrModel = process.env.FISH_ASR_MODEL || "transcribe-stream-1";
   const fishTtsModel = process.env.FISH_TTS_MODEL || "s2.1-pro-free";
   const fishTtsVoiceId = process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID || "";
-  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
-  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
+  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
+  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
   const allowFallback = process.env.VOICE_ALLOW_FALLBACK === "true";
   const ttsFallback = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
+  const sarvamKey = process.env.SARVAM_API_KEY || "";
+  const sarvamAsrModel = process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime";
+  const sarvamTtsModel = process.env.SARVAM_TTS_MODEL || "bulbul:v4-flash";
+  const sarvamTtsSpeaker = process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads";
 
   if (asrProvider === "fish") {
     if (!fishApiKey || !fishApiKey.startsWith("sk-fish-")) {
@@ -73,6 +87,30 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
       } else {
         errors.push("Fish TTS: FISH_TTS_VOICE_ID (or FISH_VANESSA_VOICE_ID) is required for Fish Audio TTS. Set VOICE_TTS_FALLBACK_PROVIDER=browser to use browser fallback instead.");
       }
+    }
+  }
+
+  if (asrProvider === "sarvam" || ttsProvider === "sarvam") {
+    if (!sarvamKey || /placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(sarvamKey)) {
+      errors.push("Sarvam: SARVAM_API_KEY is required for the selected provider.");
+    }
+  }
+
+  if (asrProvider === "sarvam") {
+    if (!sarvamAsrModel.trim() || /placeholder|your[_-].*model|replace[-_ ]with/i.test(sarvamAsrModel)) {
+      errors.push("Sarvam ASR: set SARVAM_ASR_MODEL to a supported realtime model.");
+    }
+    if (sarvamAsrModel === "saaras:v4" && !(process.env.SARVAM_ASR_KEYTERMS || "").trim()) {
+      warnings.push("Sarvam ASR: v4 keyterm prompting is enabled only when SARVAM_ASR_KEYTERMS is populated.");
+    }
+  }
+
+  if (ttsProvider === "sarvam") {
+    if (!sarvamTtsModel.trim() || /placeholder|your[_-].*model|replace[-_ ]with/i.test(sarvamTtsModel)) {
+      errors.push("Sarvam TTS: set SARVAM_TTS_MODEL to a supported model.");
+    }
+    if (!sarvamTtsSpeaker.trim() || /placeholder|your[_-].*speaker|replace[-_ ]with/i.test(sarvamTtsSpeaker)) {
+      errors.push("Sarvam TTS: set SARVAM_TTS_SPEAKER to a supported speaker.");
     }
   }
 
@@ -139,6 +177,10 @@ export async function createVoiceAgentServer() {
       },
       timestamp: Date.now(),
     };
+  });
+
+  fastify.get("/usage", async () => {
+    return getVoiceUsageBudget().snapshot();
   });
 
   fastify.get("/ready", async (_request, reply) => {

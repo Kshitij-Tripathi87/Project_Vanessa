@@ -72,7 +72,7 @@ export function useAudioCapture() {
   const audioQueueRef = useRef<Array<{
     text: string;
     audioBase64?: string;
-    format?: "mp3" | "pcm_s16le";
+    format?: "mp3" | "wav" | "pcm_s16le";
     sampleRate?: number;
     fallbackSpeech?: boolean;
     speechRate: number;

@@ -5,7 +5,7 @@ export interface TtsOutputChunk {
   text: string;
   isFinal: boolean;
   audioBase64?: string;
-  format?: "mp3" | "pcm_s16le";
+  format?: "mp3" | "wav" | "pcm_s16le";
   sampleRate?: number;
   fallbackSpeech?: boolean;
 }

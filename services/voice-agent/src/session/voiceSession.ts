@@ -11,6 +11,7 @@ import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
+import { SarvamTtsAdapter } from "../tts/sarvamTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
@@ -27,7 +28,7 @@ export interface VoiceSessionHandlers {
   onStateChange?: (state: SessionState) => void;
   onPartialTranscript?: (text: string) => void;
   onFinalTranscript?: (text: string, requestId: string) => void;
-  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
+  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "wav" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
   onTtsUnavailable?: (detail: string) => void;
   onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
   onProviderStatus?: (status: VoiceProviderInfo) => void;
@@ -60,12 +61,12 @@ export class VanessaVoiceSession {
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
-    ttsProvider?: "elevenlabs" | "fish";
+    ttsProvider?: "elevenlabs" | "fish" | "sarvam";
     handlers?: VoiceSessionHandlers;
   }) {
     this.handlers = options?.handlers || {};
 
-    const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
+    const asrType = String(options?.asrProvider || process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase() as "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     if (asrType === "sarvam") {
       this.asr = new SarvamAsrAdapter();
     } else if (asrType === "fish") {
@@ -79,9 +80,11 @@ export class VanessaVoiceSession {
     if (!options?.ttsProvider && !process.env.VOICE_TTS_PROVIDER && process.env.VOICE_PROVIDER) {
       console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
     }
-    const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
+    const ttsType = String(options?.ttsProvider || process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase() as "elevenlabs" | "fish" | "sarvam";
     if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
+    } else if (ttsType === "sarvam") {
+      this.tts = new SarvamTtsAdapter();
     } else {
       this.tts = new ElevenLabsTtsAdapter();
     }
@@ -102,8 +105,16 @@ export class VanessaVoiceSession {
         state: "idle",
       },
       tts: this.tts.getProviderStatus?.() || {
-        requested: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
-        active: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
+        requested: this.tts instanceof FishTtsAdapter
+          ? "Fish Audio"
+          : this.tts instanceof SarvamTtsAdapter
+            ? "Sarvam"
+            : "ElevenLabs",
+        active: this.tts instanceof FishTtsAdapter
+          ? "Fish Audio"
+          : this.tts instanceof SarvamTtsAdapter
+            ? "Sarvam"
+            : "ElevenLabs",
         state: "idle",
       },
     };

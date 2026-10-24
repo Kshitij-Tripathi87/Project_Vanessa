@@ -175,8 +175,8 @@ export class VanessaAgent {
     // Previous Python/NVIDIA conversational fallback retained, disabled.
     // return this.runBridge("ask", { query });
     const content = await modelRouter.callConversationalLLM(query);
-    if (!content) throw new Error("Gemini returned no conversational reply.");
-    return { success: true, content, mode: "gemini-3.1-flash-lite" };
+    if (!content) throw new Error(`${modelRouter.activeProvider} returned no conversational reply.`);
+    return { success: true, content, mode: modelRouter.activeProvider };
   }
 
   async runTool(tool: string, params: Record<string, any> = {}): Promise<any> {
