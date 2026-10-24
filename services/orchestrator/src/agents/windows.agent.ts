@@ -538,6 +538,11 @@ export class WindowsAgent implements SpecialistAgent {
       terminal: "wt.exe",
       chrome: "chrome.exe",
       edge: "msedge.exe",
+      taskmgr: "taskmgr.exe",
+      "task manager": "taskmgr.exe",
+      explorer: "explorer.exe",
+      "file explorer": "explorer.exe",
+      settings: "ms-settings:",
       vscode: "code.cmd",
     };
     const executable = appMap[appName.toLowerCase()] || appName;
