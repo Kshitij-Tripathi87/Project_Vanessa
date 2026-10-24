@@ -43,7 +43,7 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
       setFormError("URLs containing embedded credentials are not accepted.");
       return;
     }
-    onExecute("Open this URL in my default browser: " + parsed.toString());
+    onExecute("Open " + parsed.toString());
     setUrl("");
   };
 
