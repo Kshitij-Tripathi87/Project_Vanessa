@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractResourceTarget, inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch } from "../core/agentRouting.js";
+import { extractResourceTarget, inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch } from "../core/agentRouting.js";
 
 test("routes code changes to the coding workflow", () => {
   assert.deepEqual(inferResourceWorkflow('Fix the bug in "src/example.ts" and add a regression test.'), {
@@ -148,4 +148,29 @@ test("compound words inside a single search query remain a single browser search
   assert.deepEqual(inferYouTubeSearch("Hey Vanessa, open YouTube and search for rainforest sounds"), {
     query: "rainforest sounds",
   });
+});
+
+
+test("compound Windows actions are split only when every clause is recognized", () => {
+  assert.deepEqual(inferCommonActionSequence("Turn off Bluetooth and increase brightness"), [
+    { agent: "windows", action: "bluetooth.disable", params: {}, group: 0 },
+    { agent: "windows", action: "brightness.adjust", params: { delta: 10 }, group: 0 },
+  ]);
+  assert.equal(inferCommonActionSequence("Turn off Bluetooth and send an email"), null);
+});
+
+test("browser + Windows sequences preserve explicit ordering groups", () => {
+  assert.deepEqual(inferCommonActionSequence("Open Chrome and search Google for TypeScript tutorials"), [
+    { agent: "windows", action: "app.open", params: { name: "chrome" }, group: 0 },
+    { agent: "browser", action: "browser.search", params: { query: "TypeScript tutorials" }, group: 0 },
+  ]);
+  assert.deepEqual(inferCommonActionSequence("Open https://example.com then search Google for documentation"), [
+    { agent: "browser", action: "browser.open_url", params: { url: "https://example.com/" }, group: 0 },
+    { agent: "browser", action: "browser.search", params: { query: "documentation" }, group: 1 },
+  ]);
+});
+
+test("explicit YouTube single intents keep their specialized direct route", () => {
+  assert.equal(inferCommonActionSequence("Open YouTube and search for rainforest sounds"), null);
+  assert.deepEqual(inferYouTubeSearch("Open YouTube and search for rainforest sounds"), { query: "rainforest sounds" });
 });
