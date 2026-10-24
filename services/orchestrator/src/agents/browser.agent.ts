@@ -1,4 +1,4 @@
-import { normalizeRemoteBrowserUrl, playwrightBrowserAgent } from "./browser-playwright.agent.js";
+import { validateRemoteBrowserUrl, playwrightBrowserAgent } from "./browser-playwright.agent.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentEvidence, AgentResult, AgentRunContext, AgentTask, SpecialistAgent } from "@vanessa/shared";
@@ -41,14 +41,17 @@ async function openDefaultBrowser(url: string): Promise<void> {
 
 export interface BrowserAgentOptions {
   openExternalBrowser?: (url: string) => Promise<void>;
+  validateExternalUrl?: (url: string) => Promise<string>;
 }
 
 /** System-browser handoff stays distinct from Vanessa's isolated Playwright session. */
 export class BrowserAgent implements SpecialistAgent {
   private readonly openExternalBrowser: (url: string) => Promise<void>;
+  private readonly validateExternalUrl: (url: string) => Promise<string>;
 
   constructor(options: BrowserAgentOptions = {}) {
     this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;
+    this.validateExternalUrl = options.validateExternalUrl || validateRemoteBrowserUrl;
   }
 
   id = "browser";
@@ -69,7 +72,7 @@ export class BrowserAgent implements SpecialistAgent {
         const requestedUrl = String(params.url || "");
         let url: string;
         try {
-          url = normalizeRemoteBrowserUrl(requestedUrl);
+          url = await this.validateExternalUrl(requestedUrl);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           return this.result(false, "Browser URL was rejected by safety validation.", "I could not open that URL because it did not pass browser safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
