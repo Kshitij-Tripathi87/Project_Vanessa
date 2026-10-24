@@ -1,6 +1,7 @@
 name: Desktop Windows Release
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       publish_release:
@@ -84,7 +85,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Vanessa-Windows-${{ github.ref_name }}
+          name: Vanessa-Windows-${{ github.event.pull_request.number || github.ref_name }}
           path: apps/desktop/dist/installers/*.exe
           if-no-files-found: error
           retention-days: 30
