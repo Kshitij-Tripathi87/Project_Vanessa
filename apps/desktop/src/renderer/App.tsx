@@ -193,6 +193,16 @@ export function App() {
     await executeSpeechCommand(cmd);
   };
 
+  // Dashboard actions stay in the control deck so task updates are visible
+  // immediately, instead of navigating away to the generic chat view.
+  const handleControlExecute = async (command: string) => {
+    const cmd = command.trim();
+    if (!cmd) return;
+    setLastCommand(cmd);
+    setTypedCommand("");
+    await executeSpeechCommand(cmd);
+  };
+
   const handleApproveTask = useCallback(async (taskId: string) => {
     const result = await window.vanessa.approveTask(taskId);
     if (result.success) {
@@ -804,7 +814,7 @@ export function App() {
             statusError={controlStatusError}
             tasks={tasks}
             onRefresh={() => { void refreshControlStatus(); }}
-            onExecute={(command) => { void handleExecute(command); }}
+            onExecute={(command) => { void handleControlExecute(command); }}
           />
         )}
 
