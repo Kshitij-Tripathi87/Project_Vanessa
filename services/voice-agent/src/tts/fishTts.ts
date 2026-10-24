@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import { decode, encode } from "@msgpack/msgpack";
 import { VoiceTtsAdapter, TtsOutputChunk } from "./types.js";
 import { ProviderRuntimeStatus } from "../asr/types.js";
+import { diagnoseUpgradeRejection, providerTransportError } from "../diagnostics/providerDiagnostics.js";
 
 type BrowserFallback = "browser" | "none";
 
@@ -148,6 +149,9 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
           finish();
         };
 
+        diagnoseUpgradeRejection(socket, "TTS", this.apiKey!, (error) => finish(error));
+        console.log(`[Fish TTS] connecting endpoint=${new URL(this.url).origin}${new URL(this.url).pathname} model=${this.model} voiceId=configured`);
+
         controller.signal.addEventListener("abort", onAbort, { once: true });
         timeout = setTimeout(() => finish(new Error("Fish TTS stream timed out.")), this.timeoutMs);
 
@@ -208,12 +212,7 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
           }
         });
 
-        socket.on("unexpected-response", (_request, response) => {
-          const statusCode = response.statusCode || "unknown";
-          response.resume();
-          finish(new Error(`Fish TTS WebSocket handshake failed with HTTP ${statusCode}.`));
-        });
-        socket.on("error", (err) => finish(new Error(`Fish TTS WebSocket error: ${err.message}`)));
+        socket.on("error", (err) => finish(new Error(`Fish TTS WebSocket error: ${providerTransportError(err, [this.apiKey!])}`)));
         socket.on("close", (code, reason) => {
           if (controller.signal.aborted) return finish();
           if (!settled) finish(new Error(`Fish TTS closed before completion (${code}: ${reason.toString()}).`));
