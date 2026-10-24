@@ -189,7 +189,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const unsubscribePtt = window.vanessa?.onTriggerPtt?.(() => {
+    const unsubscribePtt = window.vanessa?.onTriggerPTT?.(() => {
       void handleOrbClick();
     });
     const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(() => {
