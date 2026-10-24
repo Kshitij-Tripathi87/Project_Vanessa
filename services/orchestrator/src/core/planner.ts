@@ -8,7 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
+import { inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -145,6 +145,40 @@ export class VanessaPlanner {
     };
   }
 
+  private createWindowsActionPlan(
+    command: string,
+    action: string,
+    params: Record<string, string | number | boolean>,
+    planId: string,
+    recentContext: string,
+    workspaceRoot: string,
+  ): Plan {
+    const spec = getCatalogAction("windows", action);
+    if (!spec) throw new Error("The requested Windows action is not in the reviewed catalog.");
+    const task = this.enrichTask({
+      id: planId + "_windows_control",
+      agent: "windows",
+      action,
+      params,
+      dependsOn: [],
+      acceptanceCriteria: [spec.description, spec.returns],
+      status: "pending",
+      risk: spec.risk,
+      allowedTools: [...spec.tools],
+    }, command, recentContext, workspaceRoot);
+    if (!this.isValidModelTaskGraph([task])) {
+      throw new Error("The deterministic Windows request did not satisfy the reviewed task graph contract.");
+    }
+    return {
+      id: planId,
+      command,
+      intent: "single_task",
+      risk: task.risk || spec.risk,
+      tasks: [task],
+      createdAt: Date.now(),
+    };
+  }
+
   private createBrowserActionPlan(
     command: string,
     action: "browser.open_url" | "browser.search",
@@ -264,6 +298,15 @@ export class VanessaPlanner {
     const resourceRequest = inferResourceWorkflow(command);
     if (resourceRequest) {
       const plan = this.createResourceWorkflowPlan(command, resourceRequest, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
+
+    // Common one-action Windows requests are routed to the Windows Agent
+    // without relying on an LLM to invent an action/parameter pair.
+    const windowsControl = inferWindowsControl(command);
+    if (windowsControl) {
+      const plan = this.createWindowsActionPlan(command, windowsControl.action, windowsControl.params, planId, recentContext, workspaceRoot);
       eventBus.emitEvent("plan:created", plan);
       return plan;
     }
