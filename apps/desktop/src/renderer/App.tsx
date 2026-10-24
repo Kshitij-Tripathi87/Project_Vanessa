@@ -11,6 +11,7 @@ import { AuditLog } from "./components/AuditLog.js";
 import { MemoryPalaceViewer } from "./components/MemoryPalaceViewer.js";
 import { MobilePairingModal } from "./components/MobilePairingModal.js";
 import { ApprovalModal } from "./components/ApprovalModal.js";
+import { ControlDeck } from "./components/ControlDeck.js";
 import {
   Settings,
   Minimize2,
@@ -30,12 +31,14 @@ import {
   Layers,
   FileText,
   Minus,
+  Monitor,
 } from "lucide-react";
 
 export function App() {
   const {
     voiceState,
     activePlan,
+    tasks,
     pendingApproval,
     auditLogs,
     lastResponse,
@@ -71,16 +74,13 @@ export function App() {
   type ViewMode = "orb" | "chat" | "dashboard";
   const [viewMode, setViewMode] = useState<ViewMode>("orb");
   const [currentCorner, setCurrentCorner] = useState<DockPosition>("bottom-right");
-  const [activeTab, setActiveTab] = useState<"memory" | "audit" | "plan" | "privacy" | "scenarios">("memory");
+  const [activeTab, setActiveTab] = useState<"control" | "memory" | "audit" | "plan" | "privacy" | "scenarios">("control");
   const [typedCommand, setTypedCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("");
   const lastSeenFinalTranscriptRef = useRef("");
   const [justActivated, setJustActivated] = useState(false);
   const [isPairingOpen, setIsPairingOpen] = useState(false);
-  const [allowedFolders, setAllowedFolders] = useState<string[]>([
-    "c:\\Users\\21330\\Documents\\VanessaDemo",
-    "c:\\Users\\21330\\Documents\\Project_Vanessa",
-  ]);
+  const [allowedFolders, setAllowedFolders] = useState<string[]>([]);
   const [newFolderInput, setNewFolderInput] = useState("");
 
   // Speak aloud helper
