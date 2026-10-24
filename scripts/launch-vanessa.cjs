@@ -214,7 +214,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   process.env.VANESSA_DEV_MODE = config.dev ? '1' : '0';
   process.env.VITE_VANESSA_VOICE_ENABLED = config.voice ? 'true' : 'false';
   delete process.env.ELECTRON_RUN_AS_NODE;
-  log('1/5 ENV', `Mode=${config.dev ? 'development/watch' : 'built'}; voice=${config.voice}; ASR=${asr}; TTS=${tts}; Gemini=${process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'}`);
+  log('1/5 ENV', `Mode=${config.dev ? 'development/watch' : 'built'}; voice=${config.voice}; ASR=${asr}; TTS=${tts}; Gemini=${process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'}`);
   log('1/5 ENV', `Orchestrator=${orchestratorUrl}; local Whisper=${config.localAsr ? 'configured' : 'not needed'}.`);
   const codex = spawnSync('where.exe', ['codex'], { encoding: 'utf8', windowsHide: true });
   if (codex.status !== 0 && config.strict) throw new Error('Codex CLI not found on PATH. Add the installed Codex CLI directory to PATH and reopen the terminal.');

@@ -176,7 +176,7 @@ export class VanessaAgent {
     // return this.runBridge("ask", { query });
     const content = await modelRouter.callConversationalLLM(query);
     if (!content) throw new Error("Gemini returned no conversational reply.");
-    return { success: true, content, mode: "gemini-3.5-flash-lite" };
+    return { success: true, content, mode: "gemini-3.1-flash-lite" };
   }
 
   async runTool(tool: string, params: Record<string, any> = {}): Promise<any> {

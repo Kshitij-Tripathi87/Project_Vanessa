@@ -32,7 +32,7 @@ test("uses the requested model, JSON planning, minimal thinking, and a reused so
   delete process.env.GEMINI_MODEL;
   const f = await fixture((req, res) => {
     sockets.add(req.socket);
-    assert.equal(req.url, "/v1beta/models/gemini-3.5-flash-lite:generateContent");
+    assert.equal(req.url, "/v1beta/models/gemini-3.1-flash-lite:generateContent");
     assert.equal(req.headers["x-goog-api-key"], "test-key");
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(chunk));
