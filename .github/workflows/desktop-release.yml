@@ -107,6 +107,7 @@ jobs:
           $requiredFiles = @(
             (Join-Path $installDir "Vanessa.exe"),
             (Join-Path $installDir "resources\app.asar"),
+            (Join-Path $installDir "resources\runtime\build-meta.json"),
             (Join-Path $installDir "resources\runtime\node.exe"),
             (Join-Path $installDir "resources\runtime\orchestrator\dist\server.js"),
             (Join-Path $installDir "resources\runtime\voice-agent\dist\server.js")
@@ -120,11 +121,13 @@ jobs:
           }
 
           $appPath = Join-Path $installDir "Vanessa.exe"
+          $appStdout = Join-Path $env:RUNNER_TEMP "vanessa-main.stdout.log"
+          $appStderr = Join-Path $env:RUNNER_TEMP "vanessa-main.stderr.log"
           $app = $null
           $orchestratorHealthy = $false
           $voiceHealthy = $false
           try {
-            $app = Start-Process -FilePath $appPath -PassThru
+            $app = Start-Process -FilePath $appPath -PassThru -RedirectStandardOutput $appStdout -RedirectStandardError $appStderr
             $deadline = [DateTime]::UtcNow.AddSeconds(60)
             while ([DateTime]::UtcNow -lt $deadline) {
               if (!$orchestratorHealthy) {
@@ -144,8 +147,31 @@ jobs:
               Start-Sleep -Seconds 1
             }
 
-            if (!$orchestratorHealthy) { throw "Installed orchestrator did not become healthy on 127.0.0.1:4139." }
-            if (!$voiceHealthy) { throw "Installed voice agent did not become healthy on 127.0.0.1:4500." }
+            if (!$orchestratorHealthy -or !$voiceHealthy) {
+              Write-Host "=== Installed app stdout ==="
+              if (Test-Path $appStdout) { Get-Content $appStdout -Tail 200 }
+              Write-Host "=== Installed app stderr ==="
+              if (Test-Path $appStderr) { Get-Content $appStderr -Tail 200 }
+              Write-Host "=== Vanessa service logs (credentials excluded) ==="
+              $vanessaDirs = @()
+              foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+                if (Test-Path $root) {
+                  $vanessaDirs += Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "Vanessa" }
+                }
+              }
+              foreach ($directory in $vanessaDirs) {
+                $logs = Get-ChildItem -Path $directory.FullName -Filter "*.log" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @("orchestrator.log", "voice-agent.log") }
+                foreach ($log in $logs) {
+                  Write-Host "--- $($log.FullName) ---"
+                  Get-Content $log.FullName -Tail 200
+                }
+              }
+              Write-Host "=== Packaged runtime metadata ==="
+              $metaPath = Join-Path $installDir "resources\runtime\build-meta.json"
+              if (Test-Path $metaPath) { Get-Content $metaPath }
+              if (!$orchestratorHealthy) { throw "Installed orchestrator did not become healthy on 127.0.0.1:4139." }
+              throw "Installed voice agent did not become healthy on 127.0.0.1:4500."
+            }
             Write-Host "NSIS install completed, installed app launched, and both backend health checks passed."
           } finally {
             if ($app -and !$app.HasExited) {
