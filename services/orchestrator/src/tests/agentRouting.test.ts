@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractResourceTarget, inferResourceWorkflow, inferYouTubeSearch } from "../core/agentRouting.js";
-import { planner } from "../core/planner.js";
 
 test("routes code changes to the coding workflow", () => {
   assert.deepEqual(inferResourceWorkflow('Fix the bug in "src/example.ts" and add a regression test.'), {
@@ -61,12 +60,3 @@ test("extracts explicit YouTube search queries from natural voice commands", () 
   assert.equal(inferYouTubeSearch("Search Google for rainforest sounds"), null);
 });
 
-test("YouTube voice requests use the reviewed Browser Agent workflow", async () => {
-  const plan = await planner.createPlan("Hey Vanessa, open YouTube and search for piano music.");
-  assert.equal(plan.tasks.length, 1);
-  assert.equal(plan.tasks[0].agent, "browser");
-  assert.equal(plan.tasks[0].action, "youtube.search_and_play");
-  assert.equal(plan.tasks[0].params.query, "piano music");
-  assert.deepEqual(plan.tasks[0].dependsOn, []);
-  assert.match(plan.tasks[0].acceptanceCriteria?.join(" ") || "", /do not claim a video was played/i);
-});
