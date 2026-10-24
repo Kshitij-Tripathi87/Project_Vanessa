@@ -14,39 +14,62 @@ export function buildYouTubeSearchUrl(query: string): string {
   return url.toString();
 }
 
-async function openDefaultBrowser(url: string): Promise<void> {
+function normalizeBrowserTarget(value: unknown): "chrome" | "edge" | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized !== "chrome" && normalized !== "edge") {
+    throw new Error("Unsupported browser target. Supported explicit targets are Chrome and Edge.");
+  }
+  return normalized;
+}
+
+async function openDefaultBrowser(url: string, browserName?: string): Promise<void> {
+  const browser = normalizeBrowserTarget(browserName);
+  const windowsExecutable = browser === "chrome" ? "chrome.exe" : browser === "edge" ? "msedge.exe" : undefined;
+  const macApplication = browser === "chrome" ? "Google Chrome" : browser === "edge" ? "Microsoft Edge" : undefined;
+  const linuxExecutable = browser === "chrome" ? "google-chrome" : browser === "edge" ? "microsoft-edge" : undefined;
+
   if (process.platform === "win32") {
-    // Keep user text out of a shell command; PowerShell receives the fully
-    // constructed, fixed-origin URL through an environment variable.
+    // Both values are passed through environment variables, never interpolated
+    // into PowerShell source. An explicit browser target is selected by a static
+    // alias map so user-controlled text cannot choose an arbitrary executable.
+    const script = windowsExecutable
+      ? "Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList @($env:VANESSA_TARGET_URL)"
+      : "Start-Process -FilePath $env:VANESSA_TARGET_URL";
     await execFileAsync("powershell.exe", [
-      "-NoProfile", "-NonInteractive", "-Command",
-      "Start-Process -FilePath $env:VANESSA_TARGET_URL",
+      "-NoProfile", "-NonInteractive", "-Command", script,
     ], {
       windowsHide: true,
       timeout: 5000,
-      env: { ...process.env, VANESSA_TARGET_URL: url },
+      env: {
+        ...process.env,
+        VANESSA_TARGET_URL: url,
+        ...(windowsExecutable ? { VANESSA_BROWSER: windowsExecutable } : {}),
+      },
     });
     return;
   }
   if (process.platform === "darwin") {
-    await execFileAsync("open", [url], { timeout: 5000 });
+    if (macApplication) await execFileAsync("open", ["-a", macApplication, url], { timeout: 5000 });
+    else await execFileAsync("open", [url], { timeout: 5000 });
     return;
   }
   if (process.platform === "linux") {
-    await execFileAsync("xdg-open", [url], { timeout: 5000 });
+    if (linuxExecutable) await execFileAsync(linuxExecutable, [url], { timeout: 5000 });
+    else await execFileAsync("xdg-open", [url], { timeout: 5000 });
     return;
   }
-  throw new Error("Opening the default browser is not supported on " + process.platform + ".");
+  throw new Error("Opening the browser is not supported on " + process.platform + ".");
 }
 
 export interface BrowserAgentOptions {
-  openExternalBrowser?: (url: string) => Promise<void>;
+  openExternalBrowser?: (url: string, browserName?: string) => Promise<void>;
   validateExternalUrl?: (url: string) => Promise<string>;
 }
 
 /** System-browser handoff stays distinct from Vanessa's isolated Playwright session. */
 export class BrowserAgent implements SpecialistAgent {
-  private readonly openExternalBrowser: (url: string) => Promise<void>;
+  private readonly openExternalBrowser: (url: string, browserName?: string) => Promise<void>;
   private readonly validateExternalUrl: (url: string) => Promise<string>;
 
   constructor(options: BrowserAgentOptions = {}) {
@@ -71,21 +94,23 @@ export class BrowserAgent implements SpecialistAgent {
       case "browser.open_url": {
         const requestedUrl = String(params.url || "");
         let url: string;
+        let browserName: "chrome" | "edge" | undefined;
         try {
           url = await this.validateExternalUrl(requestedUrl);
+          browserName = normalizeBrowserTarget(params.browser);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Browser URL was rejected by safety validation.", "I could not open that URL because it did not pass browser safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
+          return this.result(false, "Browser URL or browser target was rejected by safety validation.", "I could not open that URL or browser target because it did not pass safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
         }
         try {
-          await this.openExternalBrowser(url);
+          await this.openExternalBrowser(url, browserName);
           return this.result(
             true,
-            "The operating system accepted the default-browser launch request for " + url + ".",
-            "I sent the page to your default browser. I have not verified that it loaded.",
-            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, pageLoadVerified: false } }],
+            "The operating system accepted the " + (browserName || "default-browser") + " launch request for " + url + ".",
+            "I sent the page to " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not verified that it loaded.",
+            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, browser: browserName || "default", pageLoadVerified: false } }],
             [url],
-            { url, externalBrowser: true, pageLoadVerified: false },
+            { url, browser: browserName || "default", externalBrowser: true, pageLoadVerified: false },
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -99,15 +124,17 @@ export class BrowserAgent implements SpecialistAgent {
         const search = new URL("https://www.google.com/search");
         search.searchParams.set("q", query);
         const url = search.toString();
+        let browserName: "chrome" | "edge" | undefined;
         try {
-          await this.openExternalBrowser(url);
+          browserName = normalizeBrowserTarget(params.browser);
+          await this.openExternalBrowser(url, browserName);
           return this.result(
             true,
-            "The operating system accepted a default-browser search launch for " + query + ".",
-            "I opened search results in your default browser. I have not independently inspected the results.",
-            [{ description: "Operating system accepted the browser launch request for search query: " + query, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, resultsExtracted: false } }],
+            "The operating system accepted a " + (browserName || "default-browser") + " search launch for " + query + ".",
+            "I opened search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not independently inspected the results.",
+            [{ description: "Operating system accepted the browser launch request for search query: " + query, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default", resultsExtracted: false } }],
             [url],
-            { query, url, externalBrowser: true, resultsExtracted: false },
+            { query, url, browser: browserName || "default", externalBrowser: true, resultsExtracted: false },
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -130,15 +157,17 @@ export class BrowserAgent implements SpecialistAgent {
       case "youtube.search_and_play": {
         const query = String(params.query || "").trim();
         const url = buildYouTubeSearchUrl(query);
+        let browserName: "chrome" | "edge" | undefined;
         try {
-          await this.openExternalBrowser(url);
+          browserName = normalizeBrowserTarget(params.browser);
+          await this.openExternalBrowser(url, browserName);
           return this.result(
             true,
-            "Opened YouTube search results for " + query + " in the default browser.",
+            "Opened YouTube search results for " + query + " in " + (browserName || "the default browser") + ".",
             "YouTube search results are open. Video playback has not been verified.",
             [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url } }],
             [url],
-            { query, url, externalBrowser: true, playbackVerified: false },
+            { query, url, browser: browserName || "default", externalBrowser: true, playbackVerified: false },
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
