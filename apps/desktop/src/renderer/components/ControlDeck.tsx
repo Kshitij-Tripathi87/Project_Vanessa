@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Wifi, XCircle } from "lucide-react";
+import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Sun, Volume2, Wifi, XCircle } from "lucide-react";
 import type { Task } from "@vanessa/shared";
 import { TaskCard } from "./TaskCard.js";
 
@@ -24,6 +24,8 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
   const [url, setUrl] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [formError, setFormError] = useState("");
+  const [volumeTarget, setVolumeTarget] = useState(50);
+  const [brightnessTarget, setBrightnessTarget] = useState(60);
 
   const runUrl = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -156,6 +158,27 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
                 </button>
               );
             })}
+          </div>
+          <div className="control-adjusters">
+            <div className="control-adjuster">
+              <div className="control-adjuster-heading">
+                <span className="control-adjuster-icon"><Volume2 size={15} /></span>
+                <label htmlFor="control-volume-target">Master volume target <strong>{volumeTarget}%</strong></label>
+              </div>
+              <input id="control-volume-target" className="control-range no-drag" type="range" min="0" max="100" step="5" value={volumeTarget} onChange={(event) => setVolumeTarget(Number(event.target.value))} />
+              <div className="control-range-labels"><span>Mute</span><span>Maximum</span></div>
+              <button className="control-apply-button no-drag" type="button" onClick={() => onExecute("Set system volume to " + volumeTarget + " percent")}>Apply volume target</button>
+            </div>
+            <div className="control-adjuster">
+              <div className="control-adjuster-heading">
+                <span className="control-adjuster-icon"><Sun size={15} /></span>
+                <label htmlFor="control-brightness-target">Display brightness target <strong>{brightnessTarget}%</strong></label>
+              </div>
+              <input id="control-brightness-target" className="control-range no-drag" type="range" min="0" max="100" step="5" value={brightnessTarget} onChange={(event) => setBrightnessTarget(Number(event.target.value))} />
+              <div className="control-range-labels"><span>Dimmest</span><span>Brightest</span></div>
+              <button className="control-apply-button no-drag" type="button" onClick={() => onExecute("Set display brightness to " + brightnessTarget + " percent")}>Apply brightness target</button>
+            </div>
+            <p className="control-adjuster-note">These are requested target values, not live readings. Vanessa reports success only when Windows reads back the requested state; some external displays do not expose WMI brightness control.</p>
           </div>
         </article>
       </div>
