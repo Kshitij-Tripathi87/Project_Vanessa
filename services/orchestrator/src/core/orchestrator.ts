@@ -5,6 +5,7 @@ import {
   Plan,
   SystemStatus,
   Task,
+  createCommandRequest,
 } from "@vanessa/shared";
 import { planner } from "./planner.js";
 import {
@@ -44,9 +45,12 @@ export class VanessaOrchestrator {
   }
 
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
+    // Also normalize direct API/legacy callers, not just the two desktop clients.
+    payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
     const requestId = payload.requestId || envelope?.requestId;
+    console.log(`[Orchestrator] received request=${requestId} source=${payload.source} characters=${command.length} historyTurns=${conversationContext.length}`);
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
     const idempotencyKey = payload.idempotencyKey || envelope?.idempotencyKey;
@@ -72,6 +76,7 @@ export class VanessaOrchestrator {
 
       const idemCheck = memoryPalace.checkAndRecordIdempotency(envelopeRecord);
       if (idemCheck.isDuplicate) {
+        console.log(`[Orchestrator] duplicate request=${requestId} cached=${Boolean(idemCheck.cachedResult)} pending=${Boolean(idemCheck.isPending)}`);
         if (idemCheck.cachedResult) {
           return idemCheck.cachedResult;
         }
@@ -95,7 +100,34 @@ export class VanessaOrchestrator {
     });
 
     // 1. Generate task plan
-    const plan = await planner.createPlan(command, conversationContext);
+    let plan: Plan;
+    try {
+      console.log(`[Planner] start request=${requestId}`);
+      plan = await planner.createPlan(command, conversationContext, payload);
+      console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
+    } catch {
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check Gemini status above or plan validation.`);
+      const result: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "I couldn't create a plan with Gemini. No tasks were started. Check the Gemini configuration or try again.",
+        verification: {
+          verified: false,
+          postconditions: ["Planning failed before task execution."],
+          outcome: "failed",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: `planning-failed-${Date.now()}`,
+        timestamp: Date.now(),
+        agent: "orchestrator",
+        action: "planning.failed",
+        status: "error",
+        details: "Gemini planning failed; no task execution or keyword fallback was attempted.",
+      });
+      if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
+      return result;
+    }
 
     // 2. Execute plan through parallel DAG task runner
     const tasks = await runPlan(plan);
@@ -159,6 +191,7 @@ export class VanessaOrchestrator {
       memoryPalace.completeIdempotentCommand(idempotencyKey, status, finalResult);
     }
 
+    console.log(`[Orchestrator] response request=${requestId} plan=${plan.id} status=${status} awaitingApproval=${pendingApproval.length} elapsedMs=${Date.now() - startTime}`);
     return finalResult;
   }
 
@@ -192,6 +225,10 @@ export class VanessaOrchestrator {
     const lower = command.toLowerCase();
     const prefix = sentiment?.urgency === "critical" ? "Immediate status: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
 
+    if (successTasks.some((task) => task.action === "codex.open")) {
+      return `${prefix}${successTasks.map((task) => task.spokenSummary || `${task.action} returned a result.`).join(" ")}`;
+    }
+
     if (language === "hi" || language === "hinglish") {
       if (lower.includes("wifi") || lower.includes("wi-fi")) {
         return `${prefix}Wi-Fi adapter restart ho gaya hai aur YouTube open kar diya hai.`;
@@ -202,7 +239,7 @@ export class VanessaOrchestrator {
       return `${prefix}Aapka task complete ho gaya hai.`;
     }
 
-    if (lower.includes("investigate") || lower.includes("checkout")) {
+    if ((lower.includes("investigate") || lower.includes("checkout")) && successTasks.some((task) => task.agent === "coding" || task.agent === "incident")) {
       return `${prefix}I investigated the checkout failure. The root cause was an unhandled null promo object in calculateTotal, matching previous incident INC-842 and the runbook. I prepared a fix in an isolated branch, ran the regression tests which passed completely, and kept deployment blocked.`;
     }
 

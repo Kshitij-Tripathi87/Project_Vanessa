@@ -48,6 +48,9 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
+  if (task.action === "codex.open" && structured?.success === true && structured?.status === "started") {
+    task.spokenSummary = "I started a Codex terminal with your request. Coding completion is not yet reported to Vanessa.";
+  }
   const evidence = Array.isArray(structured?.evidence) ? structured.evidence : [];
   task.evidence = evidence;
   task.artifacts = Array.isArray(structured?.artifacts) ? structured.artifacts : [];
@@ -292,16 +295,12 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       taskId: task.id,
       parentTaskId: task.parentId,
       objective: task.action,
-      action: task.action,
-      params: resolvedParams,
+      contextRefs: [],
       allowedTools: task.allowedTools || agent.allowedTools || [],
       dependsOn: task.dependsOn || [],
       acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
-      deadlineMs: 30000,
-      context: [
-        workingMemory.getSnapshot(),
-        ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
-      ],
+      timeoutMs: 30000,
+      schemaVersion: 1,
     };
 
     await resourceLockManager.acquireSlot();
@@ -547,16 +546,12 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         taskId: task.id,
         parentTaskId: task.parentId,
         objective: task.action,
-        action: task.action,
-        params: resolvedParams,
+        contextRefs: [],
         allowedTools: task.allowedTools || agent.allowedTools || [],
         dependsOn: task.dependsOn || [],
         acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
-        deadlineMs: 30000,
-        context: [
-          workingMemory.getSnapshot(),
-          ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
-        ],
+        timeoutMs: 30000,
+        schemaVersion: 1,
       };
 
       const result = await agent.execute(task.action, resolvedParams, {

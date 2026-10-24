@@ -2,10 +2,18 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
 import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
 
-dotenv.config();
+// Load .env from project root. Prefer cwd (Launch-Vanessa.bat sets it to repo root),
+// fall back to resolving relative to this file's location.
+const cwdEnv = path.join(process.cwd(), ".env");
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const envPath = fs.existsSync(cwdEnv) ? cwdEnv : path.join(projectRoot, ".env");
+dotenv.config({ path: envPath });
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -142,9 +150,19 @@ export async function createVoiceAgentServer() {
     };
   });
 
+  // Liveness probe - process is alive
+  fastify.get("/live", async () => {
+    return { status: "alive", timestamp: Date.now() };
+  });
+
+  // Readiness probe - service can handle requests
   fastify.get("/ready", async (_request, reply) => {
     const readiness = getProviderReadiness();
-    if (!readiness.ready) reply.status(503);
+    // Also check if Fish ASR WebSocket is actually connected when required
+    if (!readiness.ready) {
+      reply.status(503);
+      return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
+    }
     return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
   });
 
@@ -161,22 +179,22 @@ export async function createVoiceAgentServer() {
           sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
         },
         onPartialTranscript: (text) => {
-          sendJson(socket, { type: "transcript_partial", text });
+          sendJson(socket, { type: "transcript_partial", text, timestamp: Date.now() });
         },
         onFinalTranscript: (text, requestId) => {
-          sendJson(socket, { type: "transcript_final", text, requestId });
+          sendJson(socket, { type: "transcript_final", text, requestId, timestamp: Date.now() });
         },
         onAudioChunkOut: (chunk) => {
-          sendJson(socket, { type: "tts_chunk", ...chunk });
+          sendJson(socket, { type: "tts_chunk", ...chunk, timestamp: Date.now() });
         },
         onTtsUnavailable: (detail) => {
-          sendJson(socket, { type: "tts_unavailable", detail });
+          sendJson(socket, { type: "tts_unavailable", detail, timestamp: Date.now() });
         },
         onHudUpdate: (hud) => {
-          sendJson(socket, { type: "hud_update", ...hud });
+          sendJson(socket, { type: "hud_update", ...hud, timestamp: Date.now() });
         },
         onProviderStatus: (providers) => {
-          sendJson(socket, { type: "provider_status", providers });
+          sendJson(socket, { type: "provider_status", providers, timestamp: Date.now() });
         },
       },
     });

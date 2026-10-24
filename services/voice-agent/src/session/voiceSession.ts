@@ -5,6 +5,7 @@ import { BargeInDetector } from "./bargeIn.js";
 import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
 import { VoiceAdapter } from "../asr/voiceAdapter.js";
+import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { FishAsrAdapter } from "../asr/fishAdapter.js";
 import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
@@ -58,14 +59,16 @@ export class VanessaVoiceSession {
   private queuedUtterances: Array<{ text: string; language: string }> = [];
 
   constructor(options?: {
-    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs";
+    asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     ttsProvider?: "elevenlabs" | "fish";
     handlers?: VoiceSessionHandlers;
   }) {
     this.handlers = options?.handlers || {};
 
     const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
-    if (asrType === "fish") {
+    if (asrType === "sarvam") {
+      this.asr = new SarvamAsrAdapter();
+    } else if (asrType === "fish") {
       this.asr = new FishAsrAdapter();
     } else if (asrType === "elevenlabs") {
       this.asr = new ElevenLabsAsrAdapter();
@@ -214,7 +217,7 @@ export class VanessaVoiceSession {
     }
     const generation = this.sessionGeneration;
     this.isFinalizingTurn = false;
-    console.log(`[VanessaVoiceSession] Processing utterance: "${rawText}"`);
+    console.log(`[VanessaVoiceSession] Processing utterance characters=${rawText.length}`);
     this.isProcessing = true;
 
     // Filter wake word prefix
@@ -252,10 +255,11 @@ export class VanessaVoiceSession {
     this.conversationContext.push({ role: "user", content: command });
     this.conversationContext = this.conversationContext.slice(-8);
     this.asr.setConversationContext?.(this.conversationContext);
+    const source = (process.env.VOICE_COMMAND_SOURCE as any) || "desktop";
     const requestId = turnId
-      ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
-      : `voice-${randomUUID()}`;
-    const idempotencyKey = `voice:${requestId}`;
+      ? `req-${createHash("sha256").update(turnId).digest("hex").slice(0, 16)}`
+      : `req-${randomUUID().slice(0, 8)}`;
+    const idempotencyKey = `${source}:${requestId}`;
     this.handlers.onFinalTranscript?.(command, requestId);
 
     let responseText: string;
@@ -266,15 +270,18 @@ export class VanessaVoiceSession {
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
+        const submitStarted = Date.now();
+        console.log(`[Voice] submitting request=${requestId} historyTurns=${this.conversationContext.length}`);
         const execution = await orchestratorClient.executeCommand({
           command,
           requestId,
           idempotencyKey,
-          source: "voice",
+          source,
           language,
           conversationContext: this.conversationContext,
         });
 
+        console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
         this.handlers.onHudUpdate?.({
           state: "responding",
@@ -296,7 +303,9 @@ export class VanessaVoiceSession {
           this.asr.setConversationContext?.(this.conversationContext);
         }
         try {
+          console.log(`[Voice] TTS start request=${requestId} characters=${responseText.length}`);
           await this.speak(responseText);
+          console.log(`[Voice] TTS complete request=${requestId}`);
         } catch (err: any) {
           console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
         this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");

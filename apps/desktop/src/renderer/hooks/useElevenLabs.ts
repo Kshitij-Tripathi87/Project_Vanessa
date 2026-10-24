@@ -10,7 +10,7 @@ export function useElevenLabs() {
     try {
       setVoiceState("listening");
       // Connect to ElevenLabs session endpoint or local bridge
-      const res = await fetch("http://127.0.0.1:4319/voice/session");
+      const res = await fetch("http://127.0.0.1:4139/voice/session");
       const data = (await res.json()) as any;
 
       if (data.signedUrl) {
@@ -51,7 +51,9 @@ export function useElevenLabs() {
           setTimeout(() => setVoiceState("idle"), 2500);
         }
 
-        return { status: result.status, spokenSummary: result.spokenSummary };
+        // Match the voice client's complete result instead of dropping plan,
+        // pendingTasks, requestId, and verification at this boundary.
+        return result;
       } catch (err: any) {
         setVoiceState("error");
         setLastResponse(`Error executing command: ${err.message}`);

@@ -353,6 +353,10 @@ export function useAudioCapture() {
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
+      setMicError("Voice is disabled for this session. Restart Vanessa without --text-only to use the microphone.");
+      return;
+    }
     try {
       if (mediaStreamRef.current) return;
       setMicError(null);
@@ -524,7 +528,7 @@ export function useAudioCapture() {
   }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
 
   useEffect(() => {
-    connectVoiceWs();
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false") connectVoiceWs();
     return () => {
       pttActiveRef.current = false;
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);

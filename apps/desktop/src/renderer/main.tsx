@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App.js";
 import "./index.css";
+import { submitCommandRequest } from "@vanessa/shared";
 
 // Polyfill window.vanessa for browser preview when not inside Electron
 if (typeof window !== "undefined" && !window.vanessa) {
@@ -9,7 +10,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
   
   function connectWebSocket() {
     try {
-      const ws = new WebSocket("ws://127.0.0.1:4319/events");
+      const ws = new WebSocket("ws://127.0.0.1:4139/events");
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
@@ -28,15 +29,13 @@ if (typeof window !== "undefined" && !window.vanessa) {
 
   window.vanessa = {
     executeCommand: async (payload) => {
-      const res = await fetch("http://127.0.0.1:4319/api/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      return submitCommandRequest("http://127.0.0.1:4139", {
+        ...payload,
+        source: "desktop",
       });
-      return res.json();
     },
     approveTask: async (taskId) => {
-      const res = await fetch("http://127.0.0.1:4319/api/approve", {
+      const res = await fetch("http://127.0.0.1:4139/api/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -44,7 +43,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
       return res.json();
     },
     rejectTask: async (taskId) => {
-      const res = await fetch("http://127.0.0.1:4319/api/reject", {
+      const res = await fetch("http://127.0.0.1:4139/api/reject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -52,7 +51,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
       return res.json();
     },
     cancelTask: async () => {
-      const res = await fetch("http://127.0.0.1:4319/api/cancel", {
+      const res = await fetch("http://127.0.0.1:4139/api/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

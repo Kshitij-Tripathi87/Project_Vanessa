@@ -2,13 +2,14 @@ import { EventEmitter } from "node:events";
 import { EventType, VanessaEvent, AgentMessage } from "@vanessa/shared";
 
 class VanessaEventBus extends EventEmitter {
-  private auditLog: Array<{ timestamp: number; type: EventType; payload: any }> = [];
+  private auditLog: Array<{ timestamp: number; type: EventType; payload: any; requestId?: string }> = [];
 
-  emitEvent<T = any>(type: EventType, payload: T): boolean {
+  emitEvent<T = any>(type: EventType, payload: T, requestId?: string): boolean {
     const event: VanessaEvent<T> = {
       type,
       payload,
       timestamp: Date.now(),
+      requestId,
     };
     this.auditLog.push(event);
     if (this.auditLog.length > 500) {

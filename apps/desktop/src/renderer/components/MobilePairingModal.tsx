@@ -14,7 +14,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
   onClose,
   deviceName = "Kshitij-Laptop",
   pairingCode = "",
-  remoteUrl = "http://127.0.0.1:4319/remote",
+  remoteUrl = "http://127.0.0.1:4139/remote",
 }) => {
   const [remoteEnabled, setRemoteEnabled] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -25,7 +25,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    fetch("http://127.0.0.1:4319/api/remote/pairing")
+    fetch("http://127.0.0.1:4139/api/remote/pairing")
       .then(async (response) => {
         if (!response.ok) throw new Error("Could not load the active pairing code.");
         return response.json();
@@ -54,7 +54,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
   const handleToggle = async () => {
     const nextState = !remoteEnabled;
     try {
-      const response = await fetch("http://127.0.0.1:4319/api/remote/toggle", {
+      const response = await fetch("http://127.0.0.1:4139/api/remote/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: nextState }),
