@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { normalizeRemoteBrowserUrl } from "../agents/browser-playwright.agent.js";
 import { BrowserAgent, buildYouTubeSearchUrl } from "../agents/browser.agent.js";
 
-function createBrowserAgent(options: { openExternalBrowser?: (url: string) => Promise<void> } = {}): BrowserAgent {
+function createBrowserAgent(options: { openExternalBrowser?: (url: string, browserName?: string) => Promise<void> } = {}): BrowserAgent {
   return new BrowserAgent({
     ...options,
     // Keep these unit tests hermetic. The production validator additionally
@@ -78,6 +78,33 @@ test("search launches an encoded Google search in the system browser without cla
   assert.equal(data.externalBrowser, true);
   assert.equal(data.resultsExtracted, false);
   assert.match(result.spokenSummary, /not independently inspected/i);
+});
+
+test("explicit Chrome and Edge targets are passed to the system-browser launcher", async () => {
+  const launched: Array<{ url: string; browser?: string }> = [];
+  const agent = createBrowserAgent({
+    openExternalBrowser: async (url, browser) => { launched.push({ url, browser }); },
+  });
+  const result = await agent.execute("browser.search", { query: "TypeScript tutorials", browser: "chrome" });
+  const data = result.data as { browser: string; query: string; resultsExtracted: boolean };
+  assert.equal(result.success, true);
+  assert.equal(launched.length, 1);
+  assert.equal(launched[0].browser, "chrome");
+  assert.equal(new URL(launched[0].url).searchParams.get("q"), "TypeScript tutorials");
+  assert.equal(data.browser, "chrome");
+  assert.equal(data.resultsExtracted, false);
+});
+
+test("unsupported explicit browser targets are rejected before launch", async () => {
+  let launchCount = 0;
+  const agent = createBrowserAgent({
+    openExternalBrowser: async () => { launchCount++; },
+  });
+  const result = await agent.execute("browser.open_url", { url: "https://example.com", browser: "powershell" });
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.equal(launchCount, 0);
+  assert.equal(result.evidence?.length ?? 0, 0);
 });
 
 test("search with no query does not open the browser", async () => {
