@@ -1,6 +1,7 @@
 import { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
+import { SpeechAudioGate } from "../audio/speechGate.js";
 import { BargeInDetector } from "./bargeIn.js";
 import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
@@ -42,6 +43,7 @@ export interface VoiceProviderInfo {
 export class VanessaVoiceSession {
   private turnDetector = new TurnDetector();
   private vad = new SileroVadDetector();
+  private readonly sarvamSpeechGate = new SpeechAudioGate();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
   private asr: AsrAdapter;
@@ -151,6 +153,7 @@ export class VanessaVoiceSession {
   }
 
   async activateSession(durationMs = 25000): Promise<void> {
+    this.sarvamSpeechGate.reset();
     this.wakeWord.touchActiveSession(durationMs);
     try {
       await this.ensureAsrConnected();
@@ -181,9 +184,17 @@ export class VanessaVoiceSession {
       return;
     }
 
-    // 3. Stream audio chunk to ASR
+    // 3. Forward only active speech and a short acoustic tail to Sarvam.
+    // Manual endpointing is owned by Vanessa, so local gating prevents long
+    // PTT silence from being sent upstream. Other providers keep their contract.
     if (this.wakeWord.isSessionActive()) {
-      this.asr.sendAudioChunk(chunk.pcm);
+      if (this.asr instanceof SarvamAsrAdapter) {
+        for (const frame of this.sarvamSpeechGate.push(chunk.pcm, vadRes.isSpeech)) {
+          this.asr.sendAudioChunk(frame);
+        }
+      } else {
+        this.asr.sendAudioChunk(chunk.pcm);
+      }
     }
 
     // 4. Turn detection: silence threshold + transcript completion
@@ -361,6 +372,7 @@ export class VanessaVoiceSession {
    * Barge-In interrupt: immediately cancels active speech and downstream responses
    */
   interrupt(): void {
+    this.sarvamSpeechGate.reset();
     this.sessionGeneration += 1;
     this.isSpeaking = false;
     this.tts.abort();
@@ -380,6 +392,7 @@ export class VanessaVoiceSession {
   }
 
   stop(): void {
+    this.sarvamSpeechGate.reset();
     this.sessionGeneration += 1;
     this.isSpeaking = false;
     this.tts.abort();

@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
+import { SpeechAudioGate } from "../audio/speechGate.js";
 
 test("Sarvam audio, partials and final transcript reach POST /api/execute once per activation", { timeout: 5000 }, async () => {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -133,4 +134,33 @@ test("Sarvam retries transient connection loss with bounded backoff", { timeout:
     adapter.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("Sarvam speech gate forwards pre-roll and speech, not idle silence", () => {
+  const gate = new SpeechAudioGate({ preRollFrames: 2, trailingSilenceFrames: 2 });
+  const quiet = (v: number) => new Int16Array([v, v]);
+  const speech = (v: number) => new Int16Array([v + 1000, v + 1000]);
+
+  assert.deepEqual(gate.push(quiet(1), false), []);
+  assert.deepEqual(gate.push(quiet(2), false), []);
+  const onset = gate.push(speech(3), true);
+  assert.deepEqual(onset.map(frame => frame[0]), [2, 1003]);
+
+  assert.deepEqual(gate.push(speech(4), true).map(frame => frame[0]), [1004]);
+  assert.deepEqual(gate.push(quiet(5), false).map(frame => frame[0]), [5]);
+  assert.deepEqual(gate.push(quiet(6), false).map(frame => frame[0]), [6]);
+  assert.deepEqual(gate.push(quiet(7), false), []);
+
+  // After a long pause, only the latest pre-roll and new speech are forwarded.
+  assert.deepEqual(gate.push(quiet(8), false), []);
+  const nextOnset = gate.push(speech(9), true);
+  assert.deepEqual(nextOnset.map(frame => frame[0]), [8, 1009]);
+});
+
+test("Sarvam speech gate reset prevents audio leaking across turns", () => {
+  const gate = new SpeechAudioGate({ preRollFrames: 3, trailingSilenceFrames: 1 });
+  gate.push(new Int16Array([11]), false);
+  gate.reset();
+  const output = gate.push(new Int16Array([22]), true);
+  assert.deepEqual(output.map(frame => frame[0]), [22]);
 });
