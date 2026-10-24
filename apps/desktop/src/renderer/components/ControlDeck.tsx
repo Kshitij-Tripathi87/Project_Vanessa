@@ -236,6 +236,63 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
         </article>
       </div>
 
+      <article className="control-panel control-ui-inspector">
+        <div className="control-panel-heading">
+          <span className="control-panel-icon windows-icon"><Eye size={17} /></span>
+          <div><h3>Active window inspector</h3><p>Accessibility-based UI map · no input-field values read</p></div>
+        </div>
+        {uiInspection && latestUiInspection ? (
+          <>
+            <div className="control-ui-window">
+              <span className="control-ui-window-status"><CheckCircle2 size={13} /> Inspected</span>
+              <strong>{uiInspection.windowTitle || "Foreground window"}</strong>
+              <span>Process ID {uiInspection.processId || "unavailable"} · {uiControls.length} control(s) shown{uiInspection.truncated ? " · list truncated" : ""}</span>
+              <span className="control-ui-privacy"><ShieldCheck size={12} /> Input values were not read. Invoking a control still requires approval.</span>
+            </div>
+            {uiControls.length ? (
+              <div className="control-ui-list">
+                {uiControls.map((control, index) => {
+                  const clickKind = controlTypeAsLabel(control.controlType);
+                  const canClick = canRequestUiClick(control) && Boolean(clickKind);
+                  return (
+                    <div className="control-ui-item" key={(control.automationId || control.name || "control") + "-" + index}>
+                      <span className={"control-ui-state " + (control.isEnabled && !control.isOffscreen ? "is-enabled" : "is-disabled")} />
+                      <div className="control-ui-item-copy">
+                        <strong>{control.name?.trim() || "(unnamed control)"}</strong>
+                        <span>{control.controlType || "Unknown type"}{control.automationId ? " · " + control.automationId : ""}</span>
+                      </div>
+                      {canClick && (
+                        <button
+                          type="button"
+                          className="control-ui-click no-drag"
+                          title="Request a fresh inspection and approval-gated invocation"
+                          onClick={() => onExecute('Click the ' + clickKind + ' named "' + control.name!.trim() + '"')}
+                        >Request click</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="control-empty-state">
+                <CircleAlert size={17} />
+                <div><strong>No accessible controls were returned</strong><span>The active app may not expose controls through Windows UI Automation.</span></div>
+              </div>
+            )}
+            {uiInspection.truncated && <p className="control-ui-truncated">Only the first bounded set of controls is displayed. Reinspect the current window for a fresh tree.</p>}
+          </>
+        ) : (
+          <div className="control-empty-state">
+            <Eye size={18} />
+            <div><strong>No window inspection yet</strong><span>Inspect the active window to list accessible controls. Vanessa will not read text-field values or fall back to screen coordinates.</span></div>
+          </div>
+        )}
+        <div className="control-note">
+          <ShieldCheck size={13} />
+          <span>Control actions are high-risk. Vanessa re-inspects the foreground window, requires approval, invokes one unique accessible control, and marks the downstream effect unverified unless a separate check proves it.</span>
+        </div>
+      </article>
+
       <article className="control-panel control-browser-note">
         <div className="control-panel-heading">
           <span className="control-panel-icon browser-icon"><Globe size={17} /></span>
