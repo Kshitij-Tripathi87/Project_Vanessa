@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractResourceTarget, inferResourceWorkflow, inferYouTubeSearch } from "../core/agentRouting.js";
+import { extractResourceTarget, inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferYouTubeSearch } from "../core/agentRouting.js";
 
 test("routes code changes to the coding workflow", () => {
   assert.deepEqual(inferResourceWorkflow('Fix the bug in "src/example.ts" and add a regression test.'), {
@@ -60,3 +60,31 @@ test("extracts explicit YouTube search queries from natural voice commands", () 
   assert.equal(inferYouTubeSearch("Search Google for rainforest sounds"), null);
 });
 
+
+test("routes explicit URLs to browser navigation instead of web search", () => {
+  assert.deepEqual(inferExplicitBrowserNavigation("Hey Vanessa, open https://example.com/docs?q=hello"), {
+    url: "https://example.com/docs?q=hello",
+  });
+  assert.deepEqual(inferExplicitBrowserNavigation("Open browser, open YouTube.com"), {
+    url: "https://youtube.com/",
+  });
+  assert.deepEqual(inferExplicitBrowserNavigation("Navigate to www.example.org/help"), {
+    url: "https://www.example.org/help",
+  });
+  assert.equal(inferExplicitBrowserNavigation("Open Chrome"), null);
+  assert.equal(inferExplicitBrowserNavigation("What is the URL for example.com?"), null);
+});
+
+test("routes explicit Google/web searches to the browser agent and preserves the query", () => {
+  assert.deepEqual(inferBrowserSearch("Search Google for lo-fi & jazz + focus"), {
+    query: "lo-fi & jazz + focus",
+  });
+  assert.deepEqual(inferBrowserSearch("Hey Vanessa, search the web for official Windows Bluetooth troubleshooting please"), {
+    query: "official Windows Bluetooth troubleshooting",
+  });
+  assert.deepEqual(inferBrowserSearch("Google search for Windows 11 keyboard shortcuts"), {
+    query: "Windows 11 keyboard shortcuts",
+  });
+  assert.equal(inferBrowserSearch("What is Bluetooth?"), null);
+  assert.equal(inferBrowserSearch("Open https://example.com"), null);
+});
