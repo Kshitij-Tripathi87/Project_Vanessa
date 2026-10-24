@@ -155,23 +155,30 @@ export class WindowsAgent implements SpecialistAgent {
         const res = await this.setVolume(level);
         return {
           agentId: this.id,
-          status: res.success ? "partial" : "failed",
+          status: res.success ? "completed" : "failed",
           success: res.success,
           summary: res.success
-            ? "Windows accepted volume-key adjustments toward " + res.level + "%; exact master volume was not read back."
-            : "Volume adjustment failed: " + res.output,
+            ? "System volume read back at " + res.level + "%."
+            : "Volume adjustment failed or could not be verified: " + res.output,
           spokenSummary: res.success
-            ? "I sent the volume adjustment, but I cannot verify the exact system volume."
-            : "I could not adjust the system volume.",
-          evidence: [],
+            ? "System volume set to " + res.level + " percent."
+            : "I could not verify the requested system volume.",
+          evidence: res.success ? [{
+            description: res.output,
+            source: "Windows Core Audio master-volume read-back",
+            timestamp: startTime,
+            confidence: 1,
+            data: { requestedLevel: level, observedLevel: res.level },
+          }] : [],
           artifacts: [],
-          verification: { passed: false, details: res.output },
+          verification: { passed: res.success, details: res.output },
           data: {
-            actionsAttempted: ["Request volume adjustment: " + String(level)],
+            actionsAttempted: ["Set default playback endpoint master volume to " + String(level) + "%"],
             actualObservations: res.output,
-            failures: [res.output],
+            failures: res.success ? [] : [res.output],
             requestedLevel: level,
-            readBackVerified: false,
+            actualObservedLevel: res.level,
+            readBackVerified: res.success,
           },
         };
       }
@@ -351,15 +358,37 @@ export class WindowsAgent implements SpecialistAgent {
     if (!Number.isFinite(numericLevel) || numericLevel < 0 || numericLevel > 100) {
       return { success: false, level: numericLevel, output: "Volume level must be a number between 0 and 100." };
     }
+
+    // Use the Windows Core Audio endpoint API instead of media-key events,
+    // which depend on foreground focus and cannot prove a target level.
+    const script = "$ErrorActionPreference = 'Stop'\n$source = @'\nusing System;\nusing System.Runtime.InteropServices;\n\nnamespace VanessaAudio {\n  public enum EDataFlow { eRender = 0, eCapture = 1, eAll = 2 }\n  public enum ERole { eConsole = 0, eMultimedia = 1, eCommunications = 2 }\n\n  [ComImport, Guid(\"A95664D2-9614-4F35-A746-DE8DB63617E6\"),\n   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n  public interface IMMDeviceEnumerator {\n    [PreserveSig] int EnumAudioEndpoints(EDataFlow flow, uint stateMask, out IntPtr devices);\n    [PreserveSig] int GetDefaultAudioEndpoint(EDataFlow flow, ERole role, out IMMDevice device);\n  }\n\n  [ComImport, Guid(\"D666063F-1587-4E43-81F1-B948E807363F\"),\n   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n  public interface IMMDevice {\n    [PreserveSig] int Activate(ref Guid iid, uint context, IntPtr activationParams,\n      [MarshalAs(UnmanagedType.Interface)] out IAudioEndpointVolume endpoint);\n  }\n\n  [ComImport, Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\"),\n   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n  public interface IAudioEndpointVolume {\n    [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);\n    [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);\n    [PreserveSig] int GetChannelCount(out uint channelCount);\n    [PreserveSig] int SetMasterVolumeLevel(float levelDb, ref Guid eventContext);\n    [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);\n    [PreserveSig] int GetMasterVolumeLevel(out float levelDb);\n    [PreserveSig] int GetMasterVolumeLevelScalar(out float level);\n  }\n\n  public static class EndpointVolume {\n    public static float SetAndRead(float requestedLevel) {\n      if (requestedLevel < 0.0f || requestedLevel > 1.0f)\n        throw new ArgumentOutOfRangeException(\"requestedLevel\");\n      object enumeratorObject = null;\n      IMMDevice device = null;\n      IAudioEndpointVolume endpoint = null;\n      try {\n        Type enumeratorType = Type.GetTypeFromCLSID(new Guid(\"BCDE0395-E52F-467C-8E3D-C4579291692E\"), true);\n        enumeratorObject = Activator.CreateInstance(enumeratorType);\n        IMMDeviceEnumerator enumerator = (IMMDeviceEnumerator)enumeratorObject;\n        Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device));\n        Guid iid = typeof(IAudioEndpointVolume).GUID;\n        Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out endpoint));\n        Guid eventContext = Guid.Empty;\n        Marshal.ThrowExceptionForHR(endpoint.SetMasterVolumeLevelScalar(requestedLevel, ref eventContext));\n        float observed;\n        Marshal.ThrowExceptionForHR(endpoint.GetMasterVolumeLevelScalar(out observed));\n        return observed;\n      } finally {\n        if (endpoint != null) Marshal.ReleaseComObject(endpoint);\n        if (device != null) Marshal.ReleaseComObject(device);\n        if (enumeratorObject != null && Marshal.IsComObject(enumeratorObject)) Marshal.ReleaseComObject(enumeratorObject);\n      }\n    }\n  }\n}\n'@\nAdd-Type -TypeDefinition $source -Language CSharp\n$target = [single]([double]$env:VANESSA_VOLUME / 100.0)\n$observed = [VanessaAudio.EndpointVolume]::SetAndRead($target)\n[pscustomobject]@{ Requested = [double]$target; Observed = [double]$observed } | ConvertTo-Json -Compress";
     try {
-      await this.powerShellRunner(
-        "$ErrorActionPreference = 'Stop'; $wsh = New-Object -ComObject WScript.Shell; 1..50 | ForEach-Object { $wsh.SendKeys([char]174) }; $steps = [math]::Round([double]$env:VANESSA_VOLUME / 2); 1..$steps | ForEach-Object { $wsh.SendKeys([char]175) }",
-        { VANESSA_VOLUME: String(Math.round(numericLevel)) },
-        5000
-      );
-      return { success: true, level: Math.round(numericLevel), output: "Windows accepted volume-key adjustment requests; the exact master volume was not read back." };
+      const { stdout } = await this.powerShellRunner(script, { VANESSA_VOLUME: String(numericLevel) }, 8000);
+      const parsed = JSON.parse(String(stdout).trim()) as { Requested?: number; Observed?: number };
+      const observed = Number(parsed.Observed);
+      if (!Number.isFinite(observed) || observed < 0 || observed > 1) {
+        return { success: false, level: numericLevel, output: "Windows returned an invalid master-volume read-back value." };
+      }
+      const observedPercent = Math.round(observed * 1000) / 10;
+      const requestedScalar = numericLevel / 100;
+      if (Math.abs(observed - requestedScalar) > 0.015) {
+        return {
+          success: false,
+          level: observedPercent,
+          output: "Windows master volume read back as " + observedPercent + "%; requested " + numericLevel + "%. The requested state was not verified.",
+        };
+      }
+      return {
+        success: true,
+        level: observedPercent,
+        output: "Windows Core Audio set the default playback endpoint to " + observedPercent + "% and read back the same master-volume value.",
+      };
     } catch (err) {
-      return { success: false, level: numericLevel, output: "Windows volume adjustment failed: " + (err instanceof Error ? err.message : String(err)) };
+      return {
+        success: false,
+        level: numericLevel,
+        output: "Windows Core Audio volume adjustment failed: " + (err instanceof Error ? err.message : String(err)),
+      };
     }
   }
 
