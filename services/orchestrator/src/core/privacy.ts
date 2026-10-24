@@ -28,6 +28,17 @@ export class PrivacyGuard {
     this.allowedFolders.add(this.defaultFolder);
     // Also allow current workspace incident lab if running
     this.allowedFolders.add(path.resolve(process.cwd()));
+    // Add the detected monorepo root as an explicit approved workspace when launched from a child package.
+    let workspaceCandidate = path.resolve(process.cwd());
+    while (true) {
+      if (fs.existsSync(path.join(workspaceCandidate, "pnpm-workspace.yaml"))) {
+        try { this.allowedFolders.add(fs.realpathSync(workspaceCandidate)); } catch { /* retain existing approved roots */ }
+        break;
+      }
+      const parent = path.dirname(workspaceCandidate);
+      if (parent === workspaceCandidate) break;
+      workspaceCandidate = parent;
+    }
   }
 
   getAllowedFolders(): string[] {

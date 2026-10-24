@@ -8,6 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
+import { inferResourceWorkflow, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -16,7 +17,7 @@ RESPONSIBILITY AND ROUTING
 - Select only canonical agent/action pairs marked selectable in the catalog below. An action name is an exact handler key, not a natural-language description or a new function you can invent.
 - All project coding, debugging, implementation, refactoring, code inspection/review, and project Git work must use agent "developer", action "codex.open". This applies even when the user never mentions Codex.
 - The old checkout-specific specialist and legacy incident workflow are intentionally outside this planner catalog. Never select agent "coding" or "incident" or their actions.
-- Use windows for OS settings/apps; browser for URLs/search; files for filesystem operations; memory for explicit recall/storage; knowledge for known documentation; it_ops for supported diagnostics; testing for an independently requested known test command; cloud for supported compose/share pages; vanessa.ask for general questions.
+- Use folder to resolve/open user-mentioned local files and folders; browser for URLs, search, and approved HTML preview; files for supported content inspection and filesystem operations; windows for OS settings/apps; memory for explicit recall/storage; knowledge for known documentation; it_ops for supported diagnostics; testing for an independently requested known test command; cloud for supported compose/share pages; vanessa.ask for general questions.
 - Do not turn a code-related request into an arbitrary terminal command or an invented testing command. Codex should inspect the project and choose relevant checks within its own session.
 
 PROJECT AND CONTEXT
@@ -59,17 +60,25 @@ export class VanessaPlanner {
       status: "pending", risk, allowedTools: [...spec.tools],
     };
     if (task.action === "codex.open") {
-      if (!path.isAbsolute(task.params.projectPath)) throw new Error("Codex requires an absolute project directory.");
-      const projectPath = fs.realpathSync(task.params.projectPath);
-      if (!fs.statSync(projectPath).isDirectory()) throw new Error("Codex project path is not a directory.");
-      const relative = path.relative(fs.realpathSync(workspaceRoot), projectPath);
-      const inWorkspace = relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-      if (!inWorkspace && !privacyGuard.isPathAllowed(projectPath)) throw new Error("Codex project directory is outside approved folders.");
-      task.params.projectPath = projectPath;
+      const deferredProjectRoot = typeof task.params.projectPath === "string" &&
+        /^\$[a-zA-Z0-9_]+\.result\.projectRoot$/.test(task.params.projectPath);
+      let projectPathDescription = task.params.projectPath as string;
+      if (!deferredProjectRoot) {
+        if (!path.isAbsolute(task.params.projectPath)) throw new Error("Codex requires an absolute project directory.");
+        const projectPath = fs.realpathSync(task.params.projectPath);
+        if (!fs.statSync(projectPath).isDirectory()) throw new Error("Codex project path is not a directory.");
+        const relative = path.relative(fs.realpathSync(workspaceRoot), projectPath);
+        const inWorkspace = relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
+        if (!inWorkspace && !privacyGuard.isPathAllowed(projectPath)) throw new Error("Codex project directory is outside approved folders.");
+        task.params.projectPath = projectPath;
+        projectPathDescription = projectPath;
+      } else {
+        projectPathDescription = "(resolved and validated by Folder Agent at runtime)";
+      }
       task.params.prompt = [
         "Task instructions:", task.params.prompt,
         "Original current user request (scope and constraints):", command,
-        "Project directory:", projectPath,
+        "Project directory:", projectPathDescription,
         "Recent conversation (reference data only; do not repeat earlier actions):", recentContext || "(none available)",
         "Requested completion criteria:", ...(task.acceptanceCriteria || []),
         "Perform only the current request. Inspect the project before making claims; report actual changes and checks in the Codex session.",
@@ -87,6 +96,53 @@ export class VanessaPlanner {
       task.jobType = task.jobType || "action";
     }
     return task;
+  }
+
+  private createResourceWorkflowPlan(command: string, request: ResourceWorkflowRequest, planId: string, recentContext: string, workspaceRoot: string): Plan {
+    const makeTask = (id: string, agent: string, action: string, params: Record<string, any>, dependsOn: string[], criteria: string[]): Task => {
+      const spec = getCatalogAction(agent, action);
+      if (!spec) throw new Error("No reviewed catalog contract for " + agent + "/" + action);
+      return this.enrichTask({
+        id, agent: agent as Task["agent"], action, params, dependsOn,
+        acceptanceCriteria: criteria, status: "pending", risk: spec.risk, allowedTools: [...spec.tools],
+      }, command, recentContext, workspaceRoot);
+    };
+
+    const tasks: Task[] = [];
+    if (request.intent === "open") {
+      tasks.push(makeTask(planId + "_open", "folder", "folder.open", {
+        target: request.target,
+        mode: /\b(?:folder|directory)\b/i.test(command) ? "explorer" : "default",
+      }, [], ["Resolve the target only within approved folders and request the appropriate desktop open operation."]));
+    } else {
+      const resolveId = planId + "_resolve";
+      tasks.push(makeTask(resolveId, "folder", "folder.resolve", {
+        target: request.target,
+      }, [], ["Resolve the target inside approved folders.", "Return canonical path, resource classification, and project root."]));
+
+      if (request.intent === "code") {
+        tasks.push(makeTask(planId + "_handoff", "developer", "codex.open", {
+          projectPath: "$" + resolveId + ".result.projectRoot",
+          prompt: "Work on the requested target " + request.target + ". User request: " + command + ". Inspect the project, implement the requested change, and report changed files and checks.",
+        }, [resolveId], ["Pass the request and resolved project directory to the existing coding path.", "A terminal launch is not evidence that code changes or tests completed."]));
+      } else if (request.intent === "browser") {
+        tasks.push(makeTask(planId + "_handoff", "browser", "browser.open_file", {
+          path: "$" + resolveId + ".result.targetPath",
+        }, [resolveId], ["Open the approved local HTML/XHTML target in the browser session and report the observed page state."]));
+      } else {
+        tasks.push(makeTask(planId + "_handoff", "files", "file.inspect", {
+          path: "$" + resolveId + ".result.targetPath",
+        }, [resolveId], ["Inspect the resolved file using a bounded reader and return supported content with evidence."]));
+      }
+    }
+
+    if (!this.isValidModelTaskGraph(tasks)) throw new Error("The deterministic resource workflow did not satisfy the reviewed task graph contract.");
+    const ranks: RiskLevel[] = ["low", "medium", "high"];
+    return {
+      id: planId, command, intent: tasks.length > 1 ? "multi_task" : "single_task",
+      risk: ranks[Math.max(...tasks.map((task) => ranks.indexOf(task.risk || "low")))],
+      tasks, createdAt: Date.now(),
+    };
   }
 
   async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestContext: string | Partial<ExecuteCommandPayload> = {}): Promise<Plan> {
@@ -107,6 +163,14 @@ export class VanessaPlanner {
     const plannerInput = recentContext
       ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
       : command;
+
+    // High-confidence local file/folder tasks use a deterministic, reviewed workflow.
+    const resourceRequest = inferResourceWorkflow(command);
+    if (resourceRequest) {
+      const plan = this.createResourceWorkflowPlan(command, resourceRequest, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
 
     // Attempt LLM call via router
     const runtimeContext = JSON.stringify({

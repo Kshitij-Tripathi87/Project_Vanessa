@@ -1,0 +1,51 @@
+name: Agent Workflow CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-workflow-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @vanessa/shared build
+
+      - name: Build orchestrator
+        run: pnpm --filter @vanessa/orchestrator build
+
+      - name: Test deterministic agent workflows
+        run: pnpm --filter @vanessa/orchestrator test:agent-routing
+
+      - name: Test reviewed agent catalog
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
+
+      - name: Regression-test existing coding handoff
+        run: pnpm --filter @vanessa/orchestrator test:codex
