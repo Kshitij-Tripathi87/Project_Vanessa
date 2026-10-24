@@ -93,7 +93,12 @@ jobs:
 
           $installDir = Join-Path $env:RUNNER_TEMP "VanessaSmokeInstall"
           if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
+          # Wait for the setup process itself, not its process tree: runAfterFinish may launch Vanessa.
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -PassThru
+          if (!$install.WaitForExit(90000)) {
+            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+            throw "NSIS installer did not exit within 90 seconds."
+          }
           if ($install.ExitCode -ne 0) { throw "NSIS installer exited with code $($install.ExitCode)." }
 
           $appPath = Join-Path $installDir "Vanessa.exe"
