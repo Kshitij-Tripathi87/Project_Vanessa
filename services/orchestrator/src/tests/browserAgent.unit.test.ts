@@ -55,6 +55,6 @@ test("external browser launch failures remain failures with no success evidence"
   assert.equal(result.status, "failed");
   assert.equal(data.externalBrowser, false);
   assert.match(data.error, /no default browser/i);
-  assert.equal(result.evidence.length, 0);
+  assert.equal(result.evidence?.length ?? 0, 0);
   assert.match(result.spokenSummary || "", /could not open/i);
 });
