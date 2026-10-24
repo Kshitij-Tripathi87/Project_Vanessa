@@ -29,6 +29,7 @@ export class WindowsAgent implements SpecialistAgent {
     "wifi_adapter_control",
     "bluetooth_control",
     "volume_control",
+    "brightness_control",
     "application_launch",
     "screenshot_capture",
   ];
@@ -37,8 +38,24 @@ export class WindowsAgent implements SpecialistAgent {
     "windows_setting_toggle",
     "net_adapter_control",
     "audio_volume_set",
+    "display_brightness_control",
     "process_control",
   ];
+
+  private simulatedOutcome(action: string, extraData: Record<string, unknown> = {}): AgentResult {
+    const details = "FAKE mode: " + action + " was simulated for testing. No real Windows state was changed or verified.";
+    return {
+      agentId: this.id,
+      status: "partial",
+      success: true,
+      summary: details,
+      spokenSummary: "This action was simulated for testing. No real Windows state was changed or verified.",
+      evidence: [],
+      artifacts: [],
+      verification: { passed: false, details },
+      data: { simulated: true, actualStateChanged: false, actualStateVerified: false, actualObservations: details, failures: [], ...extraData },
+    };
+  }
 
   async execute(
     actionOrTask: string | AgentTask,
@@ -54,6 +71,7 @@ export class WindowsAgent implements SpecialistAgent {
     switch (action) {
       case "wifi.restart_adapter":
       case "windows.wifi_restart": {
+        if (this.fakeMode) return this.simulatedOutcome("Wi-Fi adapter restart", { adapter: "Unknown", connected: false });
         const res = await this.restartWifiAdapter();
         const evidence: AgentEvidence[] = res.success ? [{
           description: res.output,
@@ -89,6 +107,7 @@ export class WindowsAgent implements SpecialistAgent {
 
       case "wifi.status":
       case "windows.wifi_status": {
+        if (this.fakeMode) return this.simulatedOutcome("Wi-Fi status read", { status: "Unknown" });
         const res = await this.wifiStatus();
         return {
           agentId: this.id,
@@ -121,6 +140,7 @@ export class WindowsAgent implements SpecialistAgent {
       case "bluetooth.disable":
       case "windows.bluetooth_toggle": {
         const enable = action.includes("enable") || params.enabled === true;
+        if (this.fakeMode) return this.simulatedOutcome("Bluetooth state change", { requestedState: enable ? "On" : "Off", state: "Unknown" });
         const res = await this.setBluetoothState(enable);
         return {
           agentId: this.id,
@@ -152,6 +172,7 @@ export class WindowsAgent implements SpecialistAgent {
       case "volume.set":
       case "windows.volume_set": {
         const level = params.level ?? 50;
+        if (this.fakeMode) return this.simulatedOutcome("Master volume change", { requestedLevel: level, readBackVerified: false });
         const res = await this.setVolume(level);
         return {
           agentId: this.id,
@@ -186,6 +207,7 @@ export class WindowsAgent implements SpecialistAgent {
       case "app.open":
       case "windows.app_open": {
         const appName = params.appName || params.name || params.app || "notepad";
+        if (this.fakeMode) return this.simulatedOutcome("Application launch", { appName });
         const res = await this.openApp(appName);
         return {
           agentId: this.id,
@@ -216,6 +238,7 @@ export class WindowsAgent implements SpecialistAgent {
       case "app.close":
       case "windows.app_close": {
         const appName = String(params.appName || params.name || "");
+        if (this.fakeMode) return this.simulatedOutcome("Application close", { appName });
         const res = await this.closeApp(appName);
         return {
           agentId: this.id,
@@ -241,6 +264,7 @@ export class WindowsAgent implements SpecialistAgent {
 
       case "screenshot.capture":
       case "windows.screenshot_capture": {
+        if (this.fakeMode) return this.simulatedOutcome("Desktop screenshot", { path: "" });
         const res = await this.captureScreenshot();
         return {
           agentId: this.id,
