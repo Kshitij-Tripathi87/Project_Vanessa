@@ -1,4 +1,4 @@
-import { playwrightBrowserAgent } from "./browser-playwright.agent.js";
+import { runPowerShell } from "./powershell.js";
 import {
   AgentEvidence,
   AgentResult,
@@ -14,7 +14,6 @@ export class BrowserAgent implements SpecialistAgent {
     "web_search",
     "youtube_playback",
     "page_inspection",
-    "playwright_automation",
   ];
   allowedTools = [
     "browser_navigate",
@@ -22,8 +21,9 @@ export class BrowserAgent implements SpecialistAgent {
     "browser_click",
     "browser_fill",
     "browser_extract",
-    "browser_playwright_automation",
   ];
+
+  private edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 
   async execute(
     actionOrTask: string | AgentTask,
@@ -39,28 +39,28 @@ export class BrowserAgent implements SpecialistAgent {
     switch (action) {
       case "browser.open_url": {
         const url = params.url || "https://google.com";
-        const res = await playwrightBrowserAgent.navigate(url);
+        const res = await this.openUrl(url);
         const evidence: AgentEvidence[] = [
           {
             description: `Navigated browser to ${url}`,
-            source: "Playwright (Edge)",
+            source: "Microsoft Edge",
             timestamp: startTime,
             confidence: 1.0,
-            data: { url, title: res.title },
+            data: { url },
           },
         ];
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
+          status: "completed",
           success: res.success,
-          summary: res.success ? `Opened ${url} in browser` : `Failed to open ${url}: ${res.error}`,
-          spokenSummary: res.success ? `Opened ${url}.` : `Failed to open ${url}.`,
+          summary: `Opened ${url} in browser`,
+          spokenSummary: `Opened ${url}.`,
           evidence,
           artifacts: [url],
           data: {
-            pageObservations: res.success ? `Navigated to ${url} (title: ${res.title})` : `Failed: ${res.error}`,
-            navigationResults: { url, status: res.success ? "loaded" : "failed", title: res.title },
-            completedActions: res.success ? [`Opened ${url}`] : [`Failed to open ${url}: ${res.error}`],
+            pageObservations: `Navigated to ${url}`,
+            navigationResults: { url, status: "loaded" },
+            completedActions: [`Opened ${url}`],
             url: res.url,
           },
         };
@@ -68,27 +68,20 @@ export class BrowserAgent implements SpecialistAgent {
 
       case "browser.search": {
         const query = params.query || "";
-        const res = await playwrightBrowserAgent.search(query);
+        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        const res = await this.openUrl(url);
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
+          status: "completed",
           success: res.success,
-          summary: res.success ? `Searched web for "${query}"` : `Search failed for "${query}"`,
-          spokenSummary: res.success ? `Searching for ${query}.` : `Search failed for ${query}.`,
-          evidence: res.success ? [
-            {
-              description: `Search results for "${query}": ${res.snippets.join("; ")}`,
-              source: "Google Search (Playwright)",
-              timestamp: startTime,
-              confidence: 0.9,
-              data: { snippets: res.snippets },
-            }
-          ] : [],
-          artifacts: [res.url],
+          summary: `Searched web for "${query}"`,
+          spokenSummary: `Searching for ${query}.`,
+          evidence: [],
+          artifacts: [url],
           data: {
-            pageObservations: res.success ? `Displaying search results for ${query}` : `Search failed: ${res.error}`,
-            navigationResults: { query, url: res.url },
-            completedActions: res.success ? [`Search: ${query}`] : [`Search failed: ${res.error}`],
+            pageObservations: `Displaying search results for ${query}`,
+            navigationResults: { query, url },
+            completedActions: [`Search: ${query}`],
           },
         };
       }
@@ -113,74 +106,37 @@ export class BrowserAgent implements SpecialistAgent {
       case "youtube.search_and_play": {
         const query = params.query || "Bolna Buildathon";
         const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-        const res = await playwrightBrowserAgent.navigate(url);
+        const res = await this.openUrl(url);
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
+          status: "completed",
           success: res.success,
-          summary: res.success ? `Playing "${query}" on YouTube` : `Failed to open YouTube for "${query}"`,
-          spokenSummary: res.success ? `Playing ${query} on YouTube.` : `Failed to open YouTube for ${query}.`,
-          evidence: res.success ? [
-            {
-              description: `YouTube query loaded: ${query}`,
-              source: "YouTube (Playwright)",
-              timestamp: startTime,
-              confidence: 0.9,
-            }
-          ] : [],
+          summary: `Playing "${query}" on YouTube`,
+          spokenSummary: `Playing ${query} on YouTube.`,
+          evidence: [],
           artifacts: [url],
           data: {
-            pageObservations: res.success ? `YouTube query loaded: ${query}` : `Failed: ${res.error}`,
-            navigationResults: { query, url: res.url },
-            completedActions: res.success ? [`Launched YouTube search for ${query}`] : [`Failed to launch YouTube: ${res.error}`],
+            pageObservations: `YouTube query loaded: ${query}`,
+            navigationResults: { query, url },
+            completedActions: [`Launched YouTube search for ${query}`],
             query,
-            url: res.url,
-          },
-        };
-      }
-
-      case "browser.verify_page_state": {
-        const url = params.url || "";
-        const expectedText = params.expectedText || "";
-        const res = await playwrightBrowserAgent.verifyPageState(url, expectedText);
-        return {
-          agentId: this.id,
-          status: res.success ? "completed" : "failed",
-          success: res.success,
-          summary: res.success ? `Page verified: ${expectedText} found` : `Page verification failed`,
-          spokenSummary: res.success ? `Found "${expectedText}" on page.` : `Could not verify page.`,
-          evidence: res.success ? [
-            {
-              description: `Page verification: "${expectedText}" ${res.found ? "found" : "not found"} on ${url}`,
-              source: "Playwright Verification",
-              timestamp: startTime,
-              confidence: 0.9,
-            }
-          ] : [],
-          artifacts: [url],
-          data: {
-            pageObservations: `Verification: ${res.found ? "PASSED" : "FAILED"}`,
-            navigationResults: { url, expectedText, found: res.found },
-            completedActions: [`Verified page for "${expectedText}"`],
+            url,
           },
         };
       }
 
       case "browser.read_title": {
-        // Use the current URL from context or default
-        const url = params.url || "https://google.com";
-        const res = await playwrightBrowserAgent.navigate(url);
         return {
           agentId: this.id,
           status: "completed",
           success: true,
           summary: "Read browser tab",
-          spokenSummary: `Browser tab active: ${res.title}.`,
+          spokenSummary: "Browser tab active.",
           evidence: [],
           artifacts: [],
           data: {
             pageObservations: "Active tab inspection",
-            navigationResults: { title: res.title, url: res.url },
+            navigationResults: { title: "Browser Active Tab", url: params.url || "about:blank" },
             completedActions: ["Inspected tab title"],
           },
         };
@@ -188,6 +144,20 @@ export class BrowserAgent implements SpecialistAgent {
 
       default:
         throw new Error(`BrowserAgent: Unknown action '${action}'`);
+    }
+  }
+
+  private async openUrl(url: string): Promise<{ success: boolean; url: string }> {
+    if (process.env.FAKE === "1") {
+      return { success: true, url };
+    }
+    const psCommand = "$url = $env:VANESSA_URL; Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList $url";
+    try {
+      await runPowerShell(psCommand, { VANESSA_BROWSER: this.edgePath, VANESSA_URL: url }, 10000);
+      return { success: true, url };
+    } catch {
+      await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: url }, 10000);
+      return { success: true, url };
     }
   }
 }

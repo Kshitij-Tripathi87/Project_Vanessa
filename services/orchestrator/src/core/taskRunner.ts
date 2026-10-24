@@ -295,12 +295,16 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       taskId: task.id,
       parentTaskId: task.parentId,
       objective: task.action,
-      contextRefs: [],
+      action: task.action,
+      params: resolvedParams,
       allowedTools: task.allowedTools || agent.allowedTools || [],
       dependsOn: task.dependsOn || [],
       acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
-      timeoutMs: 30000,
-      schemaVersion: 1,
+      deadlineMs: 30000,
+      context: [
+        workingMemory.getSnapshot(),
+        ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
+      ],
     };
 
     await resourceLockManager.acquireSlot();
@@ -546,12 +550,16 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         taskId: task.id,
         parentTaskId: task.parentId,
         objective: task.action,
-        contextRefs: [],
+        action: task.action,
+        params: resolvedParams,
         allowedTools: task.allowedTools || agent.allowedTools || [],
         dependsOn: task.dependsOn || [],
         acceptanceCriteria: task.acceptanceCriteria || (skill?.objective ? [skill.objective] : []),
-        timeoutMs: 30000,
-        schemaVersion: 1,
+        deadlineMs: 30000,
+        context: [
+          workingMemory.getSnapshot(),
+          ...(skill ? [{ type: "skill_instructions", skill: skill.name, instructions: skill.instructions }] : []),
+        ],
       };
 
       const result = await agent.execute(task.action, resolvedParams, {

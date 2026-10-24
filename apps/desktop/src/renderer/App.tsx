@@ -152,7 +152,7 @@ export function App() {
       await window.vanessa.cancelTask();
     } else {
       try {
-        await fetch("http://127.0.0.1:4139/api/cancel", { method: "POST" });
+        await fetch("http://127.0.0.1:4319/api/cancel", { method: "POST" });
       } catch (err) {
         console.error("Failed to trigger kill switch:", err);
       }
@@ -162,7 +162,7 @@ export function App() {
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
     try {
-      const res = await fetch("http://127.0.0.1:4139/api/privacy/folders", {
+      const res = await fetch("http://127.0.0.1:4319/api/privacy/folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderPath: newFolderInput.trim() }),
@@ -839,7 +839,7 @@ export function App() {
         <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "var(--text-muted)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
             <Activity size={12} color="var(--cyan-glow)" />
-            <span>Port 4139 Online</span>
+            <span>Port 4319 Online</span>
           </div>
           <span>•</span>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>

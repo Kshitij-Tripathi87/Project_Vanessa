@@ -262,7 +262,7 @@ export class IncidentAgent {
 
     // 2. Apply patch in isolated branch
     const patchedContent = originalContent.replace(
-      "const discountRate = promo.discountRate;\n  const discount = (subtotal * discountRate) / 100;",
+      "const discount = (subtotal * promo.discountRate) / 100;",
       "const discountRate = promo?.discountRate ?? 0;\n  const discount = (subtotal * discountRate) / 100;"
     );
     fs.writeFileSync(checkoutFile, patchedContent, "utf-8");

@@ -201,7 +201,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   // Current renderer fixes the voice socket to 4500. Fail clearly rather than
   // launch an unreachable voice service when a different port is configured.
   if (config.voice && Number(process.env.VOICE_AGENT_PORT || 4500) !== 4500) throw new Error('Current desktop voice client requires VOICE_AGENT_PORT=4500.');
-  const port = Number(process.env.VANESSA_PORT || 4139);
+  const port = Number(process.env.VANESSA_PORT || 4319);
   if (!Number.isInteger(port) || port < 1 || port > 65535 || [4500, 5173].includes(port)) throw new Error('Invalid VANESSA_PORT (must differ from voice/UI ports 4500/5173).');
   const orchestratorUrl = `http://127.0.0.1:${port}`;
   process.env.ORCHESTRATOR_URL = orchestratorUrl;

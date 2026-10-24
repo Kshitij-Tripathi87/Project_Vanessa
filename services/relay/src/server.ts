@@ -1,7 +1,4 @@
-import dotenv from "dotenv";
-import * as path from "node:path";
-import * as fs from "node:fs";
-import { fileURLToPath } from "node:url";
+import "dotenv/config";
 import express from "express";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
@@ -14,13 +11,6 @@ import {
   verifyTotp,
 } from "./pairing.js";
 import type { DeviceRole, RelayMessage } from "./types.js";
-
-// Load .env from project root. Prefer cwd (Launch-Vanessa.bat sets it to repo root),
-// fall back to resolving relative to this file's location.
-const cwdEnv = path.join(process.cwd(), ".env");
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const envPath = fs.existsSync(cwdEnv) ? cwdEnv : path.join(projectRoot, ".env");
-dotenv.config({ path: envPath });
 
 const app = express();
 app.use(express.json({ limit: "32kb" }));

@@ -98,5 +98,4 @@ export interface VanessaEvent<T = any> {
   type: EventType;
   payload: T;
   timestamp: number;
-  requestId?: string;
 }

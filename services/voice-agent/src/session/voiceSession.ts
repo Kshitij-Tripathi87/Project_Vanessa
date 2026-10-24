@@ -255,11 +255,10 @@ export class VanessaVoiceSession {
     this.conversationContext.push({ role: "user", content: command });
     this.conversationContext = this.conversationContext.slice(-8);
     this.asr.setConversationContext?.(this.conversationContext);
-    const source = (process.env.VOICE_COMMAND_SOURCE as any) || "desktop";
     const requestId = turnId
-      ? `req-${createHash("sha256").update(turnId).digest("hex").slice(0, 16)}`
-      : `req-${randomUUID().slice(0, 8)}`;
-    const idempotencyKey = `${source}:${requestId}`;
+      ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
+      : `voice-${randomUUID()}`;
+    const idempotencyKey = `voice:${requestId}`;
     this.handlers.onFinalTranscript?.(command, requestId);
 
     let responseText: string;
@@ -276,7 +275,7 @@ export class VanessaVoiceSession {
           command,
           requestId,
           idempotencyKey,
-          source,
+          source: "voice",
           language,
           conversationContext: this.conversationContext,
         });

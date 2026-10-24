@@ -10,7 +10,6 @@ export interface FishAsrOptions {
   model?: string;
   sampleRate?: number;
   allowFallback?: boolean;
-  maxReconnectAttempts?: number;
 }
 
 export interface FishAsrContextTurn {
@@ -50,8 +49,6 @@ export class FishAsrAdapter implements AsrAdapter {
   private status: ProviderRuntimeStatus = { requested: "Fish Audio", active: "Fish Audio", state: "idle" };
   private statusHandler?: (status: ProviderRuntimeStatus) => void;
   private connectPromise?: Promise<void>;
-  private consecutiveFailures = 0;
-  private maxReconnectAttempts: number;
 
   constructor(options?: FishAsrOptions) {
     this.apiKey = options?.apiKey || process.env.FISH_API_KEY || "";
@@ -59,7 +56,6 @@ export class FishAsrAdapter implements AsrAdapter {
     this.model = options?.model || process.env.FISH_ASR_MODEL || "transcribe-stream-1";
     this.sampleRate = options?.sampleRate || 16000;
     this.allowFallback = options?.allowFallback ?? (process.env.VOICE_ALLOW_FALLBACK === "true");
-    this.maxReconnectAttempts = options?.maxReconnectAttempts ?? (Number(process.env.VOICE_MAX_RECONNECT_ATTEMPTS) || 5);
     if (!this.apiKey || !this.apiKey.startsWith("sk-fish-")) {
       this.status = this.allowFallback
         ? { requested: "Fish Audio", active: "Local Whisper", state: "fallback", detail: "Fish API key is missing or invalid; local Whisper fallback is enabled." }
@@ -279,25 +275,14 @@ export class FishAsrAdapter implements AsrAdapter {
             finish(error);
           }
         } else if (this.isSessionActive && !this.finalizing && !this.useFallback && !this.isReconnecting) {
-          if (this.consecutiveFailures >= this.maxReconnectAttempts) {
-            console.warn(`[FishAsrAdapter] Max reconnect attempts (${this.maxReconnectAttempts}) reached. Transitioning to fallback/error.`);
-            if (this.allowFallback) {
-              this.initFallback("Max reconnect attempts reached. Local Whisper fallback enabled.");
-            } else {
-              this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: `Max reconnect attempts (${this.maxReconnectAttempts}) reached.` });
-            }
-          } else {
-            this.consecutiveFailures++;
-            this.isReconnecting = true;
-            this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: `Reconnecting to Fish Audio (attempt ${this.consecutiveFailures}/${this.maxReconnectAttempts}).` });
-            this.reconnectTimer = setTimeout(() => {
-              this.isReconnecting = false;
-              void this.initWebSocket().catch((err) => this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: err.message }));
-            }, 1500);
-          }
+          this.isReconnecting = true;
+          this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "connecting", detail: "Reconnecting to Fish Audio." });
+          this.reconnectTimer = setTimeout(() => {
+            this.isReconnecting = false;
+            void this.initWebSocket().catch((err) => this.setStatus({ requested: "Fish Audio", active: "Unavailable", state: "error", detail: err.message }));
+          }, 1500);
         } else if (!this.isSessionActive && !this.useFallback) {
           this.setStatus({ requested: "Fish Audio", active: "Fish Audio", state: "idle" });
-          this.consecutiveFailures = 0;
         }
       });
     return promise;

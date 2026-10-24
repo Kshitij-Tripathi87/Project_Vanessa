@@ -23,9 +23,6 @@ import { permissionGuard } from "../../services/orchestrator/src/core/permission
 import { testingAgent } from "../../services/orchestrator/src/agents/testing.agent.js";
 import { eventBus } from "../../services/orchestrator/src/core/eventBus.js";
 import { Task } from "@vanessa/shared";
-import * as fs from "fs";
-import * as path from "path";
-import { spawn as spawnPromise } from "node:child_process";
 
 async function runProcessFailureDrills() {
   // Ensure real execution mode, NOT FAKE logic simulation

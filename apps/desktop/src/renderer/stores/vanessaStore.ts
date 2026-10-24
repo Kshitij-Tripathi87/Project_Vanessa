@@ -32,7 +32,7 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   auditLogs: [],
   transcript: "",
   lastResponse: "Vanessa online. What should I do?",
-  voiceProvider: "fish",
+  voiceProvider: "elevenlabs",
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),

@@ -10,7 +10,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
   
   function connectWebSocket() {
     try {
-      const ws = new WebSocket("ws://127.0.0.1:4139/events");
+      const ws = new WebSocket("ws://127.0.0.1:4319/events");
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
@@ -29,13 +29,13 @@ if (typeof window !== "undefined" && !window.vanessa) {
 
   window.vanessa = {
     executeCommand: async (payload) => {
-      return submitCommandRequest("http://127.0.0.1:4139", {
+      return submitCommandRequest("http://127.0.0.1:4319", {
         ...payload,
         source: "desktop",
       });
     },
     approveTask: async (taskId) => {
-      const res = await fetch("http://127.0.0.1:4139/api/approve", {
+      const res = await fetch("http://127.0.0.1:4319/api/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -43,7 +43,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
       return res.json();
     },
     rejectTask: async (taskId) => {
-      const res = await fetch("http://127.0.0.1:4139/api/reject", {
+      const res = await fetch("http://127.0.0.1:4319/api/reject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -51,7 +51,7 @@ if (typeof window !== "undefined" && !window.vanessa) {
       return res.json();
     },
     cancelTask: async () => {
-      const res = await fetch("http://127.0.0.1:4139/api/cancel", {
+      const res = await fetch("http://127.0.0.1:4319/api/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
