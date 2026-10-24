@@ -234,6 +234,8 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
       (!Number.isInteger(params.level) || params.level < 0 || params.level > 100)) return false;
   if (name === "brightness.adjust" && typeof params.delta === "number" &&
       (!Number.isInteger(params.delta) || params.delta === 0 || params.delta < -100 || params.delta > 100)) return false;
+  if (["browser.open_url", "browser.search", "youtube.search_and_play"].includes(name) &&
+      params.browser !== undefined && params.browser !== "chrome" && params.browser !== "edge") return false;
   if (params.autoDeploy === true) return false;
   if (name === "codex.open" && String(params.prompt).includes("\0")) return false;
   return true;
