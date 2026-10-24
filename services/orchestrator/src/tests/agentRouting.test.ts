@@ -129,6 +129,12 @@ test("parses only explicitly named Windows UI controls", () => {
   assert.deepEqual(inferExplicitUiClick("Please click the link named Privacy"), {
     name: "Privacy", controlType: "ControlType.Hyperlink",
   });
+  assert.deepEqual(inferExplicitUiClick('Click the button named "Where?"'), {
+    name: "Where?", controlType: "ControlType.Button",
+  });
+  assert.deepEqual(inferExplicitUiClick("Click the button named Search"), {
+    name: "Search", controlType: "ControlType.Button",
+  });
   assert.deepEqual(inferExplicitUiClick('Hey Vanessa, click the tab named "Bluetooth"'), {
     name: "Bluetooth", controlType: "ControlType.TabItem",
   });
