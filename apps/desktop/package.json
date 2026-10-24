@@ -72,31 +72,19 @@
     "extraResources": [
       {
         "from": "runtime/orchestrator",
-        "to": "runtime/orchestrator",
-        "filter": [
-          "**/*"
-        ]
+        "to": "runtime/orchestrator"
       },
       {
         "from": "runtime/voice-agent",
-        "to": "runtime/voice-agent",
-        "filter": [
-          "**/*"
-        ]
+        "to": "runtime/voice-agent"
       },
       {
         "from": "runtime/skills",
-        "to": "runtime/skills",
-        "filter": [
-          "**/*"
-        ]
+        "to": "runtime/skills"
       },
       {
         "from": "runtime/config",
-        "to": "runtime/config",
-        "filter": [
-          "**/*"
-        ]
+        "to": "runtime/config"
       },
       {
         "from": "runtime/build-meta.json",
