@@ -78,6 +78,26 @@ jobs:
           if (!(Test-Path apps/desktop/runtime/voice-agent/dist/server.js)) { throw "Voice agent deploy output is missing." }
           if (!(Test-Path apps/desktop/runtime/node.exe)) { throw "Bundled Node.js runtime is missing." }
 
+      - name: Smoke-test deployed production package dependency graphs
+        shell: pwsh
+        run: |
+          $nodeExe = (Resolve-Path "apps/desktop/runtime/node.exe").Path
+          Push-Location "apps/desktop/runtime/orchestrator"
+          try {
+            & $nodeExe --input-type=module -e "await import('fastify'); await import('playwright'); console.log('Orchestrator production dependencies resolve.')"
+            if ($LASTEXITCODE -ne 0) { throw "Orchestrator production dependency smoke test failed." }
+          } finally {
+            Pop-Location
+          }
+
+          Push-Location "apps/desktop/runtime/voice-agent"
+          try {
+            & $nodeExe --input-type=module -e "await import('fastify'); console.log('Voice-agent production dependencies resolve.')"
+            if ($LASTEXITCODE -ne 0) { throw "Voice-agent production dependency smoke test failed." }
+          } finally {
+            Pop-Location
+          }
+
       - name: Build renderer and Electron desktop process
         run: pnpm --filter @vanessa/desktop build
 

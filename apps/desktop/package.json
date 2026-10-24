@@ -72,11 +72,19 @@
     "extraResources": [
       {
         "from": "runtime/orchestrator",
-        "to": "runtime/orchestrator"
+        "to": "runtime/orchestrator",
+        "filter": [
+          "**/*",
+          "**/.pnpm/**"
+        ]
       },
       {
         "from": "runtime/voice-agent",
-        "to": "runtime/voice-agent"
+        "to": "runtime/voice-agent",
+        "filter": [
+          "**/*",
+          "**/.pnpm/**"
+        ]
       },
       {
         "from": "runtime/skills",
