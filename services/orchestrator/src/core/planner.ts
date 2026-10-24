@@ -8,7 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { inferBrowserSearch, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
+import { inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch, type CommonActionStep, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -145,6 +145,69 @@ export class VanessaPlanner {
     };
   }
 
+  private createCommonActionSequencePlan(
+    command: string,
+    steps: CommonActionStep[],
+    planId: string,
+    recentContext: string,
+    workspaceRoot: string,
+  ): Plan {
+    if (steps.length < 2 || steps.length > 7) {
+      throw new Error("A compound control plan must contain between two and seven reviewed actions.");
+    }
+
+    const tasks: Task[] = [];
+    const taskIdsByGroup = new Map<number, string[]>();
+    const riskRanks: RiskLevel[] = ["low", "medium", "high"];
+
+    for (let index = 0; index < steps.length; index++) {
+      const step = steps[index];
+      const spec = getCatalogAction(step.agent, step.action);
+      if (!spec) throw new Error("No reviewed catalog contract for " + step.agent + "/" + step.action);
+
+      const id = planId + "_sequence_" + (index + 1);
+      const dependsOn = step.group === 0 ? [] : (taskIdsByGroup.get(step.group - 1) || []);
+      if (step.group > 0 && dependsOn.length === 0) {
+        throw new Error("Compound control plan contains a missing dependency group.");
+      }
+
+      const criteria = step.action === "browser.open_url"
+        ? ["Send the requested destination to the default browser. Do not claim the page load was verified."]
+        : step.action === "browser.search"
+          ? ["Open the requested search in the default browser. Do not claim search results were extracted."]
+          : step.action === "youtube.search_and_play"
+            ? ["Open YouTube search results. Do not claim a video was played."]
+            : [spec.description, spec.returns];
+
+      const task = this.enrichTask({
+        id,
+        agent: step.agent as Task["agent"],
+        action: step.action,
+        params: { ...step.params },
+        dependsOn: [...dependsOn],
+        acceptanceCriteria: criteria,
+        status: "pending",
+        risk: spec.risk,
+        allowedTools: [...spec.tools],
+      }, command, recentContext, workspaceRoot);
+      tasks.push(task);
+      taskIdsByGroup.set(step.group, [...(taskIdsByGroup.get(step.group) || []), task.id]);
+    }
+
+    if (!this.isValidModelTaskGraph(tasks)) {
+      throw new Error("The deterministic compound control plan did not satisfy the reviewed task graph contract.");
+    }
+
+    return {
+      id: planId,
+      command,
+      intent: "multi_task",
+      risk: riskRanks[Math.max(...tasks.map((task) => riskRanks.indexOf(task.risk || "low")))],
+      tasks,
+      createdAt: Date.now(),
+    };
+  }
+
   private createWindowsActionPlan(
     command: string,
     action: string,
@@ -266,6 +329,15 @@ export class VanessaPlanner {
     const plannerInput = recentContext
       ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
       : command;
+
+    // Compound requests are split only when every clause maps to a reviewed
+    // Windows or browser action. Unknown clauses fall through to the full planner.
+    const actionSequence = inferCommonActionSequence(command);
+    if (actionSequence) {
+      const plan = this.createCommonActionSequencePlan(command, actionSequence, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
 
     // Explicit YouTube searches go straight to the reviewed Browser Agent action,
     // bypassing a model guess about whether "search" means browser or knowledge.
