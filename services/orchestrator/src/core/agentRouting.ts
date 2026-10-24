@@ -241,3 +241,85 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
 
   return null;
 }
+
+
+export interface CommonActionStep {
+  agent: "windows" | "browser";
+  action: string;
+  params: Record<string, string | number | boolean>;
+  /** Whether the user explicitly connected this step with "then"/"after that". */
+  dependsOnPrevious: boolean;
+}
+
+/**
+ * Recognize a small compound command only when every clause maps to a reviewed
+ * Windows or browser action. If any clause is unknown, return null and let the
+ * full planner handle it; never execute a partial interpretation of a sentence.
+ */
+export function inferCommonActionSequence(command: string): CommonActionStep[] | null {
+  const normalized = String(command || "")
+    .trim()
+    .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  const parts = normalized.split(/(\s*,?\s*(?:and then|and also|then|after that|and)\s+)/i);
+  if (parts.length < 3 || parts.length > 15 || parts.length % 2 === 0) return null;
+
+  const segments: string[] = [parts[0].trim().replace(/^[,;\s]+|[,;\s]+$/g, "")];
+  const connectors: string[] = [];
+  for (let index = 1; index < parts.length; index += 2) {
+    connectors.push(parts[index].trim().toLowerCase().replace(/^[,;\s]+|[,;\s]+$/g, ""));
+    segments.push(parts[index + 1].trim().replace(/^[,;\s]+|[,;\s]+$/g, ""));
+  }
+  if (segments.length < 2 || segments.some((segment) => !segment)) return null;
+
+  const steps: CommonActionStep[] = [];
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    const windows = inferWindowsControl(segment);
+    if (windows) {
+      steps.push({
+        agent: "windows",
+        action: windows.action,
+        params: windows.params,
+        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+      });
+      continue;
+    }
+
+    const youtube = inferYouTubeSearch(segment);
+    if (youtube) {
+      steps.push({
+        agent: "browser",
+        action: "youtube.search_and_play",
+        params: { query: youtube.query },
+        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+      });
+      continue;
+    }
+
+    const browserSearch = inferBrowserSearch(segment);
+    if (browserSearch) {
+      steps.push({
+        agent: "browser",
+        action: "browser.search",
+        params: { query: browserSearch.query },
+        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+      });
+      continue;
+    }
+
+    const navigation = inferExplicitBrowserNavigation(segment);
+    if (navigation) {
+      steps.push({
+        agent: "browser",
+        action: "browser.open_url",
+        params: { url: navigation.url },
+        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+      });
+      continue;
+    }
+
+    return null;
+  }
+
+  return steps;
+}
