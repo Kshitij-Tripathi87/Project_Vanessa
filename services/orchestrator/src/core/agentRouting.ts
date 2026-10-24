@@ -185,6 +185,19 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
   if (!normalized || hasExplicitNegation(normalized) || /\b(?:and then|and also|then|after that|and)\b/i.test(normalized)) return null;
   const lower = normalized.toLowerCase();
 
+  if (
+    /\b(?:inspect|examine|list|enumerate|show)\b/i.test(lower) &&
+    /\b(?:active|current|foreground)\s+(?:windows?\s+)?(?:window|app|application)\b/i.test(lower) &&
+    /\b(?:window|app|application|controls?|accessibility|ui)\b/i.test(lower)
+  ) {
+    return { action: "ui.inspect", params: {} };
+  }
+  if (/\b(?:inspect|list|show|enumerate)\b/i.test(lower) &&
+      /\b(?:controls?|buttons?|tabs?)\b/i.test(lower) &&
+      /\b(?:this|current|active|foreground|window|app|application)\b/i.test(lower)) {
+    return { action: "ui.inspect", params: {} };
+  }
+
   if (/\b(?:capture|take|make)\b/i.test(lower) && /\b(?:a\s+)?(?:desktop\s+)?screenshot\b/i.test(lower)) {
     return { action: "screenshot.capture", params: {} };
   }
