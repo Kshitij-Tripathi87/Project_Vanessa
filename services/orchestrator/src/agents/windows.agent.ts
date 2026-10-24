@@ -169,6 +169,72 @@ export class WindowsAgent implements SpecialistAgent {
         };
       }
 
+      case "brightness.set":
+      case "windows.brightness_set": {
+        const level = Number(params.level);
+        if (this.fakeMode) return this.simulatedOutcome("Display brightness change", { requestedLevel: level, readBackVerified: false });
+        const res = await this.changeBrightness(level, "set");
+        return {
+          agentId: this.id,
+          status: res.success ? "completed" : "failed",
+          success: res.success,
+          summary: res.output,
+          spokenSummary: res.success
+            ? "Display brightness set to " + res.level + " percent."
+            : "I could not verify the requested display brightness.",
+          evidence: res.success ? [{
+            description: res.output,
+            source: "Windows WMI brightness read-back",
+            timestamp: startTime,
+            confidence: 1,
+            data: { requestedLevel: level, observedLevel: res.level },
+          }] : [],
+          artifacts: [],
+          verification: { passed: res.success, details: res.output },
+          data: {
+            actionsAttempted: ["Set supported Windows display brightness to " + level + "%"],
+            actualObservations: res.output,
+            failures: res.success ? [] : [res.output],
+            requestedLevel: level,
+            actualObservedLevel: res.level,
+            readBackVerified: res.success,
+          },
+        };
+      }
+
+      case "brightness.adjust":
+      case "windows.brightness_adjust": {
+        const delta = Number(params.delta ?? 10);
+        if (this.fakeMode) return this.simulatedOutcome("Display brightness adjustment", { requestedDelta: delta, readBackVerified: false });
+        const res = await this.changeBrightness(delta, "adjust");
+        return {
+          agentId: this.id,
+          status: res.success ? "completed" : "failed",
+          success: res.success,
+          summary: res.output,
+          spokenSummary: res.success
+            ? "Display brightness is now " + res.level + " percent."
+            : "I could not verify the display brightness adjustment.",
+          evidence: res.success ? [{
+            description: res.output,
+            source: "Windows WMI brightness read-back",
+            timestamp: startTime,
+            confidence: 1,
+            data: { observedLevel: res.level },
+          }] : [],
+          artifacts: [],
+          verification: { passed: res.success, details: res.output },
+          data: {
+            actionsAttempted: ["Adjust supported Windows display brightness by " + delta + " percentage points"],
+            actualObservations: res.output,
+            failures: res.success ? [] : [res.output],
+            requestedDelta: delta,
+            actualObservedLevel: res.level,
+            readBackVerified: res.success,
+          },
+        };
+      }
+
       case "volume.set":
       case "windows.volume_set": {
         const level = params.level ?? 50;
@@ -373,6 +439,52 @@ export class WindowsAgent implements SpecialistAgent {
         success: false,
         state: "unknown",
         output: "Bluetooth state change failed: " + (err instanceof Error ? err.message : String(err)),
+      };
+    }
+  }
+
+  private async changeBrightness(value: number, mode: "set" | "adjust"): Promise<{ success: boolean; level: number; output: string }> {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      return { success: false, level: Number.NaN, output: "Brightness must be an integer percentage or adjustment." };
+    }
+    if (mode === "set" && (value < 0 || value > 100)) {
+      return { success: false, level: value, output: "Brightness level must be between 0 and 100." };
+    }
+    if (mode === "adjust" && (value === 0 || value < -100 || value > 100)) {
+      return { success: false, level: Number.NaN, output: "Brightness adjustment must be between -100 and 100 percentage points and cannot be zero." };
+    }
+    const script = "$ErrorActionPreference = 'Stop'\n$statesBefore = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction Stop)\nif ($statesBefore.Count -eq 0) { throw 'No WMI-controlled display brightness device was found.' }\n$current = [int]$statesBefore[0].CurrentBrightness\nif ($env:VANESSA_BRIGHTNESS_MODE -eq 'adjust') {\n  $target = [int][math]::Round($current + [double]$env:VANESSA_BRIGHTNESS_VALUE)\n} else {\n  $target = [int][math]::Round([double]$env:VANESSA_BRIGHTNESS_VALUE)\n}\n$target = [math]::Max(0, [math]::Min(100, $target))\n$methods = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop)\nif ($methods.Count -eq 0) { throw 'Windows did not expose a controllable brightness method.' }\nforeach ($method in $methods) {\n  $result = Invoke-CimMethod -InputObject $method -MethodName WmiSetBrightness -Arguments @{ Timeout = [uint32]1; Brightness = [byte]$target } -ErrorAction Stop\n  if ([int]$result.ReturnValue -ne 0) { throw ('WmiSetBrightness returned ' + [string]$result.ReturnValue) }\n}\nStart-Sleep -Milliseconds 400\n$observed = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction Stop | ForEach-Object { [int]$_.CurrentBrightness })\nif ($observed.Count -eq 0) { throw 'Brightness read-back returned no monitor values.' }\n$allMatch = @($observed | Where-Object { $_ -ne $target }).Count -eq 0\n[pscustomobject]@{ Current = $current; Target = $target; Observed = $observed; AllMatch = $allMatch } | ConvertTo-Json -Compress -Depth 4";
+    try {
+      const { stdout } = await this.powerShellRunner(script, {
+        VANESSA_BRIGHTNESS_MODE: mode,
+        VANESSA_BRIGHTNESS_VALUE: String(value),
+      }, 8000);
+      const parsed = JSON.parse(String(stdout).trim()) as {
+        Current?: number;
+        Target?: number;
+        Observed?: number[] | number;
+        AllMatch?: boolean;
+      };
+      const level = Number(parsed.Target);
+      if (!Number.isFinite(level) || level < 0 || level > 100) {
+        return { success: false, level: Number.NaN, output: "Windows returned an invalid brightness target." };
+      }
+      const observed = Array.isArray(parsed.Observed) ? parsed.Observed.map(Number) : [Number(parsed.Observed)];
+      const validReadback = observed.length > 0 && observed.every((item) => Number.isFinite(item) && item >= 0 && item <= 100);
+      const verified = validReadback && parsed.AllMatch === true && observed.every((item) => item === level);
+      const readbackText = validReadback ? observed.join("%, ") + "%" : "unavailable";
+      return {
+        success: verified,
+        level,
+        output: verified
+          ? "Windows display brightness set and read back at " + level + "% on all reported displays."
+          : "Brightness target was " + level + "% but read-back was " + readbackText + "; the requested state was not verified.",
+      };
+    } catch (err) {
+      return {
+        success: false,
+        level: Number.NaN,
+        output: "Windows brightness control failed: " + (err instanceof Error ? err.message : String(err)) + ". Some external displays do not support WMI brightness control.",
       };
     }
   }
