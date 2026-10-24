@@ -15,7 +15,22 @@ declare module "react" {
 }
 
 declare global {
+  interface VanessaControlStatus {
+    success: boolean;
+    orchestratorOnline: boolean;
+    orchestratorPort: number;
+    activeTasksCount: number;
+    platform: string;
+    autonomousMode?: boolean;
+    allowedFolders: string[];
+    checkedAt: number;
+    errors: string[];
+  }
+
   interface Window {
+    vanessa: {
+      getControlStatus: () => Promise<VanessaControlStatus>;
+      addAllowedFolder: (folderPath: string) => Promise<{ success: boolean; allowedFolders?: string[]; error?: string }>;
     vanessa: {
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
       approveTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
