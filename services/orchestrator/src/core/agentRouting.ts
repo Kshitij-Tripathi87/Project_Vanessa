@@ -256,6 +256,36 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
 }
 
 
+export interface ExplicitUiClickRequest {
+  name: string;
+  controlType: string;
+}
+
+/**
+ * Parse only an explicit control kind plus exact user-provided control name.
+ * Ambiguous generic clicks are left to the planner to clarify; no selector is invented.
+ */
+export function inferExplicitUiClick(command: string): ExplicitUiClickRequest | null {
+  const normalized = String(command || "")
+    .trim()
+    .replace(/^\\s*(?:(?:hey|hi|hello|okay|ok)\\s+vanessa)[\\s,.:;!?—-]*/i, "");
+  if (!normalized || hasExplicitNegation(normalized) || hasAdditionalAction(normalized)) return null;
+  const match = normalized.match(/^\\s*(?:please\\s+)?click\\s+(?:on\\s+)?(?:the\\s+)?(radio\\s+button|menu\\s+item|button|link|tab|checkbox)\\s+(?:(?:named|called|labelled|labeled)\\s+)?(?:[\\"“])?([^\\"”\\r\\n.!?]{1,100}?)(?:[\\"”])?\\s*[.!]?\\s*$/i);
+  if (!match?.[1] || !match[2]) return null;
+  const kind = match[1].toLowerCase().replace(/\\s+/g, " ");
+  const controlTypeByKind: Record<string, string> = {
+    button: "ControlType.Button",
+    link: "ControlType.Hyperlink",
+    tab: "ControlType.TabItem",
+    checkbox: "ControlType.CheckBox",
+    "radio button": "ControlType.RadioButton",
+    "menu item": "ControlType.MenuItem",
+  };
+  const name = match[2].trim();
+  if (!name || name.length > 100) return null;
+  return { name, controlType: controlTypeByKind[kind] };
+}
+
 export interface CommonActionStep {
   agent: "windows" | "browser";
   action: string;
