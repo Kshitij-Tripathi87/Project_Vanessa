@@ -60,26 +60,28 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   {
     id: "windows",
     purpose: "Perform bounded Windows settings, application, and screenshot actions through PowerShell.",
-    limitations: "Windows only; radio actions may need hardware/admin rights. Wi-Fi, Bluetooth, volume, and close-app handlers have success-returning failure paths, so their success flags do not independently prove the requested state. No arbitrary desktop clicking.",
+    limitations: "Windows only. Wi-Fi and Bluetooth radio actions depend on Windows hardware/API support and permissions. Brightness control uses WMI and may be unsupported on external displays. Volume uses the Windows Core Audio endpoint API and verifies the returned level. Arbitrary desktop clicking is not implemented.",
     actions: [
-      action("wifi.restart_adapter", "Attempt Wi-Fi adapter restart; temporarily interrupts connectivity.", {}, "AgentResult with data.adapter and data.connected; reported connectivity can be optimistic.", "high", true, ["net_adapter_control"]),
+      action("wifi.restart_adapter", "Restart the detected Wi-Fi adapter; temporarily interrupts connectivity.", {}, "AgentResult succeeds only when the adapter is found and its observed post-restart state is Up; internet reachability is not independently verified.", "high", true, ["net_adapter_control"]),
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
-      action("bluetooth.enable", "Attempt to enable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
-      action("bluetooth.disable", "Attempt to disable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
-      action("volume.set", "Attempt volume adjustment through media-key events.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "AgentResult; actual output volume is not read back.", "low", true, ["audio_volume_set"]),
-      action("app.open", "Launch an application by executable name; use browser actions for URLs.", { name: p("string", "Executable or supported name such as notepad, calculator, edge, or terminal.", true) }, "AgentResult indicating whether Windows accepted the launch request.", "low", true, ["windows_app_launch"]),
-      action("app.close", "Attempt to stop an application process.", { name: p("string", "Process name to close.", true) }, "AgentResult with process operation output; fallback can overstate success.", "high", true, ["process_control"]),
+      action("bluetooth.enable", "Enable the Bluetooth radio and read back its observed state.", {}, "AgentResult reports success only when Windows grants the state change and the observed state matches the request.", "low", true, ["windows_setting_toggle"]),
+      action("bluetooth.disable", "Disable the Bluetooth radio and read back its observed state.", {}, "AgentResult reports success only when Windows grants the state change and the observed state matches the request.", "low", true, ["windows_setting_toggle"]),
+      action("volume.set", "Set the default Windows playback endpoint master volume and read the value back through Core Audio.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "Success requires the observed master-volume scalar to match the requested percentage within tolerance. Invalid ranges and Windows/API errors fail.", "low", true, ["audio_volume_set"]),
+      action("brightness.set", "Set the brightness of WMI-controllable Windows displays to a percentage and read the values back.", { level: p("number", "Integer brightness percentage from 0 to 100.", true) }, "Success requires all reported WMI-controlled displays to read back at the requested value; unsupported displays and mismatches fail.", "low", true, ["display_brightness_control"]),
+      action("brightness.adjust", "Raise or lower WMI-controllable Windows display brightness by a percentage-point delta.", { delta: p("number", "Non-zero integer adjustment from -100 to 100 percentage points.", true) }, "Reads the current brightness, applies a clamped change, and verifies all reported displays; unsupported displays and mismatches fail.", "low", true, ["display_brightness_control"]),
+      action("app.open", "Launch a supported Windows application or utility; use browser actions for website URLs.", { name: p("string", "Application alias such as File Explorer, Chrome, Edge, Calculator, Notepad, Windows Terminal, Task Manager, Settings, or VS Code.", true) }, "AgentResult records whether Windows accepted the launch request; it does not prove the window is visible or focused.", "low", true, ["windows_app_launch"]),
+      action("app.close", "Stop an application process and check that it no longer exists.", { name: p("string", "Process name to close.", true) }, "AgentResult succeeds when the process is absent after the stop request; invalid names and OS failures are returned as failures.", "high", true, ["process_control"]),
       action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),
     ],
   },
   {
     id: "browser",
     purpose: "Open URLs or search results, including YouTube searches. Delegate limited web research to the Python bridge.",
-    limitations: "Playwright uses a persistent page session. Remote navigation is HTTP(S)-only; local/private hosts are denied by default, local HTML must be approved, and consequential clicks require confirmation.",
+    limitations: "Browser open/search actions launch the system default browser unless Chrome or Edge is explicitly requested. Page inspection/clicks use Vanessa’s separate Playwright browser context, which is not automatically signed into the user’s profile. HTTP(S) navigation uses DNS-aware private/reserved-host checks; local HTML must be approved, and consequential clicks require confirmation.",
     actions: [
-      action("browser.open_url", "Open a URL in the browser.", { url: p("string", "Complete http(s) URL.", true) }, "AgentResult with data.url, artifacts, and navigation claims; page contents are not returned.", "low", true, ["browser_navigate"]),
-      action("browser.search", "Open Google search results for a query.", { query: p("string", "Search terms.", true) }, "AgentResult with query/search URL; not extracted search facts.", "low", true, ["browser_navigate"]),
-      action("youtube.search_and_play", "Open YouTube search results. Retained action name does not imply actual playback.", { query: p("string", "Video or music search terms.", true) }, "AgentResult with data.query and data.url; do not claim playback was verified.", "low", true, ["browser_navigate"]),
+      action("browser.open_url", "Open a URL in the user’s default browser or an explicitly selected supported browser.", { url: p("string", "Complete HTTP(S) URL; embedded credentials and local/private destinations are denied by default.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; page load and user-visible state are not verified. Use browser.inspect_page for isolated Playwright inspection.", "low", true, ["browser_navigate"]),
+      action("browser.search", "Open Google search results in the user’s default browser or an explicitly selected supported browser.", { query: p("string", "Non-empty search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; search result contents are not extracted or verified.", "low", true, ["browser_navigate"]),
+      action("youtube.search_and_play", "Open YouTube search results in the default browser or an explicitly selected supported browser.", { query: p("string", "Video or music search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "AgentResult with data.query and data.url; playback is not performed or verified.", "low", true, ["browser_navigate"]),
       action("browser.research", "Invoke a limited Python web-search goal branch.", { goal: p("string", "Research request.", true) }, "AgentResult wrapping bridge steps/final_answer; bridge synthesis and success reports are limited and require Python dependencies.", "medium"),
       action("browser.read_title", "Read the title from a requested URL or the active browser page.", { url: p("string", "Optional reference URL.") }, "AgentResult with observed rendered page title and URL.", "low", true, ["browser_navigate"]),
       action("browser.inspect_page", "Inspect rendered page text and up to 50 links at a URL or the active page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with observed title, URL, rendered text and links.", "low", true, ["browser_extract"]),
@@ -228,6 +230,12 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
     if (field.type === "number" && !Number.isFinite(value)) return false;
   }
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
+  if (name === "brightness.set" && typeof params.level === "number" &&
+      (!Number.isInteger(params.level) || params.level < 0 || params.level > 100)) return false;
+  if (name === "brightness.adjust" && typeof params.delta === "number" &&
+      (!Number.isInteger(params.delta) || params.delta === 0 || params.delta < -100 || params.delta > 100)) return false;
+  if (["browser.open_url", "browser.search", "youtube.search_and_play"].includes(name) &&
+      params.browser !== undefined && params.browser !== "chrome" && params.browser !== "edge") return false;
   if (params.autoDeploy === true) return false;
   if (name === "codex.open" && String(params.prompt).includes("\0")) return false;
   return true;

@@ -1,4 +1,4 @@
-import { playwrightBrowserAgent } from "./browser-playwright.agent.js";
+import { validateRemoteBrowserUrl, playwrightBrowserAgent } from "./browser-playwright.agent.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentEvidence, AgentResult, AgentRunContext, AgentTask, SpecialistAgent } from "@vanessa/shared";
@@ -14,32 +14,69 @@ export function buildYouTubeSearchUrl(query: string): string {
   return url.toString();
 }
 
-async function openDefaultBrowser(url: string): Promise<void> {
+function normalizeBrowserTarget(value: unknown): "chrome" | "edge" | undefined {
+  if (value === undefined || value === null || String(value).trim() === "") return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized !== "chrome" && normalized !== "edge") {
+    throw new Error("Unsupported browser target. Supported explicit targets are Chrome and Edge.");
+  }
+  return normalized;
+}
+
+async function openDefaultBrowser(url: string, browserName?: string): Promise<void> {
+  const browser = normalizeBrowserTarget(browserName);
+  const windowsExecutable = browser === "chrome" ? "chrome.exe" : browser === "edge" ? "msedge.exe" : undefined;
+  const macApplication = browser === "chrome" ? "Google Chrome" : browser === "edge" ? "Microsoft Edge" : undefined;
+  const linuxExecutable = browser === "chrome" ? "google-chrome" : browser === "edge" ? "microsoft-edge" : undefined;
+
   if (process.platform === "win32") {
-    // Keep user text out of a shell command; PowerShell receives the fully
-    // constructed, fixed-origin URL through an environment variable.
+    // Both values are passed through environment variables, never interpolated
+    // into PowerShell source. An explicit browser target is selected by a static
+    // alias map so user-controlled text cannot choose an arbitrary executable.
+    const script = windowsExecutable
+      ? "Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList @($env:VANESSA_TARGET_URL)"
+      : "Start-Process -FilePath $env:VANESSA_TARGET_URL";
     await execFileAsync("powershell.exe", [
-      "-NoProfile", "-NonInteractive", "-Command",
-      "Start-Process -FilePath $env:VANESSA_TARGET_URL",
+      "-NoProfile", "-NonInteractive", "-Command", script,
     ], {
       windowsHide: true,
       timeout: 5000,
-      env: { ...process.env, VANESSA_TARGET_URL: url },
+      env: {
+        ...process.env,
+        VANESSA_TARGET_URL: url,
+        ...(windowsExecutable ? { VANESSA_BROWSER: windowsExecutable } : {}),
+      },
     });
     return;
   }
   if (process.platform === "darwin") {
-    await execFileAsync("open", [url], { timeout: 5000 });
+    if (macApplication) await execFileAsync("open", ["-a", macApplication, url], { timeout: 5000 });
+    else await execFileAsync("open", [url], { timeout: 5000 });
     return;
   }
   if (process.platform === "linux") {
-    await execFileAsync("xdg-open", [url], { timeout: 5000 });
+    if (linuxExecutable) await execFileAsync(linuxExecutable, [url], { timeout: 5000 });
+    else await execFileAsync("xdg-open", [url], { timeout: 5000 });
     return;
   }
-  throw new Error("Opening the default browser is not supported on " + process.platform + ".");
+  throw new Error("Opening the browser is not supported on " + process.platform + ".");
 }
 
+export interface BrowserAgentOptions {
+  openExternalBrowser?: (url: string, browserName?: string) => Promise<void>;
+  validateExternalUrl?: (url: string) => Promise<string>;
+}
+
+/** System-browser handoff stays distinct from Vanessa's isolated Playwright session. */
 export class BrowserAgent implements SpecialistAgent {
+  private readonly openExternalBrowser: (url: string, browserName?: string) => Promise<void>;
+  private readonly validateExternalUrl: (url: string) => Promise<string>;
+
+  constructor(options: BrowserAgentOptions = {}) {
+    this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;
+    this.validateExternalUrl = options.validateExternalUrl || validateRemoteBrowserUrl;
+  }
+
   id = "browser";
   capabilities = ["browser_navigation", "web_search", "page_inspection", "local_html_preview", "playwright_automation"];
   allowedTools = ["browser_navigate", "browser_extract", "browser_click", "browser_open_file"];
@@ -55,25 +92,57 @@ export class BrowserAgent implements SpecialistAgent {
 
     switch (action) {
       case "browser.open_url": {
-        const result = await playwrightBrowserAgent.navigate(String(params.url || ""));
-        return this.result(result.success,
-          result.success ? "Opened " + result.url + " (" + result.title + ")" : "Browser navigation failed.",
-          result.success ? "Opened the requested webpage." : "I could not open that webpage.",
-          result.success ? [{ description: "Browser navigation completed for " + result.url, source: "Playwright", timestamp, confidence: 1, data: { title: result.title, url: result.url } }] : [],
-          result.success ? [result.url] : [], { url: result.url, title: result.title, error: result.error });
+        const requestedUrl = String(params.url || "");
+        let url: string;
+        let browserName: "chrome" | "edge" | undefined;
+        try {
+          url = await this.validateExternalUrl(requestedUrl);
+          browserName = normalizeBrowserTarget(params.browser);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Browser URL or browser target was rejected by safety validation.", "I could not open that URL or browser target because it did not pass safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
+        }
+        try {
+          await this.openExternalBrowser(url, browserName);
+          return this.result(
+            true,
+            "The operating system accepted the " + (browserName || "default-browser") + " launch request for " + url + ".",
+            "I sent the page to " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not verified that it loaded.",
+            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, browser: browserName || "default", pageLoadVerified: false } }],
+            [url],
+            { url, browser: browserName || "default", externalBrowser: true, pageLoadVerified: false },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Could not open the requested URL in " + (browserName || "the default browser") + ".", "I could not open that page in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { url, browser: browserName || "default", externalBrowser: false, error: detail, pageLoadVerified: false });
+        }
       }
 
       case "browser.search": {
-        const query = String(params.query || "");
-        const result = await playwrightBrowserAgent.search(query);
-        return this.result(result.success,
-          result.success ? "Extracted readable search results for " + query : "Search results could not be extracted for " + query + ".",
-          result.success ? "Search results are ready." : "The search did not return readable results.",
-          result.success ? [{ description: "Search result text extracted for " + query, source: "Google Search via Playwright", timestamp, confidence: 0.9, data: { snippets: result.snippets } }] : [],
-          result.success ? [result.url] : [], { query, url: result.url, snippets: result.snippets, error: result.error });
+        const query = String(params.query || "").trim();
+        if (!query) return this.result(false, "A non-empty search query is required.", "Tell me what you want me to search for.", [], [], { query, error: "A non-empty search query is required." });
+        const search = new URL("https://www.google.com/search");
+        search.searchParams.set("q", query);
+        const url = search.toString();
+        let browserName: "chrome" | "edge" | undefined;
+        try {
+          browserName = normalizeBrowserTarget(params.browser);
+          await this.openExternalBrowser(url, browserName);
+          return this.result(
+            true,
+            "The operating system accepted a " + (browserName || "default-browser") + " search launch for " + query + ".",
+            "I opened search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not independently inspected the results.",
+            [{ description: "Operating system accepted the browser launch request for search query: " + query, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default", resultsExtracted: false } }],
+            [url],
+            { query, url, browser: browserName || "default", externalBrowser: true, resultsExtracted: false },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Could not open search results in " + (browserName || "the default browser") + ".", "I could not open those search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { query, url, browser: browserName || "default", externalBrowser: false, resultsExtracted: false, error: detail });
+        }
       }
 
-      case "browser.research": {
+            case "browser.research": {
         const query = String(params.goal || params.query || params.prompt || "");
         const result = await (await import("./openjarvis.agent.js")).vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
         const success = result.success === true;
@@ -88,22 +157,24 @@ export class BrowserAgent implements SpecialistAgent {
       case "youtube.search_and_play": {
         const query = String(params.query || "").trim();
         const url = buildYouTubeSearchUrl(query);
+        let browserName: "chrome" | "edge" | undefined;
         try {
-          await openDefaultBrowser(url);
+          browserName = normalizeBrowserTarget(params.browser);
+          await this.openExternalBrowser(url, browserName);
           return this.result(
             true,
-            "Opened YouTube search results for " + query + " in the default browser.",
+            "Opened YouTube search results for " + query + " in " + (browserName || "the default browser") + ".",
             "YouTube search results are open. Video playback has not been verified.",
-            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url } }],
+            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default" } }],
             [url],
-            { query, url, externalBrowser: true, playbackVerified: false },
+            { query, url, browser: browserName || "default", externalBrowser: true, playbackVerified: false },
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           return this.result(
             false,
-            "Could not open YouTube search results in the default browser.",
-            "I could not open YouTube in your browser.",
+            "Could not open YouTube search results in " + (browserName || "the default browser") + ".",
+            "I could not open YouTube in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your browser") + ".",
             [],
             [],
             { query, url, externalBrowser: false, error: detail },
@@ -138,7 +209,7 @@ export class BrowserAgent implements SpecialistAgent {
         const result = await playwrightBrowserAgent.openLocalFile(filePath);
         return this.result(result.success,
           result.success ? "Opened local HTML preview at " + result.url : "Local HTML preview failed.",
-          result.success ? "The local page is open in the browser." : "I could not open that local page in the browser.",
+          result.success ? "The local page is open in Vanessa’s isolated browser session." : "I could not open that local page in Vanessa’s browser session.",
           result.success ? [{ description: "Opened approved local HTML file in browser session", source: filePath, timestamp, confidence: 1, data: { title: result.title, url: result.url } }] : [],
           result.success ? [filePath] : [], { path: filePath, title: result.title, url: result.url, error: result.error });
       }

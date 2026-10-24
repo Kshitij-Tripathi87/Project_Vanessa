@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { DockPosition, ExecuteCommandPayload } from "@vanessa/shared";
 
 contextBridge.exposeInMainWorld("vanessa", {
+  getControlStatus: () => ipcRenderer.invoke("vanessa:get-control-status"),
+  addAllowedFolder: (folderPath: string) => ipcRenderer.invoke("vanessa:add-allowed-folder", folderPath),
   executeCommand: (payload: ExecuteCommandPayload) => ipcRenderer.invoke("vanessa:execute-command", payload),
   approveTask: (taskId: string) => ipcRenderer.invoke("vanessa:approve-task", taskId),
   rejectTask: (taskId: string) => ipcRenderer.invoke("vanessa:reject-task", taskId),

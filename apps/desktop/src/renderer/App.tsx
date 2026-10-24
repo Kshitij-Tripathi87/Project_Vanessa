@@ -11,6 +11,7 @@ import { AuditLog } from "./components/AuditLog.js";
 import { MemoryPalaceViewer } from "./components/MemoryPalaceViewer.js";
 import { MobilePairingModal } from "./components/MobilePairingModal.js";
 import { ApprovalModal } from "./components/ApprovalModal.js";
+import { ControlDeck } from "./components/ControlDeck.js";
 import {
   Settings,
   Minimize2,
@@ -30,12 +31,14 @@ import {
   Layers,
   FileText,
   Minus,
+  Monitor,
 } from "lucide-react";
 
 export function App() {
   const {
     voiceState,
     activePlan,
+    tasks,
     pendingApproval,
     auditLogs,
     lastResponse,
@@ -71,17 +74,49 @@ export function App() {
   type ViewMode = "orb" | "chat" | "dashboard";
   const [viewMode, setViewMode] = useState<ViewMode>("orb");
   const [currentCorner, setCurrentCorner] = useState<DockPosition>("bottom-right");
-  const [activeTab, setActiveTab] = useState<"memory" | "audit" | "plan" | "privacy" | "scenarios">("memory");
+  const [activeTab, setActiveTab] = useState<"control" | "memory" | "audit" | "plan" | "privacy" | "scenarios">("control");
   const [typedCommand, setTypedCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("");
   const lastSeenFinalTranscriptRef = useRef("");
   const [justActivated, setJustActivated] = useState(false);
   const [isPairingOpen, setIsPairingOpen] = useState(false);
-  const [allowedFolders, setAllowedFolders] = useState<string[]>([
-    "c:\\Users\\21330\\Documents\\VanessaDemo",
-    "c:\\Users\\21330\\Documents\\Project_Vanessa",
-  ]);
+  const [allowedFolders, setAllowedFolders] = useState<string[]>([]);
   const [newFolderInput, setNewFolderInput] = useState("");
+
+  const [controlStatus, setControlStatus] = useState<VanessaControlStatus | null>(null);
+  const [controlStatusLoading, setControlStatusLoading] = useState(false);
+  const [controlStatusError, setControlStatusError] = useState<string | null>(null);
+
+  const refreshControlStatus = useCallback(async () => {
+    setControlStatusLoading(true);
+    try {
+      const result = await window.vanessa.getControlStatus();
+      setControlStatus(result);
+      setAllowedFolders(result.allowedFolders || []);
+      setControlStatusError(result.errors?.length ? result.errors.join(" · ") : null);
+    } catch {
+      setControlStatusError("Could not read Vanessa local runtime status.");
+      setControlStatus({
+        success: false,
+        orchestratorOnline: false,
+        orchestratorPort: 4139,
+        activeTasksCount: 0,
+        platform: "unknown",
+        allowedFolders: [],
+        checkedAt: Date.now(),
+        errors: ["Desktop status IPC is unavailable."],
+      });
+    } finally {
+      setControlStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "dashboard") return;
+    void refreshControlStatus();
+    const refreshTimer = window.setInterval(() => { void refreshControlStatus(); }, 15000);
+    return () => window.clearInterval(refreshTimer);
+  }, [viewMode, refreshControlStatus]);
 
   // Speak aloud helper
   const speakText = (text: string) => {
@@ -158,6 +193,16 @@ export function App() {
     await executeSpeechCommand(cmd);
   };
 
+  // Dashboard actions stay in the control deck so task updates are visible
+  // immediately, instead of navigating away to the generic chat view.
+  const handleControlExecute = async (command: string) => {
+    const cmd = command.trim();
+    if (!cmd) return;
+    setLastCommand(cmd);
+    setTypedCommand("");
+    await executeSpeechCommand(cmd);
+  };
+
   const handleApproveTask = useCallback(async (taskId: string) => {
     const result = await window.vanessa.approveTask(taskId);
     if (result.success) {
@@ -177,16 +222,18 @@ export function App() {
   }, [setPendingApproval, setLastResponse]);
 
   const handleKillSwitch = useCallback(async () => {
-    if (window.vanessa?.cancelTask) {
-      await window.vanessa.cancelTask();
-    } else {
-      try {
-        await fetch("http://127.0.0.1:4139/api/cancel", { method: "POST" });
-      } catch (err) {
-        console.error("Failed to trigger kill switch:", err);
-      }
+    if (!window.vanessa?.cancelTask) {
+      setLastResponse("The emergency stop bridge is unavailable. Check Vanessa's local runtime.");
+      return;
     }
-  }, []);
+    try {
+      const result = await window.vanessa.cancelTask();
+      if (!result.success) setLastResponse(result.error || "Vanessa could not confirm the emergency stop request.");
+      else setLastResponse(result.message || "Emergency stop requested. Check each task's final status.");
+    } catch {
+      setLastResponse("Vanessa could not reach the orchestrator to request an emergency stop.");
+    }
+  }, [setLastResponse]);
 
   useEffect(() => {
     const unsubscribePtt = window.vanessa?.onTriggerPTT?.(() => {
@@ -204,18 +251,17 @@ export function App() {
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
     try {
-      const res = await fetch("http://127.0.0.1:4139/api/privacy/folders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: newFolderInput.trim() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAllowedFolders(data.allowedFolders);
+      const result = await window.vanessa.addAllowedFolder(newFolderInput.trim());
+      if (result.success && result.allowedFolders) {
+        setAllowedFolders(result.allowedFolders);
         setNewFolderInput("");
+        setLastResponse("Folder added to Vanessa's approved filesystem roots.");
+      } else {
+        setLastResponse(result.error || "That folder could not be added to the approved roots.");
       }
-    } catch (err) {
-      console.error("Failed to add folder:", err);
+      void refreshControlStatus();
+    } catch {
+      setLastResponse("Vanessa could not update the approved folder list.");
     }
   };
 
@@ -539,7 +585,11 @@ export function App() {
               fontWeight: 600,
             }}
           >
-            AUTONOMOUS MODE ACTIVE
+            {controlStatus?.autonomousMode === true
+              ? "AUTONOMY ENABLED"
+              : controlStatus?.autonomousMode === false
+                ? "APPROVAL GATES ACTIVE"
+                : "POLICY STATUS UNKNOWN"}
           </span>
         </div>
 
@@ -724,6 +774,7 @@ export function App() {
         }}
       >
         {[
+          { id: "control", label: "Windows & Browser", icon: <Monitor size={12} /> },
           { id: "memory", label: "Memory Palace (30D)", icon: <Brain size={12} /> },
           { id: "audit", label: "Audit Ledger", icon: <ShieldCheck size={12} /> },
           { id: "plan", label: "Active Task DAG", icon: <Layers size={12} /> },
@@ -756,6 +807,17 @@ export function App() {
 
       {/* Tab Panels */}
       <main style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {activeTab === "control" && (
+          <ControlDeck
+            status={controlStatus}
+            statusLoading={controlStatusLoading}
+            statusError={controlStatusError}
+            tasks={tasks}
+            onRefresh={() => { void refreshControlStatus(); }}
+            onExecute={(command) => { void handleControlExecute(command); }}
+          />
+        )}
+
         {activeTab === "memory" && <MemoryPalaceViewer />}
 
         {activeTab === "audit" && (
@@ -898,13 +960,19 @@ export function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "var(--text-muted)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <Activity size={12} color="var(--cyan-glow)" />
-            <span>Port 4139 Online</span>
+            <Activity size={12} color={controlStatus?.orchestratorOnline ? "#34d399" : "#fb7185"} />
+            <span>
+              {controlStatus?.orchestratorOnline
+                ? "Orchestrator · " + controlStatus.orchestratorPort + " online"
+                : controlStatus
+                  ? "Orchestrator · " + controlStatus.orchestratorPort + " offline"
+                  : "Orchestrator status loading"}
+            </span>
           </div>
           <span>•</span>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <HardDrive size={12} color="#34d399" />
-            <span>SQLite 30D Retention Active</span>
+            <HardDrive size={12} color={controlStatus?.orchestratorOnline ? "#34d399" : "#64748b"} />
+            <span>Local memory · folder policy</span>
           </div>
         </div>
 

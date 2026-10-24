@@ -64,6 +64,80 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     } catch (err: any) { return { success: false, error: err.message }; }
   });
 
+  ipcMain.handle("vanessa:get-control-status", async () => {
+    const baseUrl = getOrchestratorUrl().replace(/\/$/, "");
+    let orchestratorPort = Number(process.env.VANESSA_PORT || 4139);
+    try {
+      const parsed = new URL(baseUrl);
+      orchestratorPort = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    } catch {
+      // Keep the configured default for status reporting if the URL itself is malformed.
+    }
+
+    const readJson = async (route: string): Promise<{ ok: boolean; data?: any }> => {
+      try {
+        const response = await fetch(baseUrl + route, { signal: AbortSignal.timeout(1500) });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, data };
+      } catch {
+        return { ok: false };
+      }
+    };
+
+    const [health, privacy, mode] = await Promise.all([
+      readJson("/health"),
+      readJson("/api/privacy"),
+      readJson("/api/mode"),
+    ]);
+    const system = health.data?.system || {};
+    const orchestratorOnline = health.ok &&
+      health.data?.status === "online" &&
+      health.data?.service === "vanessa-orchestrator";
+    const allowedFolders = Array.isArray(privacy.data?.allowedFolders)
+      ? privacy.data.allowedFolders.filter((item: unknown): item is string => typeof item === "string")
+      : [];
+    const errors: string[] = [];
+    if (!orchestratorOnline) errors.push("The Vanessa orchestrator health check did not pass.");
+    if (!privacy.ok) errors.push("Folder authorization status could not be loaded.");
+    if (!mode.ok || typeof mode.data?.autonomous !== "boolean") errors.push("Execution policy mode could not be confirmed.");
+
+    return {
+      success: orchestratorOnline,
+      orchestratorOnline,
+      orchestratorPort,
+      activeTasksCount: Number.isFinite(system.activeTasksCount) ? system.activeTasksCount : 0,
+      platform: typeof system.platform === "string" ? system.platform : process.platform,
+      autonomousMode: typeof mode.data?.autonomous === "boolean" ? mode.data.autonomous : undefined,
+      allowedFolders,
+      checkedAt: Date.now(),
+      errors,
+    };
+  });
+
+  ipcMain.handle("vanessa:add-allowed-folder", async (_, folderPath: unknown) => {
+    if (typeof folderPath !== "string" || !folderPath.trim()) {
+      return { success: false, error: "Enter a folder path." };
+    }
+    try {
+      const response = await fetch(getOrchestratorUrl().replace(/\/$/, "") + "/api/privacy/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderPath: folderPath.trim() }),
+        signal: AbortSignal.timeout(2500),
+      });
+      const data = await response.json().catch(() => ({})) as { success?: boolean; allowedFolders?: unknown };
+      const allowedFolders = Array.isArray(data.allowedFolders)
+        ? data.allowedFolders.filter((item): item is string => typeof item === "string")
+        : [];
+      if (!response.ok || data.success !== true) {
+        return { success: false, allowedFolders, error: "The folder was not added. Confirm it exists and is a directory." };
+      }
+      return { success: true, allowedFolders };
+    } catch {
+      return { success: false, error: "Could not reach Vanessa to update folder permissions." };
+    }
+  });
+
   ipcMain.handle("vanessa:resize-window", (_, payload: { width: number; height: number }) => {
     if (mainWindow.isDestroyed()) return { success: false };
     const width = Math.max(90, Math.min(760, Math.round(Number(payload?.width) || 90)));
