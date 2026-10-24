@@ -8,7 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { inferResourceWorkflow, type ResourceWorkflowRequest } from "./agentRouting.js";
+import { inferResourceWorkflow, inferYouTubeSearch, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -145,6 +145,37 @@ export class VanessaPlanner {
     };
   }
 
+  private createYouTubeSearchPlan(command: string, query: string, planId: string, recentContext: string, workspaceRoot: string): Plan {
+    const spec = getCatalogAction("browser", "youtube.search_and_play");
+    if (!spec) throw new Error("YouTube search is not available in the reviewed Browser Agent catalog.");
+    const task = this.enrichTask({
+      id: planId + "_youtube_search",
+      agent: "browser",
+      action: "youtube.search_and_play",
+      params: { query },
+      dependsOn: [],
+      acceptanceCriteria: [
+        "Open YouTube search results for the supplied search terms.",
+        "Report the observed navigation result honestly; do not claim a video was played.",
+      ],
+      status: "pending",
+      risk: spec.risk,
+      allowedTools: [...spec.tools],
+    }, command, recentContext, workspaceRoot);
+
+    if (!this.isValidModelTaskGraph([task])) {
+      throw new Error("The deterministic YouTube search did not satisfy the reviewed task graph contract.");
+    }
+    return {
+      id: planId,
+      command,
+      intent: "single_task",
+      risk: task.risk || spec.risk,
+      tasks: [task],
+      createdAt: Date.now(),
+    };
+  }
+
   async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestContext: string | Partial<ExecuteCommandPayload> = {}): Promise<Plan> {
     const payload = typeof requestContext === "string" ? { requestId: requestContext } : requestContext;
     const planId = `plan_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
@@ -163,6 +194,15 @@ export class VanessaPlanner {
     const plannerInput = recentContext
       ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
       : command;
+
+    // Explicit YouTube searches go straight to the reviewed Browser Agent action,
+    // bypassing a model guess about whether "search" means browser or knowledge.
+    const youtubeSearch = inferYouTubeSearch(command);
+    if (youtubeSearch) {
+      const plan = this.createYouTubeSearchPlan(command, youtubeSearch.query, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
 
     // High-confidence local file/folder tasks use a deterministic, reviewed workflow.
     const resourceRequest = inferResourceWorkflow(command);

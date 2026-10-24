@@ -10,7 +10,7 @@ export default defineConfig({
     productName: 'Vanessa',
     appCopyright: 'Copyright (c) 2026 Vanessa Labs',
     asar: true,
-    extraResource: [],
+    extraResource: ["assets/vanessa-tray.png"],
     win32metadata: {
       CompanyName: 'Vanessa Labs',
       FileDescription: 'Vanessa - Voice-native AI control layer',

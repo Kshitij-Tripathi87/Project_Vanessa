@@ -1,5 +1,7 @@
 export * from "./agent.js";
 
+export type DockPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "left" | "right" | "top" | "bottom";
+
 export interface AuditEntry {
   id: string;
   timestamp: number | string;

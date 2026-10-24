@@ -13,7 +13,8 @@
     "test:contract": "tsx --test src/tests/commandContract.test.ts",
     "test:diagnostics": "tsx --test src/tests/providerDiagnostics.test.ts",
     "test:behavior": "tsx src/tests/voiceBehavior.test.ts",
-    "test:fish:acceptance": "tsx ../../scripts/test_fish_acceptance.ts"
+    "test:fish:acceptance": "tsx ../../scripts/test_fish_acceptance.ts",
+    "test:wake-word": "tsx --test src/tests/wakeWord.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

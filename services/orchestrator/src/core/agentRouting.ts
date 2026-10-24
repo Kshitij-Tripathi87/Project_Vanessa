@@ -68,3 +68,32 @@ export function inferResourceWorkflow(command: string): ResourceWorkflowRequest 
   if (openIntent) return { target, intent: "open" };
   return null;
 }
+
+
+export interface YouTubeSearchRequest {
+  query: string;
+}
+
+/** Deterministically route explicit YouTube-search intents to the Browser Agent. */
+export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null {
+  const normalized = String(command || "").trim().replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  if (!/\byoutube\b/i.test(normalized)) return null;
+
+  const patterns = [
+    /\b(?:open|launch|go\s+to|visit)\s+(?:www\.)?youtube(?:\.com)?\b[\s\S]{0,80}?\bsearch(?:\s+(?:for|on|me))?\s+(.+?)\s*$/i,
+    /\bsearch\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+(?:www\.)?youtube(?:\.com)?\b/i,
+    /\bsearch\s+(?:on\s+)?(?:www\.)?youtube(?:\.com)?\s+(?:for\s+)?(.+?)\s*$/i,
+    /\bfind\s+(.+?)\s+(?:on|in)\s+(?:www\.)?youtube(?:\.com)?\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const query = match?.[1]
+      ?.replace(/^\s*(?:for|about)\s+/i, "")
+      .replace(/\s+(?:please|for me|thanks|thank you)\s*$/i, "")
+      .replace(/[\s.!?]+$/g, "")
+      .trim();
+    if (query && query.length > 0 && query.length <= 500) return { query };
+  }
+  return null;
+}

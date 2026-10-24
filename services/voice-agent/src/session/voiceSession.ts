@@ -229,26 +229,32 @@ export class VanessaVoiceSession {
       return;
     }
     const command = wakeCheck.cleanedText;
-    // A committed transcript ends the capture window. Close provider streaming
-    // before planning/execution so command latency does not extend ASR billing.
-    this.wakeWord.resetSession();
-    this.asr.deactivateStream?.();
 
+    // A wake phrase on its own should open the listening window, not greet and
+    // immediately shut the microphone off. The user can say the command next.
     if (!command.trim()) {
       if (wakeCheck.detected) {
-        // User woke up Vanessa with "Hey Vanessa"
-        this.setState("responding");
-        const greeting = "Hey boss, how are you? How can I help you?";
-        this.handlers.onHudUpdate?.({ state: "responding", transcript: greeting });
-        await this.speak(greeting);
-        this.setState("idle");
-        this.handlers.onHudUpdate?.({ state: "idle", transcript: "" });
+        this.wakeWord.touchActiveSession(15000);
+        try {
+          await this.asr.activateStream?.(15000);
+          this.setState("listening");
+          this.handlers.onHudUpdate?.({ state: "listening", transcript: "I'm listening. What would you like me to do?" });
+        } catch (error) {
+          this.wakeWord.resetSession();
+          this.asr.deactivateStream?.();
+          this.setState("idle");
+          this.handlers.onTtsUnavailable?.(error instanceof Error ? error.message : String(error));
+        }
       }
       this.isProcessing = false;
       this.turnDetector.reset();
       return;
     }
 
+    // A committed command ends the capture window before planning/execution,
+    // avoiding unnecessary ASR streaming while specialist agents do their work.
+    this.wakeWord.resetSession();
+    this.asr.deactivateStream?.();
     this.partialTranscript = "";
     this.setState("thinking");
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });
