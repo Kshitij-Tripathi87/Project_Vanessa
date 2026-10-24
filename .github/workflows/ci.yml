@@ -56,7 +56,7 @@ jobs:
       - name: Test deterministic agent workflows
         run: pnpm --filter @vanessa/orchestrator test:agent-routing
 
-      - name: Test deterministic browser navigation planning
+      - name: Test browser and Windows routing contracts
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/planner.browser.test.ts
 
       - name: Test Windows action failure handling and verification
