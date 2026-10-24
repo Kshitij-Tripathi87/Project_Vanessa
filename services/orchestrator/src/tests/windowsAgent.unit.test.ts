@@ -153,3 +153,118 @@ test("FAKE mode never executes Windows actions and marks them as simulated parti
   assert.equal((result.data as { actualStateChanged: boolean }).actualStateChanged, false);
   assert.match(result.spokenSummary, /simulated for testing/i);
 });
+
+
+test("ui.inspect returns bounded foreground-window controls and redacts sensitive text", async () => {
+  const payload = JSON.stringify({
+    success: true,
+    windowTitle: "Settings for user@example.com",
+    windowHandle: "123456",
+    processId: 3210,
+    controls: [{
+      name: "Contact user@example.com",
+      automationId: "contactControl",
+      controlType: "ControlType.Button",
+      className: "Button",
+      isEnabled: true,
+      isOffscreen: false,
+      depth: 2,
+    }],
+    truncated: false,
+    valuesRead: false,
+  });
+  const agent = new WindowsAgent({ runPowerShell: outputPowerShell(payload), fakeMode: false });
+  const result = await agent.execute("ui.inspect", {});
+  const data = result.data as { windowTitle: string; windowHandle: string; processId: number; controls: { name: string }[]; valuesRead: boolean };
+  assert.equal(result.success, true);
+  assert.equal(result.status, "completed");
+  assert.equal(data.windowHandle, "123456");
+  assert.equal(data.processId, 3210);
+  assert.equal(data.valuesRead, false);
+  assert.match(data.windowTitle, /REDACTED_EMAIL/);
+  assert.match(data.controls[0].name, /REDACTED_EMAIL/);
+  assert.match(result.spokenSummary, /did not read input-field values/i);
+  assert.equal(result.verification?.passed, true);
+});
+
+test("ui.inspect rejects incomplete foreground-window identity", async () => {
+  const agent = new WindowsAgent({
+    runPowerShell: outputPowerShell(JSON.stringify({
+      success: true, windowTitle: "", windowHandle: "123456", processId: 3210, controls: [],
+    })),
+    fakeMode: false,
+  });
+  const result = await agent.execute("ui.inspect", {});
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.verification?.passed, false);
+  assert.deepEqual(result.evidence, []);
+});
+
+test("ui.click reports invocation acceptance without claiming a verified screen effect", async () => {
+  const payload = JSON.stringify({
+    success: true,
+    windowTitle: "Settings",
+    processId: 3210,
+    invocationAccepted: true,
+    postClickStateVerified: false,
+    control: {
+      name: "Bluetooth",
+      automationId: "BluetoothToggle",
+      controlType: "ControlType.Button",
+      className: "Button",
+    },
+    message: "Invocation returned. State not independently verified.",
+  });
+  const agent = new WindowsAgent({ runPowerShell: outputPowerShell(payload), fakeMode: false });
+  const result = await agent.execute("ui.click", {
+    windowHandle: "123456",
+    expectedWindowTitle: "Settings",
+    expectedProcessId: 3210,
+    automationId: "BluetoothToggle",
+  });
+  const data = result.data as { invocationAccepted: boolean; postClickStateVerified: boolean };
+  assert.equal(result.success, true);
+  assert.equal(result.status, "partial");
+  assert.equal(data.invocationAccepted, true);
+  assert.equal(data.postClickStateVerified, false);
+  assert.equal(result.verification?.passed, false);
+  assert.match(result.spokenSummary, /not independently verified/i);
+});
+
+test("ui.click rejects an ambiguous selector and does not claim success", async () => {
+  const payload = JSON.stringify({
+    success: false,
+    error: "The selector matched more than one control.",
+    matches: [
+      { name: "Search", automationId: "Search1", controlType: "ControlType.Button" },
+      { name: "Search", automationId: "Search2", controlType: "ControlType.Button" },
+    ],
+  });
+  const agent = new WindowsAgent({ runPowerShell: outputPowerShell(payload), fakeMode: false });
+  const result = await agent.execute("ui.click", {
+    windowHandle: "123456",
+    expectedWindowTitle: "Settings",
+    expectedProcessId: 3210,
+    name: "Search",
+    controlType: "ControlType.Button",
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.verification?.passed, false);
+  assert.deepEqual(result.evidence, []);
+  assert.match(result.spokenSummary, /did not fall back to coordinates/i);
+});
+
+test("FAKE mode never invokes Windows UI Automation", async () => {
+  let calls = 0;
+  const runner = (async () => { calls++; throw new Error("Windows API must not be called in fake mode"); }) as unknown as typeof runPowerShell;
+  const agent = new WindowsAgent({ runPowerShell: runner, fakeMode: true });
+  const result = await agent.execute("ui.inspect", {});
+  assert.equal(calls, 0);
+  assert.equal(result.success, true);
+  assert.equal(result.status, "partial");
+  assert.equal(result.verification?.passed, false);
+  assert.equal((result.data as { simulated: boolean }).simulated, true);
+  assert.equal((result.data as { actualStateChanged: boolean }).actualStateChanged, false);
+});

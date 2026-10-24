@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Sun, Volume2, Wifi, XCircle } from "lucide-react";
+import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Eye, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Sun, Volume2, Wifi, XCircle } from "lucide-react";
 import type { Task } from "@vanessa/shared";
 import { TaskCard } from "./TaskCard.js";
 
@@ -19,6 +19,7 @@ const quickActions = [
   { title: "Check Wi-Fi", description: "Read the adapter's current state", command: "Check my Wi-Fi adapter status", icon: Wifi },
   { title: "Enable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth on", icon: Bluetooth },
   { title: "Disable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth off", icon: Bluetooth },
+  { title: "Inspect active window", description: "List accessible controls without reading input values", command: "Inspect the active window", icon: Eye },
   { title: "Capture desktop", description: "Save a screenshot of the primary display", command: "Capture a screenshot of my desktop", icon: Monitor },
 ];
 
@@ -65,6 +66,43 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
     .slice()
     .reverse()
     .slice(0, 4);
+
+  const latestUiInspection = tasks.slice().reverse().find((task) =>
+    task.agent === "windows" && ["ui.inspect", "windows.ui_inspect"].includes(task.action) &&
+    task.status === "success"
+  );
+  const uiInspection = latestUiInspection?.result as {
+    windowTitle?: string;
+    processId?: number;
+    controls?: Array<{
+      name?: string;
+      automationId?: string;
+      controlType?: string;
+      isEnabled?: boolean;
+      isOffscreen?: boolean;
+      depth?: number;
+    }>;
+    truncated?: boolean;
+    valuesRead?: boolean;
+  } | undefined;
+  const uiControls = Array.isArray(uiInspection?.controls) ? uiInspection.controls.slice(0, 12) : [];
+  const clickLabelByType: Record<string, string> = {
+    "ControlType.Button": "button",
+    "ControlType.Hyperlink": "link",
+    "ControlType.TabItem": "tab",
+    "ControlType.CheckBox": "checkbox",
+    "ControlType.RadioButton": "radio button",
+    "ControlType.MenuItem": "menu item",
+  };
+  const controlTypeAsLabel = (controlType?: string) => controlType ? clickLabelByType[controlType] : undefined;
+  const canRequestUiClick = (control: NonNullable<typeof uiControls>[number]) => {
+    const name = typeof control.name === "string" ? control.name.trim() : "";
+    return control.isEnabled === true && control.isOffscreen === false &&
+      name.length > 0 && name.length <= 100 &&
+      !name.includes('"') && !name.includes("'") &&
+      !name.includes(String.fromCharCode(10)) && !name.includes(String.fromCharCode(13)) &&
+      Boolean(controlTypeAsLabel(control.controlType));
+  };
 
   const online = status?.orchestratorOnline === true;
   const policyLabel = status?.autonomousMode === true
@@ -197,6 +235,63 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
           </div>
         </article>
       </div>
+
+      <article className="control-panel control-ui-inspector">
+        <div className="control-panel-heading">
+          <span className="control-panel-icon windows-icon"><Eye size={17} /></span>
+          <div><h3>Active window inspector</h3><p>Accessibility-based UI map · no input-field values read</p></div>
+        </div>
+        {uiInspection && latestUiInspection ? (
+          <>
+            <div className="control-ui-window">
+              <span className="control-ui-window-status"><CheckCircle2 size={13} /> Inspected</span>
+              <strong>{uiInspection.windowTitle || "Foreground window"}</strong>
+              <span>Process ID {uiInspection.processId || "unavailable"} · {uiControls.length} control(s) shown{uiInspection.truncated ? " · list truncated" : ""}</span>
+              <span className="control-ui-privacy"><ShieldCheck size={12} /> Input values were not read. Invoking a control still requires approval.</span>
+            </div>
+            {uiControls.length ? (
+              <div className="control-ui-list">
+                {uiControls.map((control, index) => {
+                  const clickKind = controlTypeAsLabel(control.controlType);
+                  const canClick = canRequestUiClick(control) && Boolean(clickKind);
+                  return (
+                    <div className="control-ui-item" key={(control.automationId || control.name || "control") + "-" + index}>
+                      <span className={"control-ui-state " + (control.isEnabled && !control.isOffscreen ? "is-enabled" : "is-disabled")} />
+                      <div className="control-ui-item-copy">
+                        <strong>{control.name?.trim() || "(unnamed control)"}</strong>
+                        <span>{control.controlType || "Unknown type"}{control.automationId ? " · " + control.automationId : ""}</span>
+                      </div>
+                      {canClick && (
+                        <button
+                          type="button"
+                          className="control-ui-click no-drag"
+                          title="Request a fresh inspection and approval-gated invocation"
+                          onClick={() => onExecute('Click the ' + clickKind + ' named "' + control.name!.trim() + '"')}
+                        >Request click</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="control-empty-state">
+                <CircleAlert size={17} />
+                <div><strong>No accessible controls were returned</strong><span>The active app may not expose controls through Windows UI Automation.</span></div>
+              </div>
+            )}
+            {uiInspection.truncated && <p className="control-ui-truncated">Only the first bounded set of controls is displayed. Reinspect the current window for a fresh tree.</p>}
+          </>
+        ) : (
+          <div className="control-empty-state">
+            <Eye size={18} />
+            <div><strong>No window inspection yet</strong><span>Inspect the active window to list accessible controls. Vanessa will not read text-field values or fall back to screen coordinates.</span></div>
+          </div>
+        )}
+        <div className="control-note">
+          <ShieldCheck size={13} />
+          <span>Control actions are high-risk. Vanessa re-inspects the foreground window, requires approval, invokes one unique accessible control, and marks the downstream effect unverified unless a separate check proves it.</span>
+        </div>
+      </article>
 
       <article className="control-panel control-browser-note">
         <div className="control-panel-heading">

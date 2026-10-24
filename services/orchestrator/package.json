@@ -15,7 +15,7 @@
     "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
     "test:playwright": "tsx src/tests/playwright.test.ts",
     "test:agent-routing": "tsx --test src/tests/agentRouting.test.ts src/tests/folderAgent.test.ts src/tests/fileAgent.test.ts src/tests/browserAgent.unit.test.ts",
-    "test:windows-agent": "tsx --test src/tests/windowsAgent.unit.test.ts"
+    "test:windows-agent": "tsx --test src/tests/windowsAgent.unit.test.ts src/tests/windowsUiAutomation.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

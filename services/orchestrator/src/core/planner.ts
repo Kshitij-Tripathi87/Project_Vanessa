@@ -8,7 +8,7 @@ import { eventBus } from "./eventBus.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { agentRegistry } from "../agents/registry.js";
 import { privacyGuard } from "./privacy.js";
-import { inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch, type CommonActionStep, type ResourceWorkflowRequest } from "./agentRouting.js";
+import { inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferExplicitUiClick, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch, type CommonActionStep, type ExplicitUiClickRequest, type ResourceWorkflowRequest } from "./agentRouting.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
@@ -18,6 +18,9 @@ RESPONSIBILITY AND ROUTING
 - All project coding, debugging, implementation, refactoring, code inspection/review, and project Git work must use agent "developer", action "codex.open". This applies even when the user never mentions Codex.
 - The old checkout-specific specialist and legacy incident workflow are intentionally outside this planner catalog. Never select agent "coding" or "incident" or their actions.
 - Use folder to resolve/open user-mentioned local files and folders; browser for URLs, search, and approved HTML preview; files for supported content inspection and filesystem operations; windows for OS settings/apps; memory for explicit recall/storage; knowledge for known documentation; it_ops for supported diagnostics; testing for an independently requested known test command; cloud for supported compose/share pages; vanessa.ask for general questions.
+- For desktop interaction beyond a supported Windows setting/app launch, use the reviewed Windows UI Automation actions. First run the canonical action ui.inspect to inspect the bounded foreground-window Control View tree; its result excludes input-field values.
+- If the user requests clicking a UI control, create a separate ui.click task that depends on ui.inspect. Pass the prior inspection's exact windowHandle, windowTitle, and processId using result references. Select a control only using an exact AutomationId, or an exact control name plus ControlType grounded in the inspection output or a selector the user explicitly supplied. Never invent a control selector or use screen coordinates.
+- ui.click is high risk and requires backend approval. InvokePattern acceptance is not proof of the app's downstream effect; schedule a fresh dependent ui.inspect only when the user requests verification or the task's acceptance criteria require it. If the selector cannot be determined unambiguously, ask for clarification rather than guessing.
 - Do not turn a code-related request into an arbitrary terminal command or an invented testing command. Codex should inspect the project and choose relevant checks within its own session.
 
 PROJECT AND CONTEXT
@@ -208,6 +211,72 @@ export class VanessaPlanner {
     };
   }
 
+  private createUiClickPlan(
+    command: string,
+    target: ExplicitUiClickRequest,
+    planId: string,
+    recentContext: string,
+    workspaceRoot: string,
+  ): Plan {
+    const inspectSpec = getCatalogAction("windows", "ui.inspect");
+    const clickSpec = getCatalogAction("windows", "ui.click");
+    if (!inspectSpec || !clickSpec) throw new Error("UI Automation actions are not present in the reviewed Windows catalog.");
+
+    const inspectId = planId + "_ui_inspect";
+    const inspectTask = this.enrichTask({
+      id: inspectId,
+      agent: "windows",
+      action: "ui.inspect",
+      params: {},
+      dependsOn: [],
+      acceptanceCriteria: [
+        "Inspect the foreground window using the bounded Windows UI Automation Control View tree.",
+        "Return the exact windowHandle, windowTitle, processId, and an accessibility-control list.",
+        "Do not read input-field values.",
+      ],
+      status: "pending",
+      risk: inspectSpec.risk,
+      allowedTools: [...inspectSpec.tools],
+    }, command, recentContext, workspaceRoot);
+
+    const clickTask = this.enrichTask({
+      id: planId + "_ui_click",
+      agent: "windows",
+      action: "ui.click",
+      params: {
+        windowHandle: "$" + inspectId + ".result.windowHandle",
+        expectedWindowTitle: "$" + inspectId + ".result.windowTitle",
+        expectedProcessId: "$" + inspectId + ".result.processId",
+        name: target.name,
+        controlType: target.controlType,
+      },
+      dependsOn: [inspectId],
+      acceptanceCriteria: [
+        "Request one-time user approval before invoking the selected UI control.",
+        "Invoke only the exact " + target.controlType + " named \"" + target.name + "\" in the inspected foreground window.",
+        "Fail closed on stale window identity, zero/multiple matches, disabled/offscreen targets, or unsupported InvokePattern.",
+        "Report invocation acceptance as partial until the downstream visual effect is independently verified.",
+      ],
+      status: "pending",
+      risk: clickSpec.risk,
+      allowedTools: [...clickSpec.tools],
+    }, command, recentContext, workspaceRoot);
+
+    const tasks = [inspectTask, clickTask];
+    if (!this.isValidModelTaskGraph(tasks)) {
+      throw new Error("The explicit UI click plan did not satisfy the reviewed dependency and selector contract.");
+    }
+
+    return {
+      id: planId,
+      command,
+      intent: "multi_task",
+      risk: "high",
+      tasks,
+      createdAt: Date.now(),
+    };
+  }
+
   private createWindowsActionPlan(
     command: string,
     action: string,
@@ -329,6 +398,15 @@ export class VanessaPlanner {
     const plannerInput = recentContext
       ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
       : command;
+
+    // Explicitly named UI controls get a deterministic inspect -> high-risk invoke plan.
+    // Generic "click X" requests do not match this parser and are left for clarification by the planner.
+    const explicitUiClick = inferExplicitUiClick(command);
+    if (explicitUiClick) {
+      const plan = this.createUiClickPlan(command, explicitUiClick, planId, recentContext, workspaceRoot);
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
 
     // Compound requests are split only when every clause maps to a reviewed
     // Windows or browser action. Unknown clauses fall through to the full planner.

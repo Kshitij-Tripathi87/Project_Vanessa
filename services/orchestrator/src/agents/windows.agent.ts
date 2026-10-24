@@ -9,6 +9,8 @@ import {
   SpecialistAgent,
 } from "@vanessa/shared";
 import { eventBus } from "../core/eventBus.js";
+import { privacyGuard } from "../core/privacy.js";
+import { inspectForegroundWindow, invokeForegroundControl } from "./windows-ui-automation.js";
 
 export interface WindowsAgentOptions {
   runPowerShell?: typeof runPowerShell;
@@ -32,6 +34,8 @@ export class WindowsAgent implements SpecialistAgent {
     "brightness_control",
     "application_launch",
     "screenshot_capture",
+    "ui_inspection",
+    "ui_control_invocation",
   ];
   allowedTools = [
     "windows_app_launch",
@@ -40,6 +44,7 @@ export class WindowsAgent implements SpecialistAgent {
     "audio_volume_set",
     "display_brightness_control",
     "process_control",
+    "windows_ui_automation",
   ];
 
   private simulatedOutcome(action: string, extraData: Record<string, unknown> = {}): AgentResult {
@@ -69,6 +74,144 @@ export class WindowsAgent implements SpecialistAgent {
     const startTime = new Date().toISOString();
 
     switch (action) {
+      case "ui.inspect":
+      case "windows.ui_inspect": {
+        if (this.fakeMode) return this.simulatedOutcome("Active-window UI Automation inspection", { windowTitle: "", controls: [], valuesRead: false });
+        let inspected;
+        try {
+          inspected = await inspectForegroundWindow(this.powerShellRunner);
+        } catch (error) {
+          const detail = "Foreground-window inspection failed: " + (error instanceof Error ? error.message : String(error));
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: detail,
+            spokenSummary: "I could not inspect the active Windows window.",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+            error: detail,
+            data: { output: detail, controls: [], valuesRead: false, error: detail },
+          };
+        }
+        if (!inspected.success || !inspected.windowHandle || !/^\d+$/.test(inspected.windowHandle) ||
+            !inspected.windowTitle?.trim() || !Number.isInteger(inspected.processId)) {
+          const detail = inspected.error || "Windows did not return a complete foreground-window identity.";
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: detail,
+            spokenSummary: "I could not identify the active Windows window safely.",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+            error: detail,
+            data: { output: detail, controls: [], valuesRead: false, error: detail },
+          };
+        }
+        const cleanText = (value: string) => privacyGuard.redactSensitiveData(value).cleanText;
+        const windowTitle = cleanText(inspected.windowTitle).slice(0, 180);
+        const controls = (inspected.controls || []).slice(0, 120).map((control) => ({
+          name: cleanText(String(control.name || "")).slice(0, 140),
+          automationId: cleanText(String(control.automationId || "")).slice(0, 100),
+          controlType: String(control.controlType || ""),
+          className: cleanText(String(control.className || "")).slice(0, 100),
+          isEnabled: control.isEnabled === true,
+          isOffscreen: control.isOffscreen === true,
+          depth: Number.isInteger(control.depth) ? control.depth : 0,
+        }));
+        const output = "Inspected foreground window \"" + windowTitle + "\"; found " + controls.length +
+          " accessibility controls" + (inspected.truncated ? " (list truncated)." : ".") + " No input-field values were read.";
+        return {
+          agentId: this.id,
+          status: "completed",
+          success: true,
+          summary: output,
+          spokenSummary: "I inspected " + windowTitle + " and found " + controls.length + " accessible controls. I did not read input-field values.",
+          evidence: [{ description: output, source: "Windows UI Automation Control View", timestamp: startTime, confidence: 1 }],
+          artifacts: [],
+          verification: { passed: true, details: "The foreground window identity and bounded accessibility tree were returned. Input-field values were not read." },
+          data: {
+            output,
+            windowTitle,
+            windowHandle: inspected.windowHandle,
+            processId: inspected.processId,
+            controls,
+            truncated: inspected.truncated === true,
+            valuesRead: false,
+          },
+        };
+      }
+
+      case "ui.click":
+      case "windows.ui_click": {
+        if (this.fakeMode) return this.simulatedOutcome("Foreground-window control invocation", { invocationAccepted: false, postClickStateVerified: false });
+        const request = {
+          windowHandle: String(params.windowHandle || ""),
+          expectedWindowTitle: String(params.expectedWindowTitle || ""),
+          expectedProcessId: Number(params.expectedProcessId),
+          automationId: typeof params.automationId === "string" ? params.automationId : undefined,
+          name: typeof params.name === "string" ? params.name : undefined,
+          controlType: typeof params.controlType === "string" ? params.controlType : undefined,
+        };
+        let invoked;
+        try {
+          invoked = await invokeForegroundControl(this.powerShellRunner, request);
+        } catch (error) {
+          const detail = "Windows UI Automation invocation failed: " + (error instanceof Error ? error.message : String(error));
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: detail,
+            spokenSummary: "I could not invoke that Windows control.",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+            error: detail,
+            data: { output: detail, invocationAccepted: false, postClickStateVerified: false, error: detail },
+          };
+        }
+        const cleanText = (value: string) => privacyGuard.redactSensitiveData(value).cleanText;
+        const windowTitle = cleanText(String(invoked.windowTitle || request.expectedWindowTitle)).slice(0, 180);
+        const control = invoked.control ? {
+          name: cleanText(String(invoked.control.name || "")).slice(0, 140),
+          automationId: cleanText(String(invoked.control.automationId || "")).slice(0, 100),
+          controlType: String(invoked.control.controlType || ""),
+          className: cleanText(String(invoked.control.className || "")).slice(0, 100),
+        } : undefined;
+        if (!invoked.success || invoked.invocationAccepted !== true) {
+          const detail = invoked.error || "Windows did not accept the UI Automation invocation.";
+          return {
+            agentId: this.id,
+            status: "failed",
+            success: false,
+            summary: detail,
+            spokenSummary: "I could not invoke the selected control. I did not fall back to coordinates or a different control.",
+            evidence: [],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+            error: detail,
+            data: { output: detail, windowTitle, control, invocationAccepted: false, postClickStateVerified: false, error: detail },
+          };
+        }
+        const output = "UI Automation invoked " + (control?.name ? `"${control.name}"` : `AutomationId "${control?.automationId || request.automationId}"`) +
+          " in \"" + windowTitle + "\". The resulting screen state was not independently verified.";
+        return {
+          agentId: this.id,
+          status: "partial",
+          success: true,
+          summary: output,
+          spokenSummary: "I invoked the selected control in " + windowTitle + ". I have not independently verified what changed on screen.",
+          evidence: [{ description: output, source: "Windows UI Automation InvokePattern", timestamp: startTime, confidence: 1, data: { controlType: control?.controlType, automationId: control?.automationId } }],
+          artifacts: [],
+          verification: { passed: false, details: "Exactly one enabled, onscreen control matched the inspected window and selector; InvokePattern.Invoke returned without exception. The downstream screen effect was not independently verified." },
+          data: { output, windowTitle, processId: invoked.processId, control, invocationAccepted: true, postClickStateVerified: false, message: invoked.message },
+        };
+      }
+
       case "wifi.restart_adapter":
       case "windows.wifi_restart": {
         if (this.fakeMode) return this.simulatedOutcome("Wi-Fi adapter restart", { adapter: "Unknown", connected: false });
