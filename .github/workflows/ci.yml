@@ -59,6 +59,9 @@ jobs:
       - name: Test Windows action failure handling and verification
         run: pnpm --filter @vanessa/orchestrator test:windows-agent
 
+      - name: Test task outcome and verification semantics
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/taskRunner.result.test.ts
+
       - name: Test reviewed agent catalog
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
 
