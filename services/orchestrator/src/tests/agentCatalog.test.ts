@@ -55,5 +55,8 @@ test("validates action identity, required parameter types, unsupported placehold
   assert(catalogAccepts("windows", "brightness.adjust", { delta: -10 }));
   assert(!catalogAccepts("windows", "brightness.adjust", { delta: 0 }));
   assert(!catalogAccepts("windows", "brightness.adjust", { delta: 150 }));
+  assert(catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "chrome" }));
+  assert(catalogAccepts("browser", "browser.open_url", { url: "https://example.com", browser: "edge" }));
+  assert(!catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "powershell" }));
   assert(catalogAccepts("files", "file.search", { query: "report", path: "$folder.result.path" }));
 });
