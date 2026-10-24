@@ -540,7 +540,6 @@ export class WindowsAgent implements SpecialistAgent {
       edge: "msedge.exe",
       taskmgr: "taskmgr.exe",
       "task manager": "taskmgr.exe",
-      explorer: "explorer.exe",
       "file explorer": "explorer.exe",
       settings: "ms-settings:",
       vscode: "code.cmd",
