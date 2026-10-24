@@ -270,8 +270,8 @@ export function inferExplicitUiClick(command: string): ExplicitUiClickRequest | 
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
   if (!normalized || hasExplicitNegation(normalized) || hasAdditionalAction(normalized)) return null;
-  const match = normalized.match(/^\s*(?:please\s+)?click\s+(?:on\s+)?(?:the\s+)?(radio\s+button|menu\s+item|button|link|tab|checkbox)\s+(?:(?:named|called|labelled|labeled)\s+)?(?:["“])?([^"”\r\n.!?]{1,100}?)(?:["”])?\s*[.!]?\s*$/i);
-  if (!match?.[1] || !match[2]) return null;
+  const match = normalized.match(/^\s*(?:please\s+)?click\s+(?:on\s+)?(?:the\s+)?(radio\s+button|menu\s+item|button|link|tab|checkbox)\s+(?:(?:named|called|labelled|labeled)\s+)?(?:"([^"\r\n]{1,100})"|“([^”\r\n]{1,100})”|([^"“”\r\n.!?]{1,100}))\s*[.!]?\s*$/i);
+  if (!match?.[1]) return null;
   const kind = match[1].toLowerCase().replace(/\s+/g, " ");
   const controlTypeByKind: Record<string, string> = {
     button: "ControlType.Button",
@@ -281,7 +281,7 @@ export function inferExplicitUiClick(command: string): ExplicitUiClickRequest | 
     "radio button": "ControlType.RadioButton",
     "menu item": "ControlType.MenuItem",
   };
-  const name = match[2].trim();
+  const name = (match[2] || match[3] || match[4] || "").trim();
   if (!name || name.length > 100) return null;
   return { name, controlType: controlTypeByKind[kind] };
 }
