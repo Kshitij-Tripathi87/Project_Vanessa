@@ -52,10 +52,8 @@
           ]
         }
       ],
-      "sign": false,
       "verifyUpdateCodeSignature": false,
-      "forceCodeSigning": false,
-      "signAndEditExecutable": false
+      "forceCodeSigning": false
     },
     "files": [
       "dist/**/*",
