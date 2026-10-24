@@ -53,8 +53,10 @@ export function inferResourceWorkflow(command: string): ResourceWorkflowRequest 
 
   const codeVerb = /\b(fix|debug|refactor|implement|patch|repair|modify|edit|change|update)\b/.test(lower);
   const codeIntent = /\b(code|coding|program|programming|bug|debug|refactor|implementation|feature)\b/.test(lower);
-  if ((codeVerb && CODE_EXTENSION.test(target)) ||
-      (codeIntent && /\b(?:project|code|program|bug|debug|refactor|implement|feature)\b/.test(lower))) {
+  // The requested operation takes precedence over the file extension. Editing a
+  // Markdown, JSON, CSV, or other non-source file is still coding work when the
+  // user explicitly asks to modify/debug it; passive analysis remains File Agent work.
+  if (codeVerb || (codeIntent && /\b(?:project|code|program|bug|debug|refactor|implement|feature)\b/.test(lower))) {
     return { target, intent: "code" };
   }
 
