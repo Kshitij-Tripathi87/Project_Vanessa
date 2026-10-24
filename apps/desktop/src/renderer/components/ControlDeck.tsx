@@ -14,7 +14,8 @@ interface ControlDeckProps {
 
 const quickActions = [
   { title: "Open File Explorer", description: "Bring up folders and files", command: "Open File Explorer", icon: HardDrive },
-  { title: "Open Chrome", description: "Launch the installed browser", command: "Open Chrome", icon: Globe },
+  { title: "Open Chrome", description: "Launch Chrome", command: "Open Chrome", icon: Globe },
+  { title: "Open Edge", description: "Launch Microsoft Edge", command: "Open Edge", icon: Globe },
   { title: "Check Wi-Fi", description: "Read the adapter's current state", command: "Check my Wi-Fi adapter status", icon: Wifi },
   { title: "Enable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth on", icon: Bluetooth },
   { title: "Disable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth off", icon: Bluetooth },
