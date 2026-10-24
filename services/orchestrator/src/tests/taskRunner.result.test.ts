@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Task } from "@vanessa/shared";
-import { recordAgentResult } from "../core/taskRunner.js";
+import { recordAgentResult } from "../core/agentResult.js";
 
 function taskTemplate(): Task {
   return {
