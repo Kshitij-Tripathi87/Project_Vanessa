@@ -225,10 +225,10 @@ test("ui.click reports invocation acceptance without claiming a verified screen 
   });
   const data = result.data as { invocationAccepted: boolean; postClickStateVerified: boolean };
   assert.equal(result.success, true);
-  assert.equal(result.status, "completed");
+  assert.equal(result.status, "partial");
   assert.equal(data.invocationAccepted, true);
   assert.equal(data.postClickStateVerified, false);
-  assert.equal(result.verification?.passed, true);
+  assert.equal(result.verification?.passed, false);
   assert.match(result.spokenSummary, /not independently verified/i);
 });
 
