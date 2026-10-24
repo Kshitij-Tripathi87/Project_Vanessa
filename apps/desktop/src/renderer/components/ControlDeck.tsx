@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Sun, Volume2, Wifi, XCircle } from "lucide-react";
+import { Activity, ArrowUpRight, Bluetooth, CheckCircle2, CircleAlert, Eye, Globe, HardDrive, LoaderCircle, Monitor, RefreshCw, Search, ShieldCheck, Sun, Volume2, Wifi, XCircle } from "lucide-react";
 import type { Task } from "@vanessa/shared";
 import { TaskCard } from "./TaskCard.js";
 
@@ -19,6 +19,7 @@ const quickActions = [
   { title: "Check Wi-Fi", description: "Read the adapter's current state", command: "Check my Wi-Fi adapter status", icon: Wifi },
   { title: "Enable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth on", icon: Bluetooth },
   { title: "Disable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth off", icon: Bluetooth },
+  { title: "Inspect active window", description: "List accessible controls without reading input values", command: "Inspect the active window", icon: Eye },
   { title: "Capture desktop", description: "Save a screenshot of the primary display", command: "Capture a screenshot of my desktop", icon: Monitor },
 ];
 
