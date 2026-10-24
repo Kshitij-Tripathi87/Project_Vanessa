@@ -230,6 +230,10 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
     if (field.type === "number" && !Number.isFinite(value)) return false;
   }
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
+  if (name === "brightness.set" && typeof params.level === "number" &&
+      (!Number.isInteger(params.level) || params.level < 0 || params.level > 100)) return false;
+  if (name === "brightness.adjust" && typeof params.delta === "number" &&
+      (!Number.isInteger(params.delta) || params.delta === 0 || params.delta < -100 || params.delta > 100)) return false;
   if (params.autoDeploy === true) return false;
   if (name === "codex.open" && String(params.prompt).includes("\0")) return false;
   return true;
