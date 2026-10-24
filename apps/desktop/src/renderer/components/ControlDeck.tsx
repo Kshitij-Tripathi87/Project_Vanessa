@@ -25,6 +25,7 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
   const [url, setUrl] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [formError, setFormError] = useState("");
+  const [browserTarget, setBrowserTarget] = useState<"default" | "chrome" | "edge">("default");
   const [volumeTarget, setVolumeTarget] = useState(50);
   const [brightnessTarget, setBrightnessTarget] = useState(60);
 
@@ -46,7 +47,7 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
       setFormError("URLs containing embedded credentials are not accepted.");
       return;
     }
-    onExecute("Open " + parsed.toString());
+    onExecute(browserTarget === "default" ? "Open " + parsed.toString() : "Open " + (browserTarget === "chrome" ? "Chrome" : "Edge") + " and open " + parsed.toString());
     setUrl("");
   };
 
@@ -54,7 +55,7 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
     event.preventDefault();
     const query = searchQuery.trim();
     if (!query) return;
-    onExecute("Search Google for " + query);
+    onExecute(browserTarget === "default" ? "Search Google for " + query : "Open " + (browserTarget === "chrome" ? "Chrome" : "Edge") + " and search Google for " + query);
     setSearchQuery("");
   };
 
@@ -121,6 +122,18 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
           <div className="control-panel-heading">
             <span className="control-panel-icon browser-icon"><Globe size={17} /></span>
             <div><h3>Open a destination</h3><p>Use your system default browser</p></div>
+          </div>
+          <div className="control-browser-target no-drag">
+            <label htmlFor="control-browser-target">Open/search using</label>
+            <select
+              id="control-browser-target"
+              value={browserTarget}
+              onChange={(event) => setBrowserTarget(event.target.value as "default" | "chrome" | "edge")}
+            >
+              <option value="default">System default browser</option>
+              <option value="chrome">Google Chrome</option>
+              <option value="edge">Microsoft Edge</option>
+            </select>
           </div>
           <form className="control-form no-drag" onSubmit={runUrl}>
             <label htmlFor="control-url">Website URL</label>
