@@ -122,6 +122,18 @@ test("routes single-intent Windows controls deterministically", () => {
   });
 });
 
+test("routes active-window accessibility inspection to UI Automation", () => {
+  assert.deepEqual(inferWindowsControl("Inspect the active window"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("List controls in the current app"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("Hey Vanessa, inspect the foreground application UI controls"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.equal(inferWindowsControl("Inspect the active window and click Search"), null);
+});
 test("does not collapse multi-action requests into a single Windows action", () => {
   assert.equal(inferWindowsControl("Turn off Bluetooth and increase brightness"), null);
   assert.equal(inferWindowsControl("Open Chrome and search for TypeScript tutorials"), null);
