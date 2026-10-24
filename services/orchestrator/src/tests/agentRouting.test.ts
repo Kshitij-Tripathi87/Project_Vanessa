@@ -134,3 +134,18 @@ test("explicitly negated system and browser commands do not trigger deterministi
   assert.equal(inferBrowserSearch("Do not search Google for private data"), null);
   assert.equal(inferYouTubeSearch("Don't open YouTube and search for private data"), null);
 });
+
+test("multi-action browser requests do not collapse to a single navigation or search", () => {
+  assert.equal(inferExplicitBrowserNavigation("Open https://example.com and then search Google for documentation"), null);
+  assert.equal(inferBrowserSearch("Search Google for documentation and then open https://example.com"), null);
+  assert.equal(inferYouTubeSearch("Open YouTube and search for a lo-fi playlist, then turn off Bluetooth"), null);
+});
+
+test("compound words inside a single search query remain a single browser search", () => {
+  assert.deepEqual(inferBrowserSearch("Search Google for open source AI and cloud security"), {
+    query: "open source AI and cloud security",
+  });
+  assert.deepEqual(inferYouTubeSearch("Hey Vanessa, open YouTube and search for rainforest sounds"), {
+    query: "rainforest sounds",
+  });
+});
