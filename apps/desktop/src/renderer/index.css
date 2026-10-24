@@ -983,3 +983,41 @@ input {
   font-size: 8px;
   line-height: 1.5;
 }
+
+
+.control-browser-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+.control-browser-target label {
+  color: #9eb2c9;
+  font-size: 10px;
+  font-weight: 650;
+}
+.control-browser-target select {
+  max-width: 58%;
+  min-width: 0;
+  padding: 7px 27px 7px 9px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 8px;
+  color: #dff7ff;
+  background: #0c1725;
+  font: 600 10px var(--font-sans);
+  outline: none;
+  cursor: pointer;
+}
+.control-browser-target select:focus-visible {
+  border-color: rgba(34, 211, 238, 0.7);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.08);
+}
+.control-browser-target option {
+  color: #e2e8f0;
+  background: #0c1725;
+}
