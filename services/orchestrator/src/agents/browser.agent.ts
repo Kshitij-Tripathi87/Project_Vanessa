@@ -66,25 +66,53 @@ export class BrowserAgent implements SpecialistAgent {
 
     switch (action) {
       case "browser.open_url": {
-        const result = await playwrightBrowserAgent.navigate(String(params.url || ""));
-        return this.result(result.success,
-          result.success ? "Opened " + result.url + " (" + result.title + ")" : "Browser navigation failed.",
-          result.success ? "Opened the requested webpage." : "I could not open that webpage.",
-          result.success ? [{ description: "Browser navigation completed for " + result.url, source: "Playwright", timestamp, confidence: 1, data: { title: result.title, url: result.url } }] : [],
-          result.success ? [result.url] : [], { url: result.url, title: result.title, error: result.error });
+        const requestedUrl = String(params.url || "");
+        let url: string;
+        try {
+          url = normalizeRemoteBrowserUrl(requestedUrl);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Browser URL was rejected by safety validation.", "I could not open that URL because it did not pass browser safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
+        }
+        try {
+          await this.openExternalBrowser(url);
+          return this.result(
+            true,
+            "The operating system accepted the default-browser launch request for " + url + ".",
+            "I sent the page to your default browser. I have not verified that it loaded.",
+            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, pageLoadVerified: false } }],
+            [url],
+            { url, externalBrowser: true, pageLoadVerified: false },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Could not open the requested URL in the default browser.", "I could not open that page in your default browser.", [], [], { url, externalBrowser: false, error: detail, pageLoadVerified: false });
+        }
       }
 
       case "browser.search": {
-        const query = String(params.query || "");
-        const result = await playwrightBrowserAgent.search(query);
-        return this.result(result.success,
-          result.success ? "Extracted readable search results for " + query : "Search results could not be extracted for " + query + ".",
-          result.success ? "Search results are ready." : "The search did not return readable results.",
-          result.success ? [{ description: "Search result text extracted for " + query, source: "Google Search via Playwright", timestamp, confidence: 0.9, data: { snippets: result.snippets } }] : [],
-          result.success ? [result.url] : [], { query, url: result.url, snippets: result.snippets, error: result.error });
+        const query = String(params.query || "").trim();
+        if (!query) return this.result(false, "A non-empty search query is required.", "Tell me what you want me to search for.", [], [], { query, error: "A non-empty search query is required." });
+        const search = new URL("https://www.google.com/search");
+        search.searchParams.set("q", query);
+        const url = search.toString();
+        try {
+          await this.openExternalBrowser(url);
+          return this.result(
+            true,
+            "The operating system accepted a default-browser search launch for " + query + ".",
+            "I opened search results in your default browser. I have not independently inspected the results.",
+            [{ description: "Operating system accepted the browser launch request for search query: " + query, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, resultsExtracted: false } }],
+            [url],
+            { query, url, externalBrowser: true, resultsExtracted: false },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return this.result(false, "Could not open search results in the default browser.", "I could not open those search results in your default browser.", [], [], { query, url, externalBrowser: false, resultsExtracted: false, error: detail });
+        }
       }
 
-      case "browser.research": {
+            case "browser.research": {
         const query = String(params.goal || params.query || params.prompt || "");
         const result = await (await import("./openjarvis.agent.js")).vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
         const success = result.success === true;
@@ -100,7 +128,7 @@ export class BrowserAgent implements SpecialistAgent {
         const query = String(params.query || "").trim();
         const url = buildYouTubeSearchUrl(query);
         try {
-          await openDefaultBrowser(url);
+          await this.openExternalBrowser(url);
           return this.result(
             true,
             "Opened YouTube search results for " + query + " in the default browser.",
@@ -149,7 +177,7 @@ export class BrowserAgent implements SpecialistAgent {
         const result = await playwrightBrowserAgent.openLocalFile(filePath);
         return this.result(result.success,
           result.success ? "Opened local HTML preview at " + result.url : "Local HTML preview failed.",
-          result.success ? "The local page is open in the browser." : "I could not open that local page in the browser.",
+          result.success ? "The local page is open in Vanessa’s isolated browser session." : "I could not open that local page in Vanessa’s browser session.",
           result.success ? [{ description: "Opened approved local HTML file in browser session", source: filePath, timestamp, confidence: 1, data: { title: result.title, url: result.url } }] : [],
           result.success ? [filePath] : [], { path: filePath, title: result.title, url: result.url, error: result.error });
       }
