@@ -7,6 +7,7 @@ export type AgentName =
   | "windows"
   | "browser"
   | "files"
+  | "folder"
   | "system"
   | "developer"
   | "cloud"

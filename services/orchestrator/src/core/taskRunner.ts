@@ -120,7 +120,7 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
     return "success";
   }
 
-  if (result !== undefined && result !== null && result !== false && structured?.status !== "failed") {
+  if (result !== undefined && result !== null && result !== false && structured?.success !== false && structured?.status !== "failed" && structured?.status !== "partial" && structured?.status !== "blocked") {
     task.verification = {
       verified: true,
       postconditions: [verificationDetails || "Task completed without error."],
@@ -131,15 +131,16 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
     return "success";
   }
 
+  const reportedFailure = structured?.success === false || structured?.status === "failed" || structured?.status === "blocked";
   task.verification = {
     verified: false,
-    postconditions: ["No explicit passing verification result was returned by the agent."],
+    postconditions: [reportedFailure ? "The agent reported that the requested action failed or was blocked." : "No explicit passing verification result was returned by the agent."],
     exitCode: 1,
     artifacts: task.artifacts,
-    outcome: "partial",
-    details: verificationDetails || undefined,
+    outcome: reportedFailure ? "failed" : "partial",
+    details: verificationDetails || (typeof structured?.error === "string" ? structured.error : undefined),
   };
-  return "partial";
+  return reportedFailure ? "failed" : "partial";
 }
 
 export function triggerKillSwitch() {
