@@ -152,8 +152,8 @@ export class VanessaPlanner {
     recentContext: string,
     workspaceRoot: string,
   ): Plan {
-    if (steps.length < 2 || steps.length > 7) {
-      throw new Error("A compound control plan must contain between two and seven reviewed actions.");
+    if (steps.length < 1 || steps.length > 7) {
+      throw new Error("A deterministic control plan must contain between one and seven reviewed actions.");
     }
 
     const tasks: Task[] = [];
@@ -201,7 +201,7 @@ export class VanessaPlanner {
     return {
       id: planId,
       command,
-      intent: "multi_task",
+      intent: tasks.length > 1 ? "multi_task" : "single_task",
       risk: riskRanks[Math.max(...tasks.map((task) => riskRanks.indexOf(task.risk || "low")))],
       tasks,
       createdAt: Date.now(),
