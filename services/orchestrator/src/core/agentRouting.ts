@@ -155,3 +155,76 @@ export function inferBrowserSearch(command: string): BrowserSearchRequest | null
   }
   return null;
 }
+
+
+export interface WindowsControlRequest {
+  action: string;
+  params: Record<string, string | number | boolean>;
+}
+
+/** Deterministic routing for simple, single-intent Windows controls. Multi-action
+ * utterances are left to the planner so it can build a dependency-aware plan.
+ */
+export function inferWindowsControl(command: string): WindowsControlRequest | null {
+  const normalized = String(command || "")
+    .trim()
+    .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  if (!normalized || /\b(?:and then|and also|then|after that|and)\b/i.test(normalized)) return null;
+  const lower = normalized.toLowerCase();
+
+  if (/\b(?:capture|take|make)\b/i.test(lower) && /\b(?:a\s+)?(?:desktop\s+)?screenshot\b/i.test(lower)) {
+    return { action: "screenshot.capture", params: {} };
+  }
+
+  if (/\bbluetooth\b/i.test(lower)) {
+    if (/\b(?:turn\s+off|switch\s+off|disable|deactivate|off)\b/i.test(lower)) {
+      return { action: "bluetooth.disable", params: {} };
+    }
+    if (/\b(?:turn\s+on|switch\s+on|enable|activate|on)\b/i.test(lower)) {
+      return { action: "bluetooth.enable", params: {} };
+    }
+  }
+
+  if (/\b(?:check|show|get|what(?:'s| is)?|read)\b/i.test(lower) && /\b(?:wi[ -]?fi|wireless)\b/i.test(lower) &&
+      /\b(?:status|state|connected|connection|working)\b/i.test(lower)) {
+    return { action: "wifi.status", params: {} };
+  }
+
+  const brightnessSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:display\s+)?brightness\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b/i);
+  if (brightnessSet) {
+    const level = Number(brightnessSet[1]);
+    if (level >= 0 && level <= 100) return { action: "brightness.set", params: { level } };
+    return null;
+  }
+  if (/\b(?:increase|raise|brighten|turn\s+up)\b/i.test(lower) && /\bbrightness\b/i.test(lower)) {
+    return { action: "brightness.adjust", params: { delta: 10 } };
+  }
+  if (/\b(?:decrease|lower|dim|turn\s+down)\b/i.test(lower) && /\bbrightness\b/i.test(lower)) {
+    return { action: "brightness.adjust", params: { delta: -10 } };
+  }
+
+  const volumeSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:system\s+)?volume\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b/i);
+  if (volumeSet) {
+    const level = Number(volumeSet[1]);
+    if (level >= 0 && level <= 100) return { action: "volume.set", params: { level } };
+    return null;
+  }
+
+  const appMatch = normalized.match(/\b(?:open|launch|start)\s+(?:the\s+)?(file\s+explorer|windows\s+explorer|explorer|google\s+chrome|chrome|microsoft\s+edge|edge|calculator|calc|notepad|terminal|windows\s+terminal|command\s+prompt|cmd|task\s+manager|settings|vscode|vs\s+code)\b/i);
+  if (appMatch?.[1]) {
+    const alias = appMatch[1].toLowerCase().replace(/\s+/g, " ").trim();
+    const nameMap: Record<string, string> = {
+      "file explorer": "explorer", "windows explorer": "explorer", explorer: "explorer",
+      "google chrome": "chrome", chrome: "chrome",
+      "microsoft edge": "edge", edge: "edge",
+      calculator: "calculator", calc: "calc", notepad: "notepad",
+      terminal: "terminal", "windows terminal": "terminal",
+      "command prompt": "cmd", cmd: "cmd",
+      "task manager": "taskmgr", settings: "ms-settings:",
+      vscode: "vscode", "vs code": "vscode",
+    };
+    return { action: "app.open", params: { name: nameMap[alias] || alias } };
+  }
+
+  return null;
+}
