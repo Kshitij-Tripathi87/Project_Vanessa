@@ -18,6 +18,9 @@ let isKillSwitchEngaged = false;
 
 export function getDeclaredLock(action: string): string | null {
   const lower = action.toLowerCase();
+  if (lower === "ui.inspect" || lower === "ui.click" || lower === "windows.ui_inspect" || lower === "windows.ui_click") {
+    return "desktop-ui";
+  }
   if (lower.includes("wifi") || lower.includes("adapter") || lower.includes("network")) {
     return "network-adapter";
   }
