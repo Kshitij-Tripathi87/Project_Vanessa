@@ -83,6 +83,10 @@ async function main() {
   const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
   const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
   const relayPort = Number(process.env.RELAY_PORT || process.env.PORT || 4400);
+  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
+  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
+  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
+  const usesLocalAsr = ["voice", "whisper"].includes(asrProvider) || (asrProvider === "fish" && fallbackEnabled);
 
   const services: ServiceCheck[] = [
     {
@@ -104,15 +108,6 @@ async function main() {
       details: "",
     },
     {
-      name: "Local Whisper ASR",
-      port: localAsrPort,
-      protocol: "ws",
-      url: localAsrUrl,
-      status: "OFFLINE",
-      latencyMs: 0,
-      details: "",
-    },
-    {
       name: "Mobile Relay WSS",
       port: relayPort,
       protocol: "http",
@@ -122,6 +117,18 @@ async function main() {
       details: "",
     },
   ];
+
+  if (usesLocalAsr) {
+    services.splice(2, 0, {
+      name: "Local Whisper ASR",
+      port: localAsrPort,
+      protocol: "ws",
+      url: localAsrUrl,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    });
+  }
 
   for (const s of services) {
     if (s.protocol === "http") {
@@ -164,19 +171,30 @@ async function main() {
   // Voice Provider Configuration Summary
   const fishKey = process.env.FISH_API_KEY || "";
   const hasValidFishKey = fishKey.startsWith("sk-fish-");
-  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
-  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
-  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
+  const sarvamKey = process.env.SARVAM_API_KEY || "";
+  const hasValidSarvamKey = Boolean(sarvamKey.trim()) && !/placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(sarvamKey);
 
   console.log("VOICE PROVIDER CONFIGURATION:");
   console.log(`- Configured ASR Provider: ${asrProvider}`);
   console.log(`- Configured TTS Provider: ${ttsProvider}`);
-  const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
-  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish ASR unavailable)"}`);
-  console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
-  console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
-  console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
-  console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
+  if (asrProvider === "fish" || ttsProvider === "fish") {
+    const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
+    console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish provider unavailable)"}`);
+    if (asrProvider === "fish") console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
+    if (ttsProvider === "fish") {
+      console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
+      console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
+    }
+  }
+  if (asrProvider === "sarvam" || ttsProvider === "sarvam") {
+    console.log(`- Sarvam API Key: ${hasValidSarvamKey ? "Configured" : "Missing or placeholder"}`);
+    if (asrProvider === "sarvam") console.log(`- Sarvam ASR Model: ${process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime"}`);
+    if (ttsProvider === "sarvam") {
+      console.log(`- Sarvam TTS Model: ${process.env.SARVAM_TTS_MODEL || "bulbul:v4-flash"}`);
+      console.log(`- Sarvam TTS Speaker: ${process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads"}`);
+    }
+  }
+  console.log(`- Local ASR: ${usesLocalAsr ? `${localAsrUrl} (selected)` : "not selected for the active ASR provider"}`);
 
   const onlineCount = services.filter((s) => s.status === "ONLINE").length;
   console.log(`\nReadiness: ${onlineCount}/${services.length} services online.`);
