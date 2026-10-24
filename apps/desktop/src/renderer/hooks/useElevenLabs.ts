@@ -10,7 +10,7 @@ export function useElevenLabs() {
     try {
       setVoiceState("listening");
       // Connect to ElevenLabs session endpoint or local bridge
-      const res = await fetch("http://127.0.0.1:4319/voice/session");
+      const res = await fetch("http://127.0.0.1:4139/voice/session");
       const data = (await res.json()) as any;
 
       if (data.signedUrl) {

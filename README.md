@@ -85,7 +85,7 @@ cp .env.example .env
 ```bash
 pnpm dev
 ```
-- Orchestrator API runs on `http://127.0.0.1:4319`
+- Orchestrator API runs on `http://127.0.0.1:4139`
 - Desktop HUD runs on `http://localhost:5173`
 
 ### 5. Run Scenario Tests

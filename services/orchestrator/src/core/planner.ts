@@ -75,7 +75,7 @@ export class VanessaPlanner {
         "Perform only the current request. Inspect the project before making claims; report actual changes and checks in the Codex session.",
       ].join("\n");
     }
-    const matchingSkill = skillsRuntime.matchSkill(task.action);
+    const matchingSkill = skillsRuntime.matchSkill(task.action) || skillsRuntime.matchSkill(command);
 
     if (matchingSkill) {
       task.skillName = matchingSkill.name;

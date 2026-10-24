@@ -78,7 +78,7 @@ async function main() {
   console.log("     VANESSA SERVICE STACK READINESS PROBE       ");
   console.log("==================================================\n");
 
-  const orchestratorPort = Number(process.env.VANESSA_PORT || 4319);
+  const orchestratorPort = Number(process.env.VANESSA_PORT || 4139);
   const voiceAgentPort = Number(process.env.VOICE_AGENT_PORT || 4500);
   const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
   const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
