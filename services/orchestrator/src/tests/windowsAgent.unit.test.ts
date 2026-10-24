@@ -103,3 +103,53 @@ test("screenshot failure has no success artifact", async () => {
   assert.deepEqual(result.evidence, []);
   assert.match(result.spokenSummary, /could not capture/i);
 });
+
+test("brightness is successful only when WMI read-back matches the requested value", async () => {
+  const agent = new WindowsAgent({
+    runPowerShell: outputPowerShell('{"Current":40,"Target":60,"Observed":[60],"AllMatch":true}'),
+    fakeMode: false,
+  });
+  const result = await agent.execute("brightness.set", { level: 60 });
+  assert.equal(result.success, true);
+  assert.equal(result.status, "completed");
+  assert.equal(result.verification?.passed, true);
+  assert.equal((result.data as { actualObservedLevel: number }).actualObservedLevel, 60);
+  assert.equal((result.data as { readBackVerified: boolean }).readBackVerified, true);
+});
+
+test("brightness read-back mismatch is a failure", async () => {
+  const agent = new WindowsAgent({
+    runPowerShell: outputPowerShell('{"Current":40,"Target":60,"Observed":[58],"AllMatch":false}'),
+    fakeMode: false,
+  });
+  const result = await agent.execute("brightness.set", { level: 60 });
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.verification?.passed, false);
+  assert.match(result.summary || "", /not verified/i);
+  assert.deepEqual(result.evidence, []);
+});
+
+test("brightness rejects invalid percentages without invoking Windows", async () => {
+  let calls = 0;
+  const runner = (async () => { calls++; return { stdout: "", stderr: "" }; }) as unknown as typeof runPowerShell;
+  const agent = new WindowsAgent({ runPowerShell: runner, fakeMode: false });
+  const result = await agent.execute("brightness.set", { level: 120 });
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.equal(calls, 0);
+});
+
+test("FAKE mode never executes Windows actions and marks them as simulated partial results", async () => {
+  let calls = 0;
+  const runner = (async () => { calls++; throw new Error("must not call Windows"); }) as unknown as typeof runPowerShell;
+  const agent = new WindowsAgent({ runPowerShell: runner, fakeMode: true });
+  const result = await agent.execute("bluetooth.disable", {});
+  assert.equal(calls, 0);
+  assert.equal(result.success, true);
+  assert.equal(result.status, "partial");
+  assert.equal(result.verification?.passed, false);
+  assert.equal((result.data as { simulated: boolean }).simulated, true);
+  assert.equal((result.data as { actualStateChanged: boolean }).actualStateChanged, false);
+  assert.match(result.spokenSummary, /simulated for testing/i);
+});
