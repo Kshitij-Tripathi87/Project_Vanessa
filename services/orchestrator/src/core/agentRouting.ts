@@ -323,5 +323,20 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
     return null;
   }
 
+  // If the user names Chrome or Edge immediately before a browser operation,
+  // open that destination in the requested browser rather than launching one app
+  // and then accidentally opening the URL in a different system-default browser.
+  if (steps.length >= 2 && steps[0].agent === "windows" && steps[0].action === "app.open" && steps[1].agent === "browser") {
+    const requestedBrowser = String(steps[0].params.name || "").toLowerCase();
+    const supportedBrowser = requestedBrowser === "chrome" ? "chrome" : requestedBrowser === "edge" ? "edge" : null;
+    const browserActions = new Set(["browser.open_url", "browser.search", "youtube.search_and_play"]);
+    if (supportedBrowser && browserActions.has(steps[1].action)) {
+      steps[1].params.browser = supportedBrowser;
+      steps.shift();
+      const firstGroup = steps[0]?.group ?? 0;
+      for (const step of steps) step.group = Math.max(0, step.group - firstGroup);
+    }
+  }
+
   return steps;
 }
