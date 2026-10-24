@@ -97,3 +97,61 @@ export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null
   }
   return null;
 }
+
+
+export interface BrowserNavigationRequest {
+  url: string;
+}
+
+/**
+ * Route only explicit navigation language with a real URL/domain to the Browser Agent.
+ * It deliberately does not infer a destination from vague phrases such as "open Chrome".
+ */
+export function inferExplicitBrowserNavigation(command: string): BrowserNavigationRequest | null {
+  const normalized = String(command || "")
+    .trim()
+    .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  const verbs = /\b(?:open|visit|load|go\s+to|navigate\s+to)\s+(?:(?:the|this|that)\s+)?(?:(?:website|web\s+page|page|url|site)\s+)?/gi;
+  for (const match of normalized.matchAll(verbs)) {
+    const target = normalized.slice((match.index || 0) + match[0].length).trim();
+    const explicit = target.match(/^(https?:\/\/[^\s"'<>]+)/i);
+    const domain = target.match(/^((?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\:\d{1,5})?(?:\/[^\s"'<>]*)?)/i);
+    const captured = (explicit?.[1] || domain?.[1])?.replace(/[),.;!?]+$/g, "");
+    if (!captured) continue;
+    try {
+      const url = new URL(/^https?:\/\//i.test(captured) ? captured : "https://" + captured);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      if (url.username || url.password) continue;
+      return { url: url.toString() };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export interface BrowserSearchRequest {
+  query: string;
+}
+
+/** Deterministically route explicit general web-search requests, not general knowledge questions. */
+export function inferBrowserSearch(command: string): BrowserSearchRequest | null {
+  const normalized = String(command || "")
+    .trim()
+    .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  const patterns = [
+    /\bsearch\s+(?:google|the\s+web|the\s+internet|online)\s+for\s+(.+?)\s*$/i,
+    /\bsearch\s+for\s+(.+?)\s+(?:on|using)\s+(?:google|the\s+web|the\s+internet)\s*$/i,
+    /\bgoogle\s+(?:search\s+)?(?:for\s+)?(.+?)\s*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const query = match?.[1]
+      ?.replace(/^\s*["']|["']\s*$/g, "")
+      .replace(/\s+(?:please|for me|thanks|thank you)\s*$/i, "")
+      .replace(/[\s.!?]+$/g, "")
+      .trim();
+    if (query && query.length > 0 && query.length <= 500) return { query };
+  }
+  return null;
+}
