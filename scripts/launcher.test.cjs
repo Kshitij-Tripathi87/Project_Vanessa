@@ -61,3 +61,35 @@ test('reuse verifies service identity; an unrelated listener is never accepted',
     assert.equal(starts, 0);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test('Sarvam STT, TTS and chat can run without Gemini or Fish credentials', () => {
+  const env = {
+    VOICE_ASR_PROVIDER: 'sarvam',
+    VOICE_TTS_PROVIDER: 'sarvam',
+    SARVAM_API_KEY: 'test-sarvam-key',
+    SARVAM_ASR_MODEL: 'saaras:v3-realtime',
+    SARVAM_TTS_MODEL: 'bulbul:v4-flash',
+    SARVAM_TTS_SPEAKER: 'shubh_enhi_ads',
+    SARVAM_CHAT_PROVIDER: 'sarvam',
+    PLANNER_PROVIDER: 'sarvam',
+    SARVAM_CHAT_MODEL: 'sarvam-105b-conversations',
+  };
+  const result = config(env, ['--codex-test']);
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.asr, 'sarvam');
+  assert.equal(result.tts, 'sarvam');
+});
+
+test('Sarvam launcher rejects missing TTS persona/model instead of starting a silent voice path', () => {
+  const base = {
+    VOICE_ASR_PROVIDER: 'sarvam',
+    VOICE_TTS_PROVIDER: 'sarvam',
+    SARVAM_API_KEY: 'test-sarvam-key',
+    SARVAM_ASR_MODEL: 'saaras:v3-realtime',
+    SARVAM_CHAT_PROVIDER: 'sarvam',
+    PLANNER_PROVIDER: 'sarvam',
+    SARVAM_CHAT_MODEL: 'sarvam-105b-conversations',
+  };
+  assert(config(base).missing.some(key => key.includes('SARVAM_TTS_MODEL')));
+  assert(config(base).missing.some(key => key.includes('SARVAM_TTS_SPEAKER')));
+});
