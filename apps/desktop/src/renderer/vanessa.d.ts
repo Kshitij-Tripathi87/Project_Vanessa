@@ -31,7 +31,6 @@ declare global {
     vanessa: {
       getControlStatus: () => Promise<VanessaControlStatus>;
       addAllowedFolder: (folderPath: string) => Promise<{ success: boolean; allowedFolders?: string[]; error?: string }>;
-    vanessa: {
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
       approveTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
