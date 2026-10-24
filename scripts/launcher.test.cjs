@@ -9,7 +9,7 @@ const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
 test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
-  const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
+  const env = { NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
   assert.deepEqual(config(env, ['--codex-test']).missing, []);
   assert.equal(config(env).localAsr, undefined);
   assert.throws(() => config({ ...env, SARVAM_API_KEY: '' }, ['--codex-test']), /SARVAM_API_KEY/);
@@ -19,13 +19,13 @@ test('Sarvam is switchable and validates its key independently of Fish TTS', () 
 
 test('ordinary launch and text-only do not require Fish or Codex-specific credentials', () => {
   assert(config().missing.length > 0);
-  const text = config({ GEMINI_API_KEY: 'test' }, ['--text-only', '--codex-test']);
+  const text = config({ NVIDIA_API_KEY: 'test' }, ['--text-only', '--codex-test']);
   assert.equal(text.voice, false);
   assert.deepEqual(text.missing, []);
   assert.throws(() => config({}, ['--codex-test']), /configuration missing/);
 });
 test('selects existing providers without Fish requirements for ElevenLabs', () => {
-  const result = config({ GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
+  const result = config({ NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
   assert.deepEqual(result.missing, []);
   assert.equal(result.localAsr, undefined);
   assert.throws(() => config({ VOICE_ASR_PROVIDER: 'typo' }), /Unsupported/);
@@ -43,7 +43,7 @@ test('restores local server selection with current and legacy environment paths'
 });
 test('options are explicit and real Codex tests reject simulation', () => {
   assert.throws(() => config({}, ['--typo']), /Unknown/);
-  assert.throws(() => config({ GEMINI_API_KEY: 'test', FAKE: '1' }, ['--text-only', '--codex-test']), /FAKE/);
+  assert.throws(() => config({ NVIDIA_API_KEY: 'test', FAKE: '1' }, ['--text-only', '--codex-test']), /FAKE/);
   assert(config({}, ['--dev', '--reuse-existing']).dev);
   assert(config({}, ['--dev', '--reuse-existing']).reuse);
 });

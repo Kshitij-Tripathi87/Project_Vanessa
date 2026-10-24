@@ -162,7 +162,7 @@ Usage: Launch-Vanessa.bat [options]
   --dev             Watch orchestrator/voice TypeScript and serve Vite with hot reload.
   --reuse-existing  Reuse healthy orchestrator/voice services; leave them running on exit.
                     Their environment/code may differ. Restart them to pick up changes.
-  --codex-test      Require Gemini, Codex CLI, and selected voice credentials; reject FAKE=1.
+  --codex-test      Require NVIDIA, Codex CLI, and selected voice credentials; reject FAKE=1.
   --check           Check configuration/dependencies without building or starting services.
   --build-only      Build without starting services or requiring unused ports.
   --help            Show this help.
@@ -214,7 +214,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   process.env.VANESSA_DEV_MODE = config.dev ? '1' : '0';
   process.env.VITE_VANESSA_VOICE_ENABLED = config.voice ? 'true' : 'false';
   delete process.env.ELECTRON_RUN_AS_NODE;
-  log('1/5 ENV', `Mode=${config.dev ? 'development/watch' : 'built'}; voice=${config.voice}; ASR=${asr}; TTS=${tts}; Gemini=${process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'}`);
+  log('1/5 ENV', `Mode=${config.dev ? 'development/watch' : 'built'}; voice=${config.voice}; ASR=${asr}; TTS=${tts}; NVIDIA=${process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-lightning-30b-a3b'}`);
   log('1/5 ENV', `Orchestrator=${orchestratorUrl}; local Whisper=${config.localAsr ? 'configured' : 'not needed'}.`);
   const codex = spawnSync('where.exe', ['codex'], { encoding: 'utf8', windowsHide: true });
   if (codex.status !== 0 && config.strict) throw new Error('Codex CLI not found on PATH. Add the installed Codex CLI directory to PATH and reopen the terminal.');
@@ -273,7 +273,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   if (!uiReady) throw new Error('Built desktop UI did not become available on port 5173.');
   log('DESKTOP UI', 'Built renderer ready on trusted local origin http://127.0.0.1:5173');
   log('5/5 DESKTOP', 'Launching desktop. Enter a command and approve tasks when requested.');
-  if (config.strict) log('Codex Test', 'Expected: input -> Gemini -> Planner -> awaiting_approval -> approval -> Codex handoff. Terminal launch does not verify coding completion.');
+  if (config.strict) log('Codex Test', 'Expected: input -> NVIDIA -> Planner -> awaiting_approval -> approval -> Codex handoff. Terminal launch does not verify coding completion.');
   log('Launcher', 'Close the desktop or press Ctrl+C to stop owned services. Reused services remain running.');
   await run('DESKTOP', electron, ['.'], path.join(root, 'apps/desktop'));
   shutdown(0, 'Desktop closed. Stopping services started by this launcher.');

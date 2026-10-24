@@ -166,10 +166,10 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "vanessa",
-    purpose: "General conversational answers through Gemini and limited Python-bridge status/scheduling operations.",
+    purpose: "General conversational answers through the configured LLM and limited Python-bridge status/scheduling operations.",
     limitations: "An answer does not execute tools. Bridge actions need Python/OpenJarvis installed. Schedule creation stores a record but Vanessa startup does not start the scheduler loop. The goal bridge is keyword branching, not general iterative reasoning.",
     actions: [
-      action("vanessa.ask", "Answer a general question or explain unavailable capabilities; never use it to pretend to execute a coding or OS action.", { query: p("string", "Question to answer.", true) }, "{success, content, mode}; a concise conversational reply from Gemini."),
+      action("vanessa.ask", "Answer a general question or explain unavailable capabilities; never use it to pretend to execute a coding or OS action.", { query: p("string", "Question to answer.", true) }, "{success, content, mode}; a concise conversational reply from the configured LLM."),
       action("vanessa.status", "Query Python bridge tool/scheduler metadata.", {}, "Bridge {success, brain, tools, scheduler} or failure; metadata does not prove every integration works."),
       action("vanessa.schedule_create", "Register an explicitly specified schedule; do not promise execution without a running scheduler.", {
         prompt: p("string", "Task to register.", true), type: p("string", "Scheduler type supported by the bridge, such as cron.", true),

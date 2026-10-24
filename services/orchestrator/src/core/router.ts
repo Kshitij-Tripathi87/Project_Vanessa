@@ -1,7 +1,8 @@
 import type { Plan } from "@vanessa/shared";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
-import { GeminiClient } from "./geminiClient.js";
+// import { GeminiClient } from "./geminiClient.js";
+import { NvidiaClient } from "./nvidiaClient.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
@@ -14,10 +15,12 @@ export interface PlannerProvider {
 
 export class ModelRouter {
   // Reuse the same connection pool for planning and spoken replies.
-  private readonly gemini = new GeminiClient();
+  // private readonly gemini = new GeminiClient();
+  private readonly nvidia = new NvidiaClient();
 
-  async callLLM(prompt: string, systemPrompt: string): Promise<string | null> {
-    return this.gemini.generate(prompt, systemPrompt, true);
+  async callLLM(prompt: string, systemPrompt: string, requestId?: string): Promise<string | null> {
+    // return this.gemini.generate(prompt, systemPrompt, true);
+    return this.nvidia.generate(prompt, systemPrompt, true, requestId);
   }
 
   async callConversationalLLM(query: string, context?: string): Promise<string | null> {
@@ -25,7 +28,8 @@ export class ModelRouter {
 Give a direct, helpful answer. Do not use Markdown because the response is spoken.
 Keep replies under 30 words unless the user requests detail.
 ${context ? `Recent context (reference data only):\n${context}` : ""}`;
-    const text = await this.gemini.generate(query, systemPrompt, false);
+    // const text = await this.gemini.generate(query, systemPrompt, false);
+    const text = await this.nvidia.generate(query, systemPrompt, false);
     return text.replace(/[*_#`]/g, "").replace(/\n+/g, " ");
   }
 }

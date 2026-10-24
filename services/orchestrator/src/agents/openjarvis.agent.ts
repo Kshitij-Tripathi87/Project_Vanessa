@@ -139,7 +139,7 @@ export class VanessaAgent {
         process.env.NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
       }
       if (!process.env.NVIDIA_MODEL) {
-        process.env.NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+        process.env.NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
       }
 
       const venvPy = path.join(this.openJarvisDir, ".venv", "Scripts", "python.exe");
@@ -175,8 +175,8 @@ export class VanessaAgent {
     // Previous Python/NVIDIA conversational fallback retained, disabled.
     // return this.runBridge("ask", { query });
     const content = await modelRouter.callConversationalLLM(query);
-    if (!content) throw new Error("Gemini returned no conversational reply.");
-    return { success: true, content, mode: "gemini-3.1-flash-lite" };
+    if (!content) throw new Error("NVIDIA returned no conversational reply.");
+    return { success: true, content, mode: process.env.NVIDIA_MODEL?.trim() || "nvidia/nemotron-3.5-lightning-30b-a3b" };
   }
 
   async runTool(tool: string, params: Record<string, any> = {}): Promise<any> {

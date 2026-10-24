@@ -11,9 +11,11 @@ async function runVoicePlanningTests() {
   const originalCallLlm = modelRouter.callLLM;
   let receivedPrompt = "";
   let receivedSystem = "";
-  modelRouter.callLLM = async (prompt: string, system: string) => {
+  let receivedRequestId: string | undefined;
+  modelRouter.callLLM = async (prompt: string, system: string, requestId?: string) => {
     receivedPrompt = prompt;
     receivedSystem = system;
+    receivedRequestId = requestId;
     return JSON.stringify({
       intent: "single_task",
       risk: "low",
@@ -31,7 +33,8 @@ async function runVoicePlanningTests() {
     const plan = await planner.createPlan("open it", [
       { role: "user", content: "Find the latest project report." },
       { role: "assistant", content: "I found the project report in Documents." },
-    ]);
+    ], { requestId: "planning-log-correlation" });
+    assert.equal(receivedRequestId, "planning-log-correlation");
     assert.match(receivedPrompt, /User: Find the latest project report/);
     assert.match(receivedPrompt, /Vanessa: I found the project report/);
     assert.match(receivedPrompt, /Current user request \(plan this request\):\nopen it/);
@@ -120,13 +123,13 @@ async function runVoicePlanningTests() {
     await assert.rejects(planner.createPlan("Turn on Bluetooth"), /valid task plan/);
     modelRouter.callLLM = async () => "not JSON";
     await assert.rejects(planner.createPlan("Create a folder"), /invalid plan JSON/);
-    modelRouter.callLLM = async () => { throw new Error("Gemini unavailable"); };
-    await assert.rejects(planner.createPlan("Open YouTube"), /Gemini unavailable/);
+    modelRouter.callLLM = async () => { throw new Error("NVIDIA unavailable"); };
+    await assert.rejects(planner.createPlan("Open YouTube"), /NVIDIA unavailable/);
 
     const activeBefore = orchestrator.getSystemStatus().activeTasksCount;
     const failed = await orchestrator.executeCommand({
       command: "Turn on Bluetooth",
-      idempotencyKey: `gemini-failure-test-${Date.now()}`,
+      idempotencyKey: `nvidia-failure-test-${Date.now()}`,
     });
     assert.strictEqual(failed.status, "failed");
     assert.strictEqual(failed.plan, undefined);
@@ -137,7 +140,7 @@ async function runVoicePlanningTests() {
     modelRouter.callLLM = originalCallLlm;
   }
 
-  console.log("Planning checks passed: catalog validation, Codex context/approval handoff, scoped dependencies, and Gemini-only failure handling (model/launcher substituted).");
+  console.log("Planning checks passed: catalog validation, Codex context/approval handoff, scoped dependencies, and NVIDIA-only failure handling (model/launcher substituted).");
   process.exit(0);
 }
 

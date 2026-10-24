@@ -10,7 +10,8 @@ function launcherConfig(env, args, root, exists) {
   if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
   if (voice && !['fish', 'elevenlabs'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const missing = [];
-  if (!env.GEMINI_API_KEY?.trim()) missing.push('GEMINI_API_KEY (planning unavailable)');
+  // if (!env.GEMINI_API_KEY?.trim()) missing.push('GEMINI_API_KEY (planning unavailable)');
+  if (!env.NVIDIA_API_KEY?.trim() || /placeholder|your[_-].*key/i.test(env.NVIDIA_API_KEY)) missing.push('NVIDIA_API_KEY (planning unavailable)');
   if (voice) {
     if (asr === 'sarvam' && !env.SARVAM_API_KEY?.trim()) missing.push('SARVAM_API_KEY (recognition unavailable)');
     if (asr === 'fish' && !env.FISH_API_KEY?.trim() && env.VOICE_ALLOW_FALLBACK !== 'true') missing.push('FISH_API_KEY (recognition unavailable)');

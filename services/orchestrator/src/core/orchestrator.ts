@@ -19,6 +19,7 @@ import {
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
 import { narrator } from "./narrator.js";
+import { formatLlmError } from "./llmDiagnostics.js";
 
 export class VanessaOrchestrator {
   constructor() {
@@ -105,12 +106,13 @@ export class VanessaOrchestrator {
       console.log(`[Planner] start request=${requestId}`);
       plan = await planner.createPlan(command, conversationContext, payload);
       console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
-    } catch {
-      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check Gemini status above or plan validation.`);
+    } catch (error) {
+      const diagnostic = formatLlmError(error);
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime} error=${diagnostic}; no tasks started.`);
       const result: ExecuteCommandResult = {
         status: "failed",
         requestId,
-        spokenSummary: "I couldn't create a plan with Gemini. No tasks were started. Check the Gemini configuration or try again.",
+        spokenSummary: "I couldn't create a plan with NVIDIA. No tasks were started. Check the NVIDIA configuration or try again.",
         verification: {
           verified: false,
           postconditions: ["Planning failed before task execution."],
@@ -123,7 +125,7 @@ export class VanessaOrchestrator {
         agent: "orchestrator",
         action: "planning.failed",
         status: "error",
-        details: "Gemini planning failed; no task execution or keyword fallback was attempted.",
+        details: `NVIDIA planning failed; request=${requestId} error=${diagnostic}; no task execution or keyword fallback was attempted.`,
       });
       if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
       return result;
