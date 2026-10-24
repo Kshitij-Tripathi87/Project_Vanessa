@@ -190,7 +190,7 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
     return { action: "wifi.status", params: {} };
   }
 
-  const brightnessSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:display\s+)?brightness\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b/i);
+  const brightnessSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:display\s+)?brightness\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?(?=\s|$|[.,!?])/i);
   if (brightnessSet) {
     const level = Number(brightnessSet[1]);
     if (level >= 0 && level <= 100) return { action: "brightness.set", params: { level } };
@@ -203,7 +203,7 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
     return { action: "brightness.adjust", params: { delta: -10 } };
   }
 
-  const volumeSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:system\s+)?volume\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b/i);
+  const volumeSet = lower.match(/\b(?:set|change)\s+(?:my\s+)?(?:system\s+)?volume\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?(?=\s|$|[.,!?])/i);
   if (volumeSet) {
     const level = Number(volumeSet[1]);
     if (level >= 0 && level <= 100) return { action: "volume.set", params: { level } };
