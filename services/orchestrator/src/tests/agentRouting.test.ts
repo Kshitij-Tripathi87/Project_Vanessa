@@ -126,3 +126,11 @@ test("does not collapse multi-action requests into a single Windows action", () 
   assert.equal(inferWindowsControl("Turn off Bluetooth and increase brightness"), null);
   assert.equal(inferWindowsControl("Open Chrome and search for TypeScript tutorials"), null);
 });
+
+test("explicitly negated system and browser commands do not trigger deterministic actions", () => {
+  assert.equal(inferWindowsControl("Do not enable Bluetooth"), null);
+  assert.equal(inferWindowsControl("Don't open Chrome"), null);
+  assert.equal(inferExplicitBrowserNavigation("Don't open https://example.com"), null);
+  assert.equal(inferBrowserSearch("Do not search Google for private data"), null);
+  assert.equal(inferYouTubeSearch("Don't open YouTube and search for private data"), null);
+});
