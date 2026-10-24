@@ -11,7 +11,7 @@ function launcherConfig(env, args, root, exists) {
   if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
   if (voice && !['fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const missing = [];
-  const addMissing = (item) => { if (!missing.includes(item)) addMissing(item); };
+  const addMissing = (item) => { if (!missing.includes(item)) missing.push(item); };
   const configured = (value) => Boolean(value?.trim()) && !/placeholder|replace[-_ ]with|your[_-]/i.test(value);
   if (planner !== 'sarvam' && !env.GEMINI_API_KEY?.trim()) addMissing('GEMINI_API_KEY (planning unavailable)');
   if (planner === 'sarvam') {

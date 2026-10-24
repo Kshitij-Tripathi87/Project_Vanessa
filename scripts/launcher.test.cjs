@@ -9,7 +9,7 @@ const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
 test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
-  const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
+  const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', SARVAM_ASR_MODEL: 'saaras:v3-realtime', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
   assert.deepEqual(config(env, ['--codex-test']).missing, []);
   assert.equal(config(env).localAsr, undefined);
   assert.throws(() => config({ ...env, SARVAM_API_KEY: '' }, ['--codex-test']), /SARVAM_API_KEY/);
