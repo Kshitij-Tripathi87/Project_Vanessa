@@ -40,13 +40,6 @@ const connectedClients = new Set<any>();
 
 // Pipe eventBus events directly to WebSocket clients
 const forwardEvent = (event: VanessaEvent) => {
-  // Lifecycle metadata only: event bodies can contain prompts and results.
-  const payload = event.payload as any;
-  if (event.type === "task:update") {
-    console.log(`[Runner] task=${payload.id} agent=${payload.agent} action=${payload.action} status=${payload.status} lifecycle=${payload.lifecycleState || "none"}`);
-  } else if (event.type.startsWith("approval:")) {
-    console.log(`[Approval] event=${event.type} task=${payload.taskId || payload.id || payload.task?.id || "unknown"}`);
-  }
   const message = JSON.stringify(event);
   for (const client of connectedClients) {
     if (client.readyState === 1) {
@@ -361,7 +354,7 @@ fastify.get("/remote", async (request, reply) => {
 });
 
 // Voice service status - delegates to voice-agent service on port 4500
-// Fish Audio is the selected provider; ElevenLabs integration moved to voice-agent
+// Fish Audio is the selected provider; all voice configuration validated in voice-agent
 fastify.get("/voice/session", async (request, reply) => {
   const voiceAgentUrl = process.env.VOICE_AGENT_URL || "http://127.0.0.1:4500";
 
