@@ -247,8 +247,8 @@ export interface CommonActionStep {
   agent: "windows" | "browser";
   action: string;
   params: Record<string, string | number | boolean>;
-  /** Whether the user explicitly connected this step with "then"/"after that". */
-  dependsOnPrevious: boolean;
+  /** Steps in the same group are independent; each new "then" group waits for the previous group. */
+  group: number;
 }
 
 /**
@@ -272,7 +272,9 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
   if (segments.length < 2 || segments.some((segment) => !segment)) return null;
 
   const steps: CommonActionStep[] = [];
+  let group = 0;
   for (let index = 0; index < segments.length; index++) {
+    if (index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1])) group += 1;
     const segment = segments[index];
     const windows = inferWindowsControl(segment);
     if (windows) {
@@ -280,7 +282,7 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
         agent: "windows",
         action: windows.action,
         params: windows.params,
-        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+        group,
       });
       continue;
     }
@@ -291,7 +293,7 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
         agent: "browser",
         action: "youtube.search_and_play",
         params: { query: youtube.query },
-        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+        group,
       });
       continue;
     }
@@ -302,7 +304,7 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
         agent: "browser",
         action: "browser.search",
         params: { query: browserSearch.query },
-        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+        group,
       });
       continue;
     }
@@ -313,7 +315,7 @@ export function inferCommonActionSequence(command: string): CommonActionStep[] |
         agent: "browser",
         action: "browser.open_url",
         params: { url: navigation.url },
-        dependsOnPrevious: index > 0 && /\b(?:then|after that)\b/i.test(connectors[index - 1]),
+        group,
       });
       continue;
     }
