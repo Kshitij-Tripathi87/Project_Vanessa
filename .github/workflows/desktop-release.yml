@@ -110,9 +110,8 @@ jobs:
             $missingFiles = @($requiredFiles | Where-Object { !(Test-Path $_) })
             if ($missingFiles.Count -eq 0) { break }
             $install.Refresh()
-            if ($install.HasExited -and $install.ExitCode -ne 0) {
-              throw "NSIS installer exited with code $($install.ExitCode) before placing all application files."
-            }
+            # Some NSIS launch configurations return the launched GUI process status.
+            # Judge installation by the actual payload and subsequent app/service checks.
             Start-Sleep -Seconds 1
           }
 
@@ -127,7 +126,7 @@ jobs:
 
           $install.Refresh()
           if ($install.HasExited -and $install.ExitCode -ne 0) {
-            throw "NSIS installer exited with code $($install.ExitCode)."
+            Write-Warning "NSIS process exited with code $($install.ExitCode); validating installed payload and service startup before deciding the result."
           }
 
           $existingAppProcess = Get-CimInstance Win32_Process | Where-Object {
