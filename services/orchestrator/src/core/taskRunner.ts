@@ -44,7 +44,7 @@ export function resolveTaskLocks(task: Task): string[] {
   return locks;
 }
 
-function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" {
+export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" {
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
@@ -57,6 +57,21 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
 
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
+
+  // Partial is an explicit task outcome, not success with an imperfect verification field.
+  if (structured?.status === "partial") {
+    const detail = verificationDetails || String(structured?.summary || structured?.spokenSummary || "Operation was only partially completed or could not be fully verified.");
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: 1,
+      artifacts: task.artifacts,
+      outcome: "partial",
+      details: detail,
+    };
+    return "partial";
+  }
+
   if (verification?.passed === true && verificationDetails) {
     const successReported = structured.success !== false;
     task.verification = {
