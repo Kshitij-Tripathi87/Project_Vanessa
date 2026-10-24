@@ -17,6 +17,7 @@ const quickActions = [
   { title: "Open Chrome", description: "Launch the installed browser", command: "Open Chrome", icon: Globe },
   { title: "Check Wi-Fi", description: "Read the adapter's current state", command: "Check my Wi-Fi adapter status", icon: Wifi },
   { title: "Enable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth on", icon: Bluetooth },
+  { title: "Disable Bluetooth", description: "Request the radio state change and verify it", command: "Turn Bluetooth off", icon: Bluetooth },
   { title: "Capture desktop", description: "Save a screenshot of the primary display", command: "Capture a screenshot of my desktop", icon: Monitor },
 ];
 
