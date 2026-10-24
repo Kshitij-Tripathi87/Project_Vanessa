@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
+import { executeWindowsAudio, type WindowsAudioRequest, type WindowsAudioResult } from "./windows-audio.js";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -15,6 +16,7 @@ import { eventBus } from "../core/eventBus.js";
 const execAsync = promisify(exec);
 
 export class WindowsAgent implements SpecialistAgent {
+  constructor(private readonly audioControl: (request: WindowsAudioRequest) => Promise<WindowsAudioResult> = executeWindowsAudio) {}
   id = "windows";
   capabilities = [
     "wifi_adapter_control",
@@ -128,22 +130,35 @@ export class WindowsAgent implements SpecialistAgent {
       }
 
       case "volume.set":
-      case "windows.volume_set": {
-        const level = params.level ?? 50;
-        const res = await this.setVolume(level);
+      case "windows.volume_set":
+      case "volume.get":
+      case "windows.volume_get":
+      case "volume.mute":
+      case "windows.volume_mute": {
+        const request: WindowsAudioRequest = action.endsWith('get')
+          ? { operation: 'get' }
+          : action.endsWith('mute') ? { operation: 'setMute', muted: params.muted }
+          : { operation: 'setVolume', volumePercent: params.level };
+        const res = await this.audioControl(request);
+        const observed = res.observed;
+        const summary = res.success && observed
+          ? `Playback volume is ${observed.volumePercent.toFixed(1)}%; muted: ${observed.muted}.`
+          : `Audio operation failed: ${res.error?.message ?? 'No verified audio state returned'}`;
         return {
           agentId: this.id,
           status: "completed",
           success: res.success,
-          summary: `System volume set to ${level}%`,
-          spokenSummary: `Volume set to ${level} percent.`,
+          summary,
+          spokenSummary: summary,
           evidence: [],
           artifacts: [],
           data: {
-            actionsAttempted: [`Set volume level: ${level}`],
-            actualObservations: `Volume set to ${level}%`,
-            failures: [],
+            actionsAttempted: [JSON.stringify(request)],
+            actualObservations: observed,
+            failures: res.success ? [] : [res.error?.message ?? 'Audio verification failed'],
+            audio: res,
           },
+          verification: { passed: res.success, details: summary },
         };
       }
 
@@ -285,19 +300,6 @@ export class WindowsAgent implements SpecialistAgent {
         output: `Bluetooth radio configured to ${enable ? "enabled" : "disabled"}.`,
       };
     }
-  }
-
-  private async setVolume(level: number): Promise<{ success: boolean; level: number }> {
-    try {
-      const numericLevel = Number(level);
-      if (!Number.isFinite(numericLevel)) throw new Error("Volume level must be numeric");
-      await runPowerShell(
-        "$wsh = New-Object -ComObject WScript.Shell; 1..50 | ForEach-Object { $wsh.SendKeys([char]174) }; $steps = [math]::Round([double]$env:VANESSA_VOLUME / 2); 1..$steps | ForEach-Object { $wsh.SendKeys([char]175) }",
-        { VANESSA_VOLUME: String(Math.max(0, Math.min(100, numericLevel))) },
-        5000
-      );
-    } catch {}
-    return { success: true, level };
   }
 
   private async openApp(appName: string): Promise<{ success: boolean; output: string }> {
