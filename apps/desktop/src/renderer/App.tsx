@@ -971,8 +971,8 @@ export function App() {
           </div>
           <span>•</span>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            <HardDrive size={12} color="#34d399" />
-            <span>SQLite 30D Retention Active</span>
+            <HardDrive size={12} color={controlStatus?.orchestratorOnline ? "#34d399" : "#64748b"} />
+            <span>Local memory · folder policy</span>
           </div>
         </div>
 
