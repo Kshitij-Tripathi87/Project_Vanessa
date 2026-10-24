@@ -296,7 +296,7 @@ export function App() {
         {/* Floating Compact Orb (70px) */}
         <div
           className={`no-drag ${isMicActive ? "orb-listening" : voiceState === "thinking" || voiceState === "executing" ? "orb-thinking" : "orb-idle"}`}
-          onClick={handleOpenChat
+          onClick={handleOpenChat}
           onContextMenu={cycleCorner}
           title={`Vanessa (${currentCorner.toUpperCase()})\nClick to chat\nSay “Hey Vanessa” to activate\nRight-click to change dock position`}
           style={{

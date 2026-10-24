@@ -53,7 +53,7 @@ export function ChatPanel({
     <section className="chat-panel" aria-label="Chat with Vanessa">
       <header className="chat-header drag-region">
         <div className="chat-brand">
-          <span className={\`chat-brand-orb \${voiceState === "listening" ? "is-listening" : ""}\`} aria-hidden="true" />
+          <span className={"chat-brand-orb " + (voiceState === "listening" ? "is-listening" : "")} aria-hidden="true" />
           <div>
             <div className="chat-brand-title">Vanessa</div>
             <div className="chat-brand-state">{statusText}</div>
@@ -63,7 +63,7 @@ export function ChatPanel({
           <button type="button" onClick={onOpenDashboard} title="Open control center" aria-label="Open control center">
             <Settings size={15} />
           </button>
-          <button type="button" onClick={onCollapse} title={\`Collapse to orb at \${corner}\`} aria-label="Collapse to orb">
+          <button type="button" onClick={onCollapse} title={"Collapse to orb at " + corner} aria-label="Collapse to orb">
             <Minus size={17} />
           </button>
         </div>
@@ -116,7 +116,7 @@ export function ChatPanel({
         />
         <div className="chat-composer-actions">
           <button
-            className={\`chat-mic-button \${isListening ? "is-active" : ""}\`}
+            className={"chat-mic-button " + (isListening ? "is-active" : "")}
             type="button"
             onClick={onToggleMic}
             aria-pressed={isListening}
@@ -132,10 +132,10 @@ export function ChatPanel({
       </form>
 
       <footer className="chat-footer">
-        <span className={\`wake-status-dot \${wakeWordStatus.ready && wakeWordStatus.listening ? "is-ready" : ""}\`} />
+        <span className={"wake-status-dot " + (wakeWordStatus.ready && wakeWordStatus.listening ? "is-ready" : "")} />
         <span className="wake-status-text">
           {wakeWordStatus.ready
-            ? wakeWordStatus.listening ? \`\${wakeWordStatus.keyword || "Hey Vanessa"} is listening locally\` : "Wake word ready"
+            ? wakeWordStatus.listening ? (wakeWordStatus.keyword || "Hey Vanessa") + " is listening locally" : "Wake word ready"
             : "Click-to-chat is ready"}
         </span>
         {!wakeWordStatus.ready && wakeWordStatus.reason && (
