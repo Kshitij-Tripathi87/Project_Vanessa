@@ -82,6 +82,53 @@ jobs:
       - name: Package the Windows installer
         run: pnpm --filter @vanessa/desktop build:installer
 
+      - name: Launch packaged app and smoke-test local services
+        shell: pwsh
+        run: |
+          $appPath = Join-Path $PWD "apps/desktop/dist/installers/win-unpacked/Vanessa.exe"
+          if (!(Test-Path $appPath)) {
+            Get-ChildItem "apps/desktop/dist/installers" -Force | Format-Table Name, FullName
+            throw "Packaged Vanessa.exe was not produced by electron-builder."
+          }
+
+          $app = Start-Process -FilePath $appPath -PassThru
+          $orchestratorHealthy = $false
+          $voiceHealthy = $false
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
+          try {
+            while ([DateTime]::UtcNow -lt $deadline) {
+              if (!$orchestratorHealthy) {
+                try {
+                  $health = Invoke-RestMethod -Uri "http://127.0.0.1:4139/health" -TimeoutSec 2
+                  $orchestratorHealthy = $health.service -eq "vanessa-orchestrator"
+                } catch {}
+              }
+              if (!$voiceHealthy) {
+                try {
+                  $health = Invoke-RestMethod -Uri "http://127.0.0.1:4500/health" -TimeoutSec 2
+                  $voiceHealthy = $health.service -eq "vanessa-voice-agent"
+                } catch {}
+              }
+              if ($orchestratorHealthy -and $voiceHealthy) { break }
+              if ($app.HasExited) { throw "Packaged Vanessa exited before its local services became healthy (exit code $($app.ExitCode))." }
+              Start-Sleep -Seconds 1
+            }
+
+            if (!$orchestratorHealthy) { throw "Packaged orchestrator did not become healthy on 127.0.0.1:4139." }
+            if (!$voiceHealthy) { throw "Packaged voice agent did not become healthy on 127.0.0.1:4500." }
+            Write-Host "Packaged app launched; orchestrator and voice-agent health checks passed."
+          } finally {
+            if ($app -and !$app.HasExited) {
+              & taskkill.exe /F /T /PID $app.Id | Out-Null
+            }
+            $runtimeProcesses = Get-CimInstance Win32_Process | Where-Object {
+              $_.Name -eq "node.exe" -and $_.CommandLine -match "[\\/]runtime[\\/](orchestrator|voice-agent)[\\/]"
+            }
+            foreach ($runtimeProcess in $runtimeProcesses) {
+              Stop-Process -Id $runtimeProcess.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+          }
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

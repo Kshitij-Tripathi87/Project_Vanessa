@@ -112,34 +112,20 @@ export function App() {
   }, [currentCorner]);
 
   const handleOpenChat = useCallback(() => {
+    // Wake-word activation can arrive while the window is hidden in the tray.
+    void window.vanessa?.showWindow?.();
     handleToggleView("chat");
   }, [handleToggleView]);
 
-  // Orb click: Resumes AudioContext, sets visual active cue, and toggles listening/finalize
-  const handleOrbClick = async () => {
+  // The main process owns global shortcuts so they also work while the orb is hidden.
+  const handleOrbClick = useCallback(async () => {
     if (resumeAudio) {
       await resumeAudio();
     }
     setJustActivated(true);
-    setTimeout(() => setJustActivated(false), 2000);
+    window.setTimeout(() => setJustActivated(false), 2000);
     toggleRecording();
-  };
-
-  // Alt+Space remains a push-to-talk shortcut. Wake-word activation is handled by the voice service.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.code === "Space") {
-        e.preventDefault();
-        void handleOrbClick();
-      }
-      if (e.code === "Escape") {
-        e.preventDefault();
-        void handleKillSwitch();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleRecording]);
+  }, [resumeAudio, toggleRecording]);
 
   useEffect(() => {
     if (wakeWordActivationId > 0) {
@@ -190,7 +176,7 @@ export function App() {
     }
   }, [setPendingApproval, setLastResponse]);
 
-  const handleKillSwitch = async () => {
+  const handleKillSwitch = useCallback(async () => {
     if (window.vanessa?.cancelTask) {
       await window.vanessa.cancelTask();
     } else {
@@ -200,7 +186,20 @@ export function App() {
         console.error("Failed to trigger kill switch:", err);
       }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribePtt = window.vanessa?.onTriggerPtt?.(() => {
+      void handleOrbClick();
+    });
+    const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(() => {
+      void handleKillSwitch();
+    });
+    return () => {
+      unsubscribePtt?.();
+      unsubscribeCancel?.();
+    };
+  }, [handleOrbClick, handleKillSwitch]);
 
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
