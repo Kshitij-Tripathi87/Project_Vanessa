@@ -108,13 +108,13 @@ export class BrowserAgent implements SpecialistAgent {
             true,
             "The operating system accepted the " + (browserName || "default-browser") + " launch request for " + url + ".",
             "I sent the page to " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not verified that it loaded.",
-            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, browser: browserName || "default", pageLoadVerified: false } }],
+            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, browser: browserName || "default", pageLoadVerified: false } }],
             [url],
             { url, browser: browserName || "default", externalBrowser: true, pageLoadVerified: false },
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Could not open the requested URL in the default browser.", "I could not open that page in your default browser.", [], [], { url, externalBrowser: false, error: detail, pageLoadVerified: false });
+          return this.result(false, "Could not open the requested URL in " + (browserName || "the default browser") + ".", "I could not open that page in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { url, browser: browserName || "default", externalBrowser: false, error: detail, pageLoadVerified: false });
         }
       }
 
@@ -138,7 +138,7 @@ export class BrowserAgent implements SpecialistAgent {
           );
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Could not open search results in the default browser.", "I could not open those search results in your default browser.", [], [], { query, url, externalBrowser: false, resultsExtracted: false, error: detail });
+          return this.result(false, "Could not open search results in " + (browserName || "the default browser") + ".", "I could not open those search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { query, url, browser: browserName || "default", externalBrowser: false, resultsExtracted: false, error: detail });
         }
       }
 
@@ -165,7 +165,7 @@ export class BrowserAgent implements SpecialistAgent {
             true,
             "Opened YouTube search results for " + query + " in " + (browserName || "the default browser") + ".",
             "YouTube search results are open. Video playback has not been verified.",
-            [{ description: "Operating system accepted the default-browser launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url } }],
+            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default" } }],
             [url],
             { query, url, browser: browserName || "default", externalBrowser: true, playbackVerified: false },
           );
@@ -173,8 +173,8 @@ export class BrowserAgent implements SpecialistAgent {
           const detail = error instanceof Error ? error.message : String(error);
           return this.result(
             false,
-            "Could not open YouTube search results in the default browser.",
-            "I could not open YouTube in your browser.",
+            "Could not open YouTube search results in " + (browserName || "the default browser") + ".",
+            "I could not open YouTube in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your browser") + ".",
             [],
             [],
             { query, url, externalBrowser: false, error: detail },
