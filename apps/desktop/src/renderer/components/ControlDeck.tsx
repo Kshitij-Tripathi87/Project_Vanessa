@@ -67,6 +67,43 @@ export function ControlDeck({ status, statusLoading, statusError, tasks, onRefre
     .reverse()
     .slice(0, 4);
 
+  const latestUiInspection = tasks.slice().reverse().find((task) =>
+    task.agent === "windows" && ["ui.inspect", "windows.ui_inspect"].includes(task.action) &&
+    task.status === "success"
+  );
+  const uiInspection = latestUiInspection?.result as {
+    windowTitle?: string;
+    processId?: number;
+    controls?: Array<{
+      name?: string;
+      automationId?: string;
+      controlType?: string;
+      isEnabled?: boolean;
+      isOffscreen?: boolean;
+      depth?: number;
+    }>;
+    truncated?: boolean;
+    valuesRead?: boolean;
+  } | undefined;
+  const uiControls = Array.isArray(uiInspection?.controls) ? uiInspection.controls.slice(0, 12) : [];
+  const clickLabelByType: Record<string, string> = {
+    "ControlType.Button": "button",
+    "ControlType.Hyperlink": "link",
+    "ControlType.TabItem": "tab",
+    "ControlType.CheckBox": "checkbox",
+    "ControlType.RadioButton": "radio button",
+    "ControlType.MenuItem": "menu item",
+  };
+  const controlTypeAsLabel = (controlType?: string) => controlType ? clickLabelByType[controlType] : undefined;
+  const canRequestUiClick = (control: NonNullable<typeof uiControls>[number]) => {
+    const name = typeof control.name === "string" ? control.name.trim() : "";
+    return control.isEnabled === true && control.isOffscreen === false &&
+      name.length > 0 && name.length <= 100 &&
+      !name.includes('"') && !name.includes("'") &&
+      !name.includes(String.fromCharCode(10)) && !name.includes(String.fromCharCode(13)) &&
+      Boolean(controlTypeAsLabel(control.controlType));
+  };
+
   const online = status?.orchestratorOnline === true;
   const policyLabel = status?.autonomousMode === true
     ? "Autonomy enabled"
