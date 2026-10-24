@@ -93,7 +93,7 @@ export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null
       .replace(/\s+(?:please|for me|thanks|thank you)\s*$/i, "")
       .replace(/[\s.!?]+$/g, "")
       .trim();
-    if (query && query.length > 0 && query.length <= 500) return { query };
+    if (query && query.length > 0 && query.length <= 500 && !hasAdditionalAction(query)) return { query };
   }
   return null;
 }
@@ -101,6 +101,13 @@ export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null
 
 function hasExplicitNegation(command: string): boolean {
   return /\b(?:do\s+not|don['’]?t|never|avoid)\b.{0,50}\b(?:open|visit|load|go\s+to|navigate|search|google|enable|disable|activate|deactivate|turn|switch|increase|raise|decrease|lower|set|change|capture|take|make|check|read)\b/i.test(command);
+}
+
+function hasAdditionalAction(command: string): boolean {
+  // Ignore quoted search terms so "and open source" remains a search query.
+  const unquoted = command.replace(/"[^"]*"|'[^']*'/g, " ");
+  const action = "(?:open|visit|load|go\\s+to|navigate(?:\\s+to)?|search|click|play|pause|stop|close|launch|start|enable|disable|turn|switch|increase|raise|decrease|lower|set|change|capture|take|make|check|read|find|download|upload|send|create|delete|type|enter|fill|submit|compare|summarize|inspect|review|extract)";
+  return new RegExp("\\b(?:and\\s+(?:(?:then|also)\\s+)?|then\\s+|after\\s+that\\s+)" + action + "\\b", "i").test(unquoted);
 }
 
 export interface BrowserNavigationRequest {
@@ -115,7 +122,7 @@ export function inferExplicitBrowserNavigation(command: string): BrowserNavigati
   const normalized = String(command || "")
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
-  if (hasExplicitNegation(normalized)) return null;
+  if (hasExplicitNegation(normalized) || hasAdditionalAction(normalized)) return null;
   const verbs = /\b(?:open|visit|load|go\s+to|navigate\s+to)\s+(?:(?:the|this|that)\s+)?(?:(?:website|web\s+page|page|url|site)\s+)?/gi;
   for (const match of normalized.matchAll(verbs)) {
     const target = normalized.slice((match.index || 0) + match[0].length).trim();
@@ -144,7 +151,7 @@ export function inferBrowserSearch(command: string): BrowserSearchRequest | null
   const normalized = String(command || "")
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
-  if (hasExplicitNegation(normalized)) return null;
+  if (hasExplicitNegation(normalized) || hasAdditionalAction(normalized)) return null;
   const patterns = [
     /\bsearch\s+(?:google|the\s+web|the\s+internet|online)\s+for\s+(.+?)\s*$/i,
     /\bsearch\s+for\s+(.+?)\s+(?:on|using)\s+(?:google|the\s+web|the\s+internet)\s*$/i,
