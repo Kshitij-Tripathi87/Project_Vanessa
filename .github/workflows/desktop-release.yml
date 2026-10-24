@@ -82,20 +82,32 @@ jobs:
       - name: Package the Windows installer
         run: pnpm --filter @vanessa/desktop build:installer
 
-      - name: Launch packaged app and smoke-test local services
+      - name: Install Windows setup and smoke-test installed app
         shell: pwsh
         run: |
-          $appPath = Join-Path $PWD "apps/desktop/dist/installers/win-unpacked/Vanessa.exe"
-          if (!(Test-Path $appPath)) {
+          $installer = Get-ChildItem -Path "apps/desktop/dist/installers" -Filter "Vanessa Setup *.exe" | Select-Object -First 1
+          if (!$installer) {
             Get-ChildItem "apps/desktop/dist/installers" -Force | Format-Table Name, FullName
-            throw "Packaged Vanessa.exe was not produced by electron-builder."
+            throw "The NSIS Vanessa Setup installer was not produced."
           }
 
-          $app = Start-Process -FilePath $appPath -PassThru
+          $installDir = Join-Path $env:RUNNER_TEMP "VanessaSmokeInstall"
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS installer exited with code $($install.ExitCode)." }
+
+          $appPath = Join-Path $installDir "Vanessa.exe"
+          if (!(Test-Path $appPath)) {
+            Get-ChildItem $installDir -Recurse -Force | Format-Table FullName
+            throw "Vanessa.exe was not found in the installed application directory."
+          }
+
+          $app = $null
           $orchestratorHealthy = $false
           $voiceHealthy = $false
-          $deadline = [DateTime]::UtcNow.AddSeconds(60)
           try {
+            $app = Start-Process -FilePath $appPath -PassThru
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
             while ([DateTime]::UtcNow -lt $deadline) {
               if (!$orchestratorHealthy) {
                 try {
@@ -110,13 +122,13 @@ jobs:
                 } catch {}
               }
               if ($orchestratorHealthy -and $voiceHealthy) { break }
-              if ($app.HasExited) { throw "Packaged Vanessa exited before its local services became healthy (exit code $($app.ExitCode))." }
+              if ($app.HasExited) { throw "Installed Vanessa exited before its local services became healthy (exit code $($app.ExitCode))." }
               Start-Sleep -Seconds 1
             }
 
-            if (!$orchestratorHealthy) { throw "Packaged orchestrator did not become healthy on 127.0.0.1:4139." }
-            if (!$voiceHealthy) { throw "Packaged voice agent did not become healthy on 127.0.0.1:4500." }
-            Write-Host "Packaged app launched; orchestrator and voice-agent health checks passed."
+            if (!$orchestratorHealthy) { throw "Installed orchestrator did not become healthy on 127.0.0.1:4139." }
+            if (!$voiceHealthy) { throw "Installed voice agent did not become healthy on 127.0.0.1:4500." }
+            Write-Host "NSIS install completed; installed Vanessa launched; orchestrator and voice-agent health checks passed."
           } finally {
             if ($app -and !$app.HasExited) {
               & taskkill.exe /F /T /PID $app.Id | Out-Null
