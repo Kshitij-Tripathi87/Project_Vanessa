@@ -50,7 +50,8 @@ export class FolderAgent implements SpecialistAgent {
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
 
     try {
-      if (action === "folder.resolve") {
+      switch (action) {
+      case "folder.resolve": {
         const resource = await this.resolveTarget(String(params.target || params.path || ""), params.basePath);
         let openedExplorer = false;
         if (params.openExplorer === true && (process.env.FAKE !== "1" || this.openTargetOverride)) {
@@ -67,8 +68,7 @@ export class FolderAgent implements SpecialistAgent {
           data: { ...resource, path: resource.targetPath, fileReferences: [resource.targetPath], openedExplorer, verifiedFilesystemResults: { path: resource.targetPath, exists: true } },
         };
       }
-
-      if (action === "folder.open") {
+      case "folder.open": {
         const resource = await this.resolveTarget(String(params.target || params.path || ""), params.basePath);
         const mode: OpenMode = params.mode === "explorer" ? "explorer" : "default";
         if (process.env.FAKE === "1" && !this.openTargetOverride) {
@@ -85,7 +85,9 @@ export class FolderAgent implements SpecialistAgent {
           data: { ...resource, path: resource.targetPath, fileReferences: [resource.targetPath], opened: true },
         };
       }
-      throw new Error("FolderAgent: Unknown action '" + action + "'");
+      default:
+        throw new Error("FolderAgent: Unknown action '" + action + "'");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
