@@ -17,8 +17,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # PR builds are SHA-scoped so a stuck older smoke test cannot block current fixes.
+  # Release/tag runs remain serialized by ref.
+  group: desktop-release-${{ github.event_name == 'pull_request' && github.sha || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   windows-installer:
