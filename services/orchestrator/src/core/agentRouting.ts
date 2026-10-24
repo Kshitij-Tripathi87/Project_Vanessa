@@ -77,7 +77,7 @@ export interface YouTubeSearchRequest {
 /** Deterministically route explicit YouTube-search intents to the Browser Agent. */
 export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null {
   const normalized = String(command || "").trim().replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
-  if (!/\byoutube\b/i.test(normalized)) return null;
+  if (hasExplicitNegation(normalized) || !/\byoutube\b/i.test(normalized)) return null;
 
   const patterns = [
     /\b(?:open|launch|go\s+to|visit)\s+(?:www\.)?youtube(?:\.com)?\b[\s\S]{0,80}?\bsearch(?:\s+(?:for|on|me))?\s+(.+?)\s*$/i,
@@ -99,6 +99,10 @@ export function inferYouTubeSearch(command: string): YouTubeSearchRequest | null
 }
 
 
+function hasExplicitNegation(command: string): boolean {
+  return /\b(?:do\s+not|don['’]?t|never|avoid)\b.{0,50}\b(?:open|visit|load|go\s+to|navigate|search|google|enable|disable|activate|deactivate|turn|switch|increase|raise|decrease|lower|set|change|capture|take|make|check|read)\b/i.test(command);
+}
+
 export interface BrowserNavigationRequest {
   url: string;
 }
@@ -111,6 +115,7 @@ export function inferExplicitBrowserNavigation(command: string): BrowserNavigati
   const normalized = String(command || "")
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  if (hasExplicitNegation(normalized)) return null;
   const verbs = /\b(?:open|visit|load|go\s+to|navigate\s+to)\s+(?:(?:the|this|that)\s+)?(?:(?:website|web\s+page|page|url|site)\s+)?/gi;
   for (const match of normalized.matchAll(verbs)) {
     const target = normalized.slice((match.index || 0) + match[0].length).trim();
@@ -139,6 +144,7 @@ export function inferBrowserSearch(command: string): BrowserSearchRequest | null
   const normalized = String(command || "")
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
+  if (hasExplicitNegation(normalized)) return null;
   const patterns = [
     /\bsearch\s+(?:google|the\s+web|the\s+internet|online)\s+for\s+(.+?)\s*$/i,
     /\bsearch\s+for\s+(.+?)\s+(?:on|using)\s+(?:google|the\s+web|the\s+internet)\s*$/i,
@@ -169,7 +175,7 @@ export function inferWindowsControl(command: string): WindowsControlRequest | nu
   const normalized = String(command || "")
     .trim()
     .replace(/^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa)[\s,.:;!?—-]*/i, "");
-  if (!normalized || /\b(?:and then|and also|then|after that|and)\b/i.test(normalized)) return null;
+  if (!normalized || hasExplicitNegation(normalized) || /\b(?:and then|and also|then|after that|and)\b/i.test(normalized)) return null;
   const lower = normalized.toLowerCase();
 
   if (/\b(?:capture|take|make)\b/i.test(lower) && /\b(?:a\s+)?(?:desktop\s+)?screenshot\b/i.test(lower)) {
