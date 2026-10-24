@@ -59,9 +59,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force apps/desktop/runtime | Out-Null
-          pnpm --filter @vanessa/orchestrator deploy --prod apps/desktop/runtime/orchestrator
+          pnpm --filter @vanessa/orchestrator deploy --prod apps/desktop/runtime/orchestrator --config.node-linker=hoisted
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm --filter @vanessa/voice-agent deploy --prod apps/desktop/runtime/voice-agent
+          pnpm --filter @vanessa/voice-agent deploy --prod apps/desktop/runtime/voice-agent --config.node-linker=hoisted
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item -Recurse -Force skills apps/desktop/runtime/skills
           Copy-Item -Recurse -Force config apps/desktop/runtime/config
@@ -82,6 +82,13 @@ jobs:
         shell: pwsh
         run: |
           $nodeExe = (Resolve-Path "apps/desktop/runtime/node.exe").Path
+          $moduleRoot = (Resolve-Path "apps/desktop/runtime/orchestrator/node_modules").Path
+          foreach ($dependency in @("fastify", "avvio", "playwright", "playwright-core")) {
+            $dependencyPath = Join-Path $moduleRoot $dependency
+            if (!(Test-Path $dependencyPath)) { throw "Deployed dependency is missing: $dependency" }
+            $dependencyItem = Get-Item $dependencyPath -Force
+            if ($dependencyItem.LinkType) { throw "Deployed dependency is still a $($dependencyItem.LinkType) link: $dependencyPath" }
+          }
           Push-Location "apps/desktop/runtime/orchestrator"
           try {
             & $nodeExe --input-type=module -e "await import('fastify'); await import('playwright'); console.log('Orchestrator production dependencies resolve.')"
