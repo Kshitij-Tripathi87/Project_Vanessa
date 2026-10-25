@@ -108,7 +108,9 @@ test("mock Sarvam STT -> real planner/policy/runner -> Sarvam TTS, including pen
   const ttsServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await Promise.all([once(asrServer, "listening"), once(ttsServer, "listening")]);
   const asrAddress = asrServer.address(), ttsAddress = ttsServer.address();
-  assert(asrAddress && ttsAddress && typeof asrAddress !== "string" && typeof ttsAddress !== "string");
+  if (!asrAddress || typeof asrAddress === "string" || !ttsAddress || typeof ttsAddress === "string") {
+    throw new Error("Mock Sarvam WebSocket servers did not expose listening addresses.");
+  }
   asrServer.on("connection", ws => {
     ws.send(JSON.stringify({ event: "session.begin" }));
     ws.on("message", raw => {
