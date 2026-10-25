@@ -2,7 +2,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
 import { privacyGuard } from "../core/privacy.js";
 import {
@@ -12,8 +11,6 @@ import {
   AgentTask,
   SpecialistAgent,
 } from "@vanessa/shared";
-
-const execAsync = promisify(exec);
 
 export class FileAgent implements SpecialistAgent {
   id = "files";
@@ -39,8 +36,6 @@ export class FileAgent implements SpecialistAgent {
   ): Promise<AgentResult> {
     const action = typeof actionOrTask === "string" ? actionOrTask : actionOrTask.action || actionOrTask.objective;
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
-    const _runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
-
     const startTime = new Date().toISOString();
 
     switch (action) {
