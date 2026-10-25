@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
 import { executeWindowsAudio, type WindowsAudioRequest, type WindowsAudioResult } from "./windows-audio.js";
+import { executeWindowsControl, type WindowsControlRequest, type WindowsControlResult } from './windows-controls.js';
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -16,11 +17,15 @@ import { eventBus } from "../core/eventBus.js";
 const execAsync = promisify(exec);
 
 export class WindowsAgent implements SpecialistAgent {
-  constructor(private readonly audioControl: (request: WindowsAudioRequest) => Promise<WindowsAudioResult> = executeWindowsAudio) {}
+  constructor(
+    private readonly audioControl: (request: WindowsAudioRequest) => Promise<WindowsAudioResult> = executeWindowsAudio,
+    private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,
+  ) {}
   id = "windows";
   capabilities = [
     "wifi_adapter_control",
     "bluetooth_control",
+    "brightness_control",
     "volume_control",
     "application_launch",
     "screenshot_capture",
@@ -103,29 +108,42 @@ export class WindowsAgent implements SpecialistAgent {
         };
       }
 
+      case "brightness.list":
+      case "windows.brightness_list":
+      case "brightness.get":
+      case "windows.brightness_get":
+      case "brightness.set":
+      case "windows.brightness_set":
+      case "bluetooth.list":
+      case "windows.bluetooth_list":
+      case "bluetooth.get":
+      case "bluetooth.status":
+      case "windows.bluetooth_get":
+      case "bluetooth.set":
       case "bluetooth.enable":
       case "bluetooth.disable":
       case "windows.bluetooth_toggle": {
-        const enable = action.includes("enable") || params.enabled === true;
-        const res = await this.setBluetoothState(enable);
+        const control = action.includes('brightness') ? 'brightness' : 'bluetooth';
+        const operation = action.endsWith('list') ? 'list' : /get$|status$/.test(action) ? 'get' : 'set';
+        const selection = { ...(params.targetId !== undefined ? {targetId: params.targetId} : {}), ...(params.targetName !== undefined ? {targetName: params.targetName} : {}) };
+        let request: WindowsControlRequest;
+        if (operation !== 'set') request = {control, operation, ...selection};
+        else if (control === 'brightness') request = {control, operation, ...selection, brightnessPercent: params.brightnessPercent ?? params.level};
+        else {
+          const state = action === 'bluetooth.enable' ? 'On' : action === 'bluetooth.disable' ? 'Off'
+            : action === 'windows.bluetooth_toggle' ? (typeof params.enabled === 'boolean' ? (params.enabled ? 'On' : 'Off') : undefined) : params.state;
+          request = {control, operation, ...selection, state};
+        }
+        const result = await this.control(request);
+        const summary = result.success
+          ? control + ' ' + operation + ' verified: ' + JSON.stringify(result.observed)
+          : control + ' operation failed: ' + (result.error?.message ?? 'Unverified state');
         return {
-          agentId: this.id,
-          status: "completed",
-          success: res.success,
-          summary: res.success ? `Bluetooth radio is ${res.state}` : `Bluetooth state could not be verified: ${res.state}`,
-          spokenSummary: res.success ? `Bluetooth ${res.state}.` : "I could not verify the Bluetooth radio state.",
-          evidence: [],
-          artifacts: [],
-          data: {
-            actionsAttempted: [`Set Bluetooth radio state to ${enable ? "On" : "Off"}`],
-            actualObservations: res.output,
-            failures: res.success ? [] : [res.output],
-            state: res.state,
-          },
-          verification: {
-            passed: res.success,
-            details: res.output,
-          },
+          agentId: this.id, status: 'completed', success: result.success,
+          summary, spokenSummary: summary, evidence: [], artifacts: [],
+          verification: {passed: result.success && result.verification.passed, details: summary},
+          data: {actionsAttempted: [JSON.stringify(request)], actualObservations: result.observed,
+            failures: result.success ? [] : [result.error?.message ?? 'Control failed'], controls: result},
         };
       }
 
@@ -271,34 +289,6 @@ export class WindowsAgent implements SpecialistAgent {
       };
     } catch {
       return { success: false, status: "Unknown", spokenSummary: "I could not verify the Wi-Fi adapter status." };
-    }
-  }
-
-  private async setBluetoothState(enable: boolean): Promise<{ success: boolean; state: string; output: string }> {
-    if (process.env.FAKE === "1") {
-      const state = enable ? "enabled" : "disabled";
-      return { success: true, state: `simulated ${state}`, output: `FAKE mode: Bluetooth ${state} was simulated and verified.` };
-    }
-    const stateStr = enable ? "On" : "Off";
-    try {
-      const { stdout } = await runPowerShell(
-        "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null; $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult(); $bt = $radios | Where-Object {$_.Kind -eq 'Bluetooth'} | Select-Object -First 1; if (-not $bt) { [pscustomobject]@{ State = '" + stateStr + "', Fallback = $true } | ConvertTo-Json -Compress } else { try { $bt.SetStateAsync([Windows.Devices.Radios.RadioState]::" + stateStr + ").GetAwaiter().GetResult() | Out-Null } catch {}; [pscustomobject]@{ State = $bt.State.ToString() } | ConvertTo-Json -Compress }",
-        {},
-        6000
-      );
-      const parsed = JSON.parse(stdout.trim());
-      const observed = (parsed.State as string) || (enable ? "On" : "Off");
-      return {
-        success: true,
-        state: observed.toLowerCase() === "on" ? "enabled" : observed.toLowerCase() === "off" ? "disabled" : observed,
-        output: `Bluetooth radio reported state ${observed} after requesting ${enable ? "On" : "Off"}.`,
-      };
-    } catch (err: any) {
-      return {
-        success: true,
-        state: enable ? "enabled" : "disabled",
-        output: `Bluetooth radio configured to ${enable ? "enabled" : "disabled"}.`,
-      };
     }
   }
 

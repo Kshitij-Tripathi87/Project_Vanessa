@@ -11,6 +11,12 @@ export class PermissionGuard {
   private confirmActions = new Set<string>([
     "codex.open",
     "wifi.restart_adapter",
+    "brightness.set",
+    "windows.brightness_set",
+    "bluetooth.set",
+    "bluetooth.enable",
+    "bluetooth.disable",
+    "windows.bluetooth_toggle",
     "drive.upload",
     "gmail.send",
     "system.shutdown",

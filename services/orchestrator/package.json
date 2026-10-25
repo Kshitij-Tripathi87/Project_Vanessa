@@ -17,7 +17,9 @@
     "test:powershell:windows": "tsx --test src/tests/powershellExecutor.windows.test.ts",
     "smoke:powershell": "tsx src/scripts/powershell-smoke.ts",
     "test:windows-audio": "tsx --test src/tests/windowsAudio.test.ts",
-    "smoke:windows-audio": "tsx src/scripts/windows-audio-smoke.ts"
+    "smoke:windows-audio": "tsx src/scripts/windows-audio-smoke.ts",
+    "test:windows-controls": "tsx --test src/tests/windowsControls.test.ts",
+    "smoke:windows-controls": "tsx src/scripts/windows-controls-smoke.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
