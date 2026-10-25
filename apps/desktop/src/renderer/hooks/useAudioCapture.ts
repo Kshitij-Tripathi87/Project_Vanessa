@@ -55,9 +55,8 @@ export function useAudioCapture() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const recognitionRef = useRef<any>(null);
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
@@ -403,14 +402,20 @@ export function useAudioCapture() {
       analyserRef.current = analyser;
       source.connect(analyser);
 
-      // Audio processor node to convert Float32 to 16-bit PCM for real-time streaming
-      const processor = audioCtx.createScriptProcessor(1024, 1, 1);
+      // AudioWorklet replaces the deprecated ScriptProcessorNode while keeping
+      // microphone processing off the renderer's main UI thread.
+      await audioCtx.audioWorklet.addModule(new URL("../audio/pcmCapture.worklet.ts", import.meta.url));
+      const processor = new AudioWorkletNode(audioCtx, "vanessa-pcm-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+      });
       processorRef.current = processor;
       source.connect(processor);
       processor.connect(audioCtx.destination);
 
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
+      processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        const inputData = event.data;
         // Resample from hardware rate (e.g. 48kHz or 44.1kHz) to exact 16kHz
         const resampled = resampleTo16k(inputData, audioCtx.sampleRate);
 
