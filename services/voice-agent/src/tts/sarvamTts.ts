@@ -58,7 +58,7 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
     this.codec = (options.codec ?? process.env.SARVAM_TTS_OUTPUT_CODEC ?? "mp3") as "mp3" | "wav";
     this.bitrate = options.bitrate ?? process.env.SARVAM_TTS_BITRATE ?? "128k";
     this.sampleRate = Math.max(8000, Math.floor(Number(options.sampleRate ?? process.env.SARVAM_TTS_SAMPLE_RATE ?? 24000)));
-    this.minBufferSize = Math.max(0, Number(options.minBufferSize ?? process.env.SARVAM_TTS_MIN_BUFFER_SIZE ?? 50));
+    this.minBufferSize = Math.max(0, Number(options.minBufferSize ?? process.env.SARVAM_TTS_MIN_BUFFER_SIZE ?? 20));
     this.maxChunkLength = Math.max(1, Number(options.maxChunkLength ?? process.env.SARVAM_TTS_MAX_CHUNK_LENGTH ?? 200));
     this.timeoutMs = Math.max(1000, Number(options.timeoutMs ?? process.env.SARVAM_TTS_TIMEOUT_MS ?? 30000));
     this.budget = options.budget ?? getVoiceUsageBudget();

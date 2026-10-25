@@ -35,6 +35,30 @@ test("cancel before submit or during planning never dispatches a late plan", asy
   } finally { modelRouter.callLLM = original; }
 });
 
+test("cancelling an executing request blocks its dependent tasks", async () => {
+  const originalLLM = modelRouter.callLLM;
+  const originalExecute = agentRegistry.it_ops.execute;
+  let finish!: (result: any) => void;
+  let started!: () => void;
+  const entered = new Promise<void>(resolve => started = resolve);
+  let calls = 0;
+  modelRouter.callLLM = async () => JSON.stringify({ tasks: [
+    { id: "a", agent: "it_ops", action: "it_ops.system_status", params: {}, dependsOn: [] },
+    { id: "b", agent: "it_ops", action: "it_ops.system_status", params: {}, dependsOn: ["a"] },
+  ] });
+  agentRegistry.it_ops.execute = async () => { calls++; started(); return new Promise<any>(resolve => finish = resolve); };
+  try {
+    const result = orchestrator.executeCommand({ command: "Check status twice", requestId: "cancel-running-plan" });
+    await entered;
+    orchestrator.cancelRequest("cancel-running-plan");
+    finish({ success: true, verification: { passed: true, details: "mock operation returned" } });
+    const cancelled = await result;
+    assert.equal(calls, 1);
+    assert.equal(cancelled.status, "partial");
+    assert(cancelled.plan?.tasks.every(task => task.status === "cancelled"));
+  } finally { modelRouter.callLLM = originalLLM; agentRegistry.it_ops.execute = originalExecute; }
+});
+
 test("mock Sarvam STT -> real planner/policy/runner -> Sarvam TTS, including pending approval cancellation", { timeout: 15000 }, async () => {
   const budget = new UsageBudget();
   let sensitive = false;

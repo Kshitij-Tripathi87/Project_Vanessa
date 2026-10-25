@@ -82,9 +82,12 @@ cp .env.example .env
 
 For the Sarvam voice path, set `VOICE_ASR_PROVIDER=sarvam`,
 `VOICE_TTS_PROVIDER=sarvam`, `PLANNER_PROVIDER=sarvam`, and
-`SARVAM_CHAT_PROVIDER=sarvam`, then replace the `YOUR_SARVAM_*` placeholders
-in `.env`. Sarvam credentials are loaded only by the trusted voice/orchestrator
-processes; they are never sent to the renderer.
+`SARVAM_CHAT_PROVIDER=sarvam`, then add your key to `SARVAM_API_KEY` in `.env`.
+The example file supplies compatible model defaults; confirm the speaker and
+language settings against your intended voice. Configure the positive budget
+caps before live testing if you want the local meter to block calls at a limit.
+Sarvam credentials are loaded only by the trusted voice/orchestrator processes;
+they are never sent to the renderer.
 
 ### 4. Run Development Server
 ```bash

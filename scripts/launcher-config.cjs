@@ -5,37 +5,37 @@ function launcherConfig(env, args, root, exists) {
   for (const arg of args) if (!supported.has(arg)) throw new Error(`Unknown launcher option: ${arg}. Use --help.`);
   const voice = !args.includes('--text-only');
   const strict = args.includes('--codex-test');
-  const asr = env.VOICE_ASR_PROVIDER || 'fish';
-  const tts = env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'fish';
+  const asr = (env.VOICE_ASR_PROVIDER || 'fish').trim().toLowerCase();
+  const tts = (env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'fish').trim().toLowerCase();
+  const planner = (env.SARVAM_CHAT_PROVIDER || env.PLANNER_PROVIDER || 'gemini').trim().toLowerCase();
   if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
   if (voice && !['fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const missing = [];
-  const configured = value => typeof value === 'string' && value.trim() && !/placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(value);
-  const planner = (env.SARVAM_CHAT_PROVIDER || env.PLANNER_PROVIDER || 'gemini').toLowerCase();
   if (!['sarvam', 'gemini'].includes(planner)) throw new Error('Unsupported planner provider. Select sarvam or gemini.');
+  const addMissing = (item) => { if (!missing.includes(item)) missing.push(item); };
+  const configured = (value) => Boolean(value?.trim()) && !/placeholder|replace[-_ ]with|your[_-]/i.test(value);
+  if (planner !== 'sarvam' && !env.GEMINI_API_KEY?.trim()) addMissing('GEMINI_API_KEY (planning unavailable)');
   if (planner === 'sarvam') {
-    if (!configured(env.SARVAM_API_KEY)) missing.push('SARVAM_API_KEY (planning unavailable)');
-    if (!configured(env.SARVAM_CHAT_MODEL || 'sarvam-105b-conversations')) missing.push('SARVAM_CHAT_MODEL');
-  } else if (!configured(env.GEMINI_API_KEY)) missing.push('GEMINI_API_KEY (planning unavailable)');
+    if (!configured(env.SARVAM_API_KEY)) addMissing('SARVAM_API_KEY (Sarvam planning unavailable)');
+    if (!configured(env.SARVAM_CHAT_MODEL)) addMissing('SARVAM_CHAT_MODEL (Sarvam planning unavailable)');
+  }
   if (voice) {
-    if (asr === 'sarvam') {
-      if (!configured(env.SARVAM_API_KEY)) missing.push('SARVAM_API_KEY (recognition unavailable)');
-      if (!configured(env.SARVAM_ASR_MODEL || 'saaras:v3-realtime')) missing.push('SARVAM_ASR_MODEL');
-    }
-    if (tts === 'sarvam') {
-      if (!configured(env.SARVAM_API_KEY)) missing.push('SARVAM_API_KEY (speech output unavailable)');
-      if (!configured(env.SARVAM_TTS_MODEL || 'bulbul:v4-flash')) missing.push('SARVAM_TTS_MODEL');
-      if (!configured(env.SARVAM_TTS_SPEAKER || 'shubh_enhi_ads')) missing.push('SARVAM_TTS_SPEAKER');
-    }
-    if (asr === 'fish' && !env.FISH_API_KEY?.trim() && env.VOICE_ALLOW_FALLBACK !== 'true') missing.push('FISH_API_KEY (recognition unavailable)');
-    if (asr === 'elevenlabs' && !env.ELEVENLABS_API_KEY?.trim()) missing.push('ELEVENLABS_API_KEY (recognition unavailable)');
+    if (asr === 'sarvam' && !configured(env.SARVAM_API_KEY)) addMissing('SARVAM_API_KEY (recognition unavailable)');
+    if (asr === 'sarvam' && !configured(env.SARVAM_ASR_MODEL)) addMissing('SARVAM_ASR_MODEL (recognition unavailable)');
+    if (asr === 'fish' && !env.FISH_API_KEY?.trim() && env.VOICE_ALLOW_FALLBACK !== 'true') addMissing('FISH_API_KEY (recognition unavailable)');
+    if (asr === 'elevenlabs' && !env.ELEVENLABS_API_KEY?.trim()) addMissing('ELEVENLABS_API_KEY (recognition unavailable)');
     if (tts === 'fish' && env.VOICE_TTS_FALLBACK_PROVIDER !== 'browser') {
-      if (!env.FISH_API_KEY?.trim()) missing.push('FISH_API_KEY (speech output unavailable)');
-      if (!(env.FISH_TTS_VOICE_ID || env.FISH_VANESSA_VOICE_ID)?.trim()) missing.push('FISH_TTS_VOICE_ID (speech output unavailable)');
+      if (!env.FISH_API_KEY?.trim()) addMissing('FISH_API_KEY (speech output unavailable)');
+      if (!(env.FISH_TTS_VOICE_ID || env.FISH_VANESSA_VOICE_ID)?.trim()) addMissing('FISH_TTS_VOICE_ID (speech output unavailable)');
     }
     if (tts === 'elevenlabs') {
-      if (!env.ELEVENLABS_API_KEY?.trim()) missing.push('ELEVENLABS_API_KEY (speech output unavailable)');
-      if (!env.ELEVENLABS_VOICE_ID?.trim()) missing.push('ELEVENLABS_VOICE_ID (speech output unavailable)');
+      if (!env.ELEVENLABS_API_KEY?.trim()) addMissing('ELEVENLABS_API_KEY (speech output unavailable)');
+      if (!env.ELEVENLABS_VOICE_ID?.trim()) addMissing('ELEVENLABS_VOICE_ID (speech output unavailable)');
+    }
+    if (tts === 'sarvam') {
+      if (!configured(env.SARVAM_API_KEY)) addMissing('SARVAM_API_KEY (speech output unavailable)');
+      if (!configured(env.SARVAM_TTS_MODEL)) addMissing('SARVAM_TTS_MODEL (speech output unavailable)');
+      if (!configured(env.SARVAM_TTS_SPEAKER)) addMissing('SARVAM_TTS_SPEAKER (speech output unavailable)');
     }
   }
   if (strict && missing.length) throw new Error(`Codex test configuration missing: ${missing.join(', ')}`);

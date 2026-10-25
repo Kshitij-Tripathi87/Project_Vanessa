@@ -40,10 +40,11 @@ are excluded from this implementation.
 Environment: Windows, Node v26.4.0, pnpm 11.24.0. Commands use at most 300 seconds.
 
 - `pnpm run test:sarvam:gate`: deterministic launcher, STT, TTS, lifecycle,
-  integration, diagnostics, command contract, usage and chat tests.
+  integration, diagnostics, command contract, usage and chat tests: **48 passed**
+  (9 launcher + 35 voice/shared/integration + 4 chat), after same-branch integration.
 - `SARVAM_API_KEY=vanessa-build-secret-canary pnpm build`: TypeScript and renderer
-  production builds. The canary is test data, not a credential.
-- `node --test scripts/security.test.cjs`: renderer/credential boundary checks.
+  production builds: **passed**. The canary is test data, not a credential.
+- `node --test scripts/security.test.cjs`: **2 passed**, renderer/credential boundary checks.
 - `pnpm run lint`: **cannot run**; root invokes `pnpm -r run lint`, but no selected
   workspace defines a lint script (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). This
   pre-existing setup gap has not been hidden or replaced with a passing no-op.
@@ -54,6 +55,12 @@ Environment: Windows, Node v26.4.0, pnpm 11.24.0. Commands use at most 300 secon
 The new CI workflow is `.github/workflows/sarvam.yml`. It builds and runs the
 isolated gate on Windows without real provider credentials. Workflow creation
 is not a successful remote run; GitHub CLI is unavailable in this environment.
+
+Remote reconciliation: fetched and retained same-branch commits `b6c44e4`,
+`57dc19b`, `9b5da6b`, and `703c34c`. Retained their explicit model/persona
+validation, selected-provider readiness output, model/rate examples, TTS buffer
+tuning, and Sarvam-specific `SpeechAudioGate` implementation and tests. The
+example rates remain indicative, not independently verified billing prices.
 
 ## Definition-of-done matrix
 

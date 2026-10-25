@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
-import { SpeechGate } from "../audio/speechGate.js";
+import { SpeechAudioGate } from "../audio/speechGate.js";
 import type { AsrAdapter } from "../asr/types.js";
 import type { ExecuteCommandResult } from "@vanessa/shared";
 
@@ -57,15 +57,15 @@ test("stop drops pending results, closes capture, and allows a clean restart", a
 });
 
 test("speech gate retains onset pre-roll and natural pauses, never idle room audio", () => {
-  const gate = new SpeechGate();
-  for (let i = 0; i < 30; i++) assert.deepEqual(gate.process(new Int16Array(320).fill(i), false), []);
-  const onset = gate.process(new Int16Array(320).fill(1000), true);
+  const gate = new SpeechAudioGate();
+  for (let i = 0; i < 30; i++) assert.deepEqual(gate.push(new Int16Array(320).fill(i), false), []);
+  const onset = gate.push(new Int16Array(320).fill(1000), true);
   assert.equal(onset.length, 10);
   assert.equal(onset[0][0], 21);
   assert.equal(onset.at(-1)![0], 1000);
-  assert.equal(gate.process(new Int16Array(320), false).length, 1);
+  assert.equal(gate.push(new Int16Array(320), false).length, 1);
   gate.reset();
-  assert.equal(gate.process(new Int16Array(320), false).length, 0);
+  assert.equal(gate.push(new Int16Array(320), false).length, 0);
 });
 
 test("failed activation returns to idle and a later PTT can reconnect", async () => {
