@@ -16,7 +16,7 @@ test('full Sarvam stack needs no Gemini or Fish credentials and rejects placehol
 });
 
 test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
-  const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', SARVAM_ASR_MODEL: 'saaras:v3-realtime', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
+  const env = { NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', SARVAM_ASR_MODEL: 'saaras:v3-realtime', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
   assert.deepEqual(config(env, ['--codex-test']).missing, []);
   assert.equal(config(env).localAsr, undefined);
   assert.throws(() => config({ ...env, SARVAM_API_KEY: '' }, ['--codex-test']), /SARVAM_API_KEY/);
@@ -26,13 +26,40 @@ test('Sarvam is switchable and validates its key independently of Fish TTS', () 
 
 test('ordinary launch and text-only do not require Fish or Codex-specific credentials', () => {
   assert(config().missing.length > 0);
-  const text = config({ GEMINI_API_KEY: 'test' }, ['--text-only', '--codex-test']);
+  const text = config({ NVIDIA_API_KEY: 'test' }, ['--text-only', '--codex-test']);
   assert.equal(text.voice, false);
   assert.deepEqual(text.missing, []);
   assert.throws(() => config({}, ['--codex-test']), /configuration missing/);
 });
+
+test('planner and conversation providers are independent and require only their selected credentials', () => {
+  const both = {
+    PLANNER_PROVIDER: 'nvidia', SARVAM_CHAT_PROVIDER: 'sarvam',
+    NVIDIA_API_KEY: 'test-nvidia-key', SARVAM_API_KEY: 'test-sarvam-key', SARVAM_CHAT_MODEL: 'test-model',
+  };
+  const mixed = config(both, ['--text-only', '--codex-test']);
+  assert.equal(mixed.planner, 'nvidia');
+  assert.equal(mixed.conversation, 'sarvam');
+  assert.deepEqual(mixed.missing, []);
+  assert.throws(() => config({ ...both, NVIDIA_API_KEY: '' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
+  assert.throws(() => config({ ...both, SARVAM_API_KEY: '' }, ['--text-only', '--codex-test']), /SARVAM_API_KEY/);
+  const sarvamOnly = config({ SARVAM_CHAT_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', SARVAM_CHAT_MODEL: 'model' }, ['--text-only', '--codex-test']);
+  assert.equal(sarvamOnly.planner, 'sarvam');
+  assert.equal(sarvamOnly.conversation, 'sarvam');
+  const nvidiaOnly = config({ PLANNER_PROVIDER: ' NVIDIA ', NVIDIA_API_KEY: 'test' }, ['--text-only', '--codex-test']);
+  assert.equal(nvidiaOnly.planner, 'nvidia');
+  assert.equal(nvidiaOnly.conversation, 'nvidia');
+});
+
+test('provider selection rejects unsupported values and placeholders before startup', () => {
+  for (const provider of ['typo', 'gemini']) {
+    assert.throws(() => config({ PLANNER_PROVIDER: provider }, ['--text-only']), /Unsupported planning provider/);
+    assert.throws(() => config({ PLANNER_PROVIDER: 'nvidia', SARVAM_CHAT_PROVIDER: provider }, ['--text-only']), /Unsupported conversation provider/);
+  }
+  assert.throws(() => config({ NVIDIA_API_KEY: 'nvapi-placeholder-key' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
+});
 test('selects existing providers without Fish requirements for ElevenLabs', () => {
-  const result = config({ GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
+  const result = config({ NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
   assert.deepEqual(result.missing, []);
   assert.equal(result.localAsr, undefined);
   assert.throws(() => config({ VOICE_ASR_PROVIDER: 'typo' }), /Unsupported/);
@@ -50,7 +77,7 @@ test('restores local server selection with current and legacy environment paths'
 });
 test('options are explicit and real Codex tests reject simulation', () => {
   assert.throws(() => config({}, ['--typo']), /Unknown/);
-  assert.throws(() => config({ GEMINI_API_KEY: 'test', FAKE: '1' }, ['--text-only', '--codex-test']), /FAKE/);
+  assert.throws(() => config({ NVIDIA_API_KEY: 'test', FAKE: '1' }, ['--text-only', '--codex-test']), /FAKE/);
   assert(config({}, ['--dev', '--reuse-existing']).dev);
   assert(config({}, ['--dev', '--reuse-existing']).reuse);
 });

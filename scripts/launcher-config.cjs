@@ -7,17 +7,20 @@ function launcherConfig(env, args, root, exists) {
   const strict = args.includes('--codex-test');
   const asr = (env.VOICE_ASR_PROVIDER || 'fish').trim().toLowerCase();
   const tts = (env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'fish').trim().toLowerCase();
-  const planner = (env.SARVAM_CHAT_PROVIDER || env.PLANNER_PROVIDER || 'gemini').trim().toLowerCase();
+  const planner = (env.PLANNER_PROVIDER || env.SARVAM_CHAT_PROVIDER || 'nvidia').trim().toLowerCase();
+  const conversation = (env.SARVAM_CHAT_PROVIDER || env.PLANNER_PROVIDER || 'nvidia').trim().toLowerCase();
   if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
   if (voice && !['fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const missing = [];
-  if (!['sarvam', 'gemini'].includes(planner)) throw new Error('Unsupported planner provider. Select sarvam or gemini.');
   const addMissing = (item) => { if (!missing.includes(item)) missing.push(item); };
   const configured = (value) => Boolean(value?.trim()) && !/placeholder|replace[-_ ]with|your[_-]/i.test(value);
-  if (planner !== 'sarvam' && !env.GEMINI_API_KEY?.trim()) addMissing('GEMINI_API_KEY (planning unavailable)');
-  if (planner === 'sarvam') {
-    if (!configured(env.SARVAM_API_KEY)) addMissing('SARVAM_API_KEY (Sarvam planning unavailable)');
-    if (!configured(env.SARVAM_CHAT_MODEL)) addMissing('SARVAM_CHAT_MODEL (Sarvam planning unavailable)');
+  for (const [purpose, provider] of [['planning', planner], ['conversation', conversation]]) {
+    if (!['sarvam', 'nvidia'].includes(provider)) throw new Error(`Unsupported ${purpose} provider: ${provider}. Select sarvam or nvidia; Gemini is disabled.`);
+    if (provider === 'nvidia' && !configured(env.NVIDIA_API_KEY)) addMissing(`NVIDIA_API_KEY (${purpose} unavailable)`);
+    if (provider === 'sarvam') {
+      if (!configured(env.SARVAM_API_KEY)) addMissing(`SARVAM_API_KEY (Sarvam ${purpose} unavailable)`);
+      if (!configured(env.SARVAM_CHAT_MODEL)) addMissing(`SARVAM_CHAT_MODEL (Sarvam ${purpose} unavailable)`);
+    }
   }
   if (voice) {
     if (asr === 'sarvam' && !configured(env.SARVAM_API_KEY)) addMissing('SARVAM_API_KEY (recognition unavailable)');
@@ -53,7 +56,7 @@ function launcherConfig(env, args, root, exists) {
       localAsr.script = choose(['services/voice-agent/voice_server.py', 'services/voice-agent/whisper_server.py']);
     }
   }
-  return { voice, strict, asr, tts, missing, localAsr, dev: args.includes('--dev'), reuse: args.includes('--reuse-existing') };
+  return { voice, strict, asr, tts, planner, conversation, missing, localAsr, dev: args.includes('--dev'), reuse: args.includes('--reuse-existing') };
 }
 
 module.exports = { launcherConfig };

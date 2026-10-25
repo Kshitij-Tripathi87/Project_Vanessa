@@ -18,6 +18,8 @@ import {
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
 import { narrator } from "./narrator.js";
+import { formatLlmError } from "./llmDiagnostics.js";
+import { modelRouter } from "./router.js";
 
 export class VanessaOrchestrator {
   private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
@@ -144,12 +146,15 @@ export class VanessaOrchestrator {
       console.log(`[Planner] start request=${requestId}`);
       plan = await planner.createPlan(command, conversationContext, payload, request.controller.signal);
       console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
-    } catch {
-      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check provider status or plan validation.`);
+    } catch (error) {
+      const diagnostic = formatLlmError(error);
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime} error=${diagnostic}; no tasks started.`);
       const result: ExecuteCommandResult = {
         status: "failed",
         requestId,
-        spokenSummary: request.controller.signal.aborted ? "Request cancelled before execution. No tasks were started." : "I couldn't create a valid plan. No tasks were started. Check the selected planner provider or try again.",
+        spokenSummary: request.controller.signal.aborted
+          ? "Request cancelled before execution. No tasks were started."
+          : `I couldn't create a valid plan with ${modelRouter.activeProvider}. No tasks were started. Check the selected planner provider or try again.`,
         verification: {
           verified: false,
           postconditions: ["Planning failed before task execution."],
@@ -162,7 +167,7 @@ export class VanessaOrchestrator {
         agent: "orchestrator",
         action: "planning.failed",
         status: "error",
-        details: "Planning failed or was cancelled; no task execution or keyword fallback was attempted.",
+        details: `${modelRouter.activeProvider} planning ${request.controller.signal.aborted ? "cancelled" : "failed"}; request=${requestId} error=${diagnostic}; no task execution or keyword fallback was attempted.`,
       });
       if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
       return result;
