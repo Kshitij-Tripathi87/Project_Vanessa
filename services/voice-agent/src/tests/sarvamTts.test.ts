@@ -39,7 +39,7 @@ test("Sarvam TTS streams audio chunks and preserves configured format", { timeou
     assert.equal(messages[0].type, "config");
     assert.equal(messages[0].data.speaker, "test-speaker");
     assert.equal(messages[0].data.speech_sample_rate, 24000);
-    assert.equal(messages[0].data.min_buffer_size, 20);
+    assert.equal(messages[0].data.min_buffer_size, 30);
     assert.equal(messages[1].type, "text");
     assert.equal(messages[2].type, "flush");
     assert.equal(chunks[0].audioBase64, Buffer.from("audio").toString("base64"));

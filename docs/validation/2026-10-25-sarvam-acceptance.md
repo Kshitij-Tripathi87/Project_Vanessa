@@ -48,6 +48,12 @@ Environment: Windows, Node v26.4.0, pnpm 11.24.0. Commands use at most 300 secon
 - `pnpm run lint`: **cannot run**; root invokes `pnpm -r run lint`, but no selected
   workspace defines a lint script (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). This
   pre-existing setup gap has not been hidden or replaced with a passing no-op.
+- Authorized live smoke on 2026-10-25 using `test_wifi.wav` and the private local
+  `.env`: Sarvam STT connected and matched `restart` and `wi-fi`; Sarvam chat
+  returned the expected response; Sarvam TTS returned complete audio (`30,720`
+  bytes on the final run). No key, transcript, or audio payload was printed or
+  committed. This validates provider connectivity and one synthetic phrase, not
+  general speech accuracy or physical speaker playback.
 - The older live-planner scenario/process suites are not a deterministic release
   gate. Previous review observed 17/23 scenarios, 6/7 skills and 6/7 process drills.
   They were not rerun here: they can invoke real Windows actions and live models.
