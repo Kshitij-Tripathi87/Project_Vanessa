@@ -1,0 +1,128 @@
+{
+  "originalRoot": "D:/projects/Project_Vanessa",
+  "baseline": "04ad5ee572e136994709fae2b17ac01facd532f2",
+  "unchangedAfterFocusedImplementation": true,
+  "status": " M services/orchestrator/package.json\u0000 M services/orchestrator/src/agents/windows-audio/CoreAudio.cs\u0000 M services/orchestrator/src/agents/windows.agent.ts\u0000 M services/orchestrator/src/core/permissionGuard.ts\u0000?? .idea/.gitignore\u0000?? .idea/Project_Vanessa.iml\u0000?? .idea/inspectionProfiles/profiles_settings.xml\u0000?? .idea/misc.xml\u0000?? .idea/modules.xml\u0000?? .idea/vcs.xml\u0000?? docs/windows-automation-checklist.md\u0000?? docs/windows-automation-examples.json\u0000?? docs/windows-automation-manual-commands.md\u0000?? docs/windows-automation-recipes.json\u0000?? docs/windows-automation-test-results.md\u0000?? docs/windows-automation.md\u0000?? docs/windows-settings.md\u0000?? services/orchestrator/scripts/copy-windows-automation.mjs\u0000?? services/orchestrator/scripts/generate-windows-manual-commands.mjs\u0000?? services/orchestrator/scripts/generate-windows-recipes.mjs\u0000?? services/orchestrator/src/agents/windows-automation/Desktop.cs\u0000?? services/orchestrator/src/agents/windows-automation/Test-VanessaWindows.ps1\u0000?? services/orchestrator/src/agents/windows-automation/Vanessa.Windows.psm1\u0000?? services/orchestrator/src/agents/windows-automation/Wlan.cs\u0000?? services/orchestrator/src/agents/windows-settings-backend.ts\u0000?? services/orchestrator/src/agents/windows-settings-controller.ts\u0000?? services/orchestrator/src/agents/windows-settings.ts\u0000?? services/orchestrator/src/scripts/windows-settings-smoke.ts\u0000?? services/orchestrator/src/tests/windowsAutomation.test.ts\u0000?? services/orchestrator/src/tests/windowsSettings.test.ts\u0000",
+  "files": [
+    {
+      "path": "services/orchestrator/package.json",
+      "sha256": "42c7bc854137d6fbf0ecefaff4ea87bb06bea7048a551dc4292a94e2d4276422"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-audio/CoreAudio.cs",
+      "sha256": "f6bc507c6d1ae0d19f4621cb47b6653afab3d20301209e0c1d45d96e0b25c5a3"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows.agent.ts",
+      "sha256": "d5bda85b81cdc8ec6449c918ae7a4ea77f81806f048a84ec5a783e2341904c30"
+    },
+    {
+      "path": "services/orchestrator/src/core/permissionGuard.ts",
+      "sha256": "100dda955171997fa0d459aafee5b3c2fb60992ae489e0d654115ecc2a20813f"
+    },
+    {
+      "path": ".idea/.gitignore",
+      "sha256": "4cb643e4d25b781f1a0daf170b75f9a3b60c31c2d6fdc57b83174ce678293826"
+    },
+    {
+      "path": ".idea/Project_Vanessa.iml",
+      "sha256": "341d5a463025da023f52046859020f8f821c1404af24ac7496748e7e71922970"
+    },
+    {
+      "path": ".idea/inspectionProfiles/profiles_settings.xml",
+      "sha256": "6172c5997eeb3cd19c9ca2b5b97d6e2983cdd1fa60b2460d7bbb74055edcaa46"
+    },
+    {
+      "path": ".idea/misc.xml",
+      "sha256": "1a24fdb1cc7572ec6a977a32ae738bb85000b64f1fb143481bfa8bce5bcba51f"
+    },
+    {
+      "path": ".idea/modules.xml",
+      "sha256": "de9f4c98e6bad716463b92f6962688afc3b842fb518504d11a7b8a4234a378f4"
+    },
+    {
+      "path": ".idea/vcs.xml",
+      "sha256": "62be7e0a7f84ab3c35b4d4bafb890a4951d061eadafde1a10aa3f5d0406db5df"
+    },
+    {
+      "path": "docs/windows-automation-checklist.md",
+      "sha256": "68e3bd5890c12b2ef04e1357125a0443be6ede9b48d2a88117b81fa40d7c7c25"
+    },
+    {
+      "path": "docs/windows-automation-examples.json",
+      "sha256": "dc3ab5265fcdc19de11019628e392b08a0353dcefd3a72310597de1eeaa157d4"
+    },
+    {
+      "path": "docs/windows-automation-manual-commands.md",
+      "sha256": "2a00b067495920ccdfef23aa4057f53d9ca318fd5d804a4c8edff598f2305e9a"
+    },
+    {
+      "path": "docs/windows-automation-recipes.json",
+      "sha256": "7f4f68472891e119d1a35e26b5abbe5cf358fad335a25e4fb371855769e414ae"
+    },
+    {
+      "path": "docs/windows-automation-test-results.md",
+      "sha256": "60b028901deb6f98f0663b52e12d7cc46102a58e4410a731c9e6f8ace59a673c"
+    },
+    {
+      "path": "docs/windows-automation.md",
+      "sha256": "c5a83e6e26b30f266854f144529fb7794e17d6ef2c91d379ee73bbd86f616005"
+    },
+    {
+      "path": "docs/windows-settings.md",
+      "sha256": "a1a30d34e83dee619a309813c2670b56656f1a262564cbf6b2ca9c206ff1c717"
+    },
+    {
+      "path": "services/orchestrator/scripts/copy-windows-automation.mjs",
+      "sha256": "1d48ad2e5e16b077d4a6f0d1c2439017e6bf7322a78700542f9bff0da242a325"
+    },
+    {
+      "path": "services/orchestrator/scripts/generate-windows-manual-commands.mjs",
+      "sha256": "502548d5dd401a036aa1e483c46e5896ab0ed94b6661b6159ae37ad240a3f4e9"
+    },
+    {
+      "path": "services/orchestrator/scripts/generate-windows-recipes.mjs",
+      "sha256": "e437031775eeabfa2b03ada0c55e2074564f7d32171e7d1317caf3a85ada27cc"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-automation/Desktop.cs",
+      "sha256": "75ac29d7fc56ce0182af4a5a03e0bac0fae28a03d8a679cbaa1cbd62273660f7"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-automation/Test-VanessaWindows.ps1",
+      "sha256": "0c97fe49144f96aad3a530fa0604ae808f79a78d41074c1220af62460779e628"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-automation/Vanessa.Windows.psm1",
+      "sha256": "106ab63443ba2dba85a78ae0be0a2122a1b475e1390660cf87ffb2bbc130a03c"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-automation/Wlan.cs",
+      "sha256": "fba23d85c04c9749079359ca04368b5aa8e54833275525389e2824dedc0ba13c"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-settings-backend.ts",
+      "sha256": "4347487ec2b13d8f146ff585aa47e7522593ca8d61fc147cc51cdd344417bc52"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-settings-controller.ts",
+      "sha256": "4a16316320f24a2cc7ad9f21bb133ef6f353c84ab78c1fef9c98532a1794207b"
+    },
+    {
+      "path": "services/orchestrator/src/agents/windows-settings.ts",
+      "sha256": "b6048f3afa2b36e70490178c2680ad32c00d8a4fd721ee646b63bd066b44b9e6"
+    },
+    {
+      "path": "services/orchestrator/src/scripts/windows-settings-smoke.ts",
+      "sha256": "1da4ec6366ffc0f53e63afe1a5ef4c1ef56d84a9a6cb78edf74b2407307ed6b8"
+    },
+    {
+      "path": "services/orchestrator/src/tests/windowsAutomation.test.ts",
+      "sha256": "93cb9823a7e5290d73fc1e8b7fd6cea018a34bc9e6a4743dd896fcd7df03eb56"
+    },
+    {
+      "path": "services/orchestrator/src/tests/windowsSettings.test.ts",
+      "sha256": "4e203e5faf6911c55ada8bd8f9a24760ee779dd76c8bf93cafc15778abbff8e4"
+    }
+  ]
+}
