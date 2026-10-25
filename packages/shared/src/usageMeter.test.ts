@@ -50,3 +50,21 @@ test("UsageBudget applies a separate per-user cap", () => {
   budget.release(reservation);
   assert.equal(budget.snapshot().users.alice, undefined);
 });
+
+test("invalid rates/caps cannot bypass the ledger", () => {
+  for (const capInr of [NaN, Infinity, -1]) assert.throws(() => new UsageBudget({ capInr }));
+  const budget = new UsageBudget({ capInr: 1 });
+  for (const estimatedCostInr of [NaN, Infinity, -1, 0]) {
+    assert.throws(() => budget.reserve({ requestId: "bad", model: "test", kind: "tts_characters", estimatedCostInr }));
+  }
+  assert.equal(budget.snapshot().reservedInr, 0);
+});
+
+test("history limits never evict unsettled reservations", () => {
+  const budget = new UsageBudget({ maxEvents: 10 });
+  const pending = Array.from({ length: 20 }, (_, i) => budget.reserve({ requestId: String(i), model: "test", kind: "tts_characters", estimatedCostInr: 1 }));
+  for (const reservation of pending) budget.settle(reservation, { quantity: 1 });
+  assert.equal(budget.snapshot().spentInr, 20);
+  assert.equal(budget.snapshot().reservedInr, 0);
+  assert.equal(budget.snapshot().events.length, 10);
+});

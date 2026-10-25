@@ -314,6 +314,9 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       acquiredLocks.push(l);
     }
 
+    // Cancellation may arrive while waiting for a slot/lock.
+    if ((task.status as string) === "cancelled") return task;
+
     const result = await agent.execute(task.action, resolvedParams, {
         planId: plan.id,
         command: plan.command,
@@ -529,6 +532,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     }
 
     try {
+      if ((task.status as string) === "cancelled") return;
       const agent = agentRegistry[task.agent];
       if (!agent) {
         throw new Error(`Unknown agent: ${task.agent}`);

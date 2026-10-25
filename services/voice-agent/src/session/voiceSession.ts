@@ -15,6 +15,8 @@ import { SarvamTtsAdapter } from "../tts/sarvamTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
+import { safeProviderDetail } from "../diagnostics/providerDiagnostics.js";
+import { SpeechGate } from "../audio/speechGate.js";
 
 export type SessionState =
   | "idle"
@@ -32,6 +34,7 @@ export interface VoiceSessionHandlers {
   onTtsUnavailable?: (detail: string) => void;
   onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
   onProviderStatus?: (status: VoiceProviderInfo) => void;
+  onError?: (detail: string) => void;
 }
 
 export interface VoiceProviderInfo {
@@ -41,6 +44,7 @@ export interface VoiceProviderInfo {
 
 export class VanessaVoiceSession {
   private turnDetector = new TurnDetector();
+  private speechGate = new SpeechGate();
   private vad = new SileroVadDetector();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
@@ -58,13 +62,21 @@ export class VanessaVoiceSession {
   private conversationContext: ConversationTurn[] = [];
   private processedTurnIds = new Set<string>();
   private queuedUtterances: Array<{ text: string; language: string }> = [];
+  private requestController?: AbortController;
+  private activeRequestId?: string;
+  private captureAuthorized = false;
+  private readonly client: Pick<typeof orchestratorClient, "executeCommand" | "cancelRequest">;
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     ttsProvider?: "elevenlabs" | "fish" | "sarvam";
     handlers?: VoiceSessionHandlers;
+    asr?: AsrAdapter;
+    tts?: VoiceTtsAdapter;
+    client?: Pick<typeof orchestratorClient, "executeCommand" | "cancelRequest">;
   }) {
     this.handlers = options?.handlers || {};
+    this.client = options?.client || orchestratorClient;
 
     const asrType = String(options?.asrProvider || process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase() as "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     if (asrType === "sarvam") {
@@ -89,7 +101,19 @@ export class VanessaVoiceSession {
       this.tts = new ElevenLabsTtsAdapter();
     }
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
-    this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
+    this.asr = options?.asr || this.asr;
+    this.tts = options?.tts || this.tts;
+    this.asr.setStatusHandler?.((status) => {
+      this.notifyProviderStatus();
+      if (status.state === "error") {
+        this.captureAuthorized = false;
+        this.wakeWord.resetSession();
+        this.isAsrConnected = false;
+        this.asrConnectPromise = undefined;
+        if (this.state === "listening") this.setState("idle");
+        this.handlers.onError?.(safeProviderDetail(status.detail || "Speech recognition failed; activate the microphone to retry."));
+      }
+    });
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
   }
 
@@ -133,13 +157,15 @@ export class VanessaVoiceSession {
     if (this.isAsrConnected) return;
     if (this.asrConnectPromise) return this.asrConnectPromise;
 
-    this.asrConnectPromise = Promise.resolve(this.asr.connect({
+    this.asrConnectPromise = Promise.resolve().then(() => this.asr.connect({
       onPartial: (result) => {
         this.partialTranscript = result.text;
         this.handlers.onPartialTranscript?.(result.text);
       },
       onFinal: async (result) => {
-        await this.handleFinalUtterance(result.text, result.language, result.turnId);
+        // Endpoint finalization may arrive after the capture window expires.
+        // Authorization belongs to the activated turn, not provider latency.
+        if (this.captureAuthorized) await this.handleFinalUtterance(result.text, result.language, result.turnId, true);
       },
     })).then(() => {
       this.isAsrConnected = true;
@@ -151,16 +177,24 @@ export class VanessaVoiceSession {
   }
 
   async activateSession(durationMs = 25000): Promise<void> {
+    if (this.isProcessing || this.isSpeaking) this.cancelCurrentTurn();
+    const generation = this.sessionGeneration;
+    this.speechGate.reset();
+    this.captureAuthorized = true;
     this.wakeWord.touchActiveSession(durationMs);
     try {
       await this.ensureAsrConnected();
+      if (generation !== this.sessionGeneration) return;
+      await this.asr.activateStream?.(durationMs);
     } catch (err) {
+      if (generation !== this.sessionGeneration) return;
+      this.captureAuthorized = false;
       this.wakeWord.resetSession();
       this.asr.deactivateStream?.();
       this.setState("idle");
       throw err;
     }
-    await this.asr.activateStream?.(durationMs);
+    if (generation !== this.sessionGeneration) return;
     this.setState("listening");
     this.turnDetector.reset();
     console.log(`[VanessaVoiceSession] Session explicitly activated for ${durationMs}ms`);
@@ -183,7 +217,7 @@ export class VanessaVoiceSession {
 
     // 3. Stream audio chunk to ASR
     if (this.wakeWord.isSessionActive()) {
-      this.asr.sendAudioChunk(chunk.pcm);
+      for (const pcm of this.speechGate.process(chunk.pcm, vadRes.isSpeech)) this.asr.sendAudioChunk(pcm);
     }
 
     // 4. Turn detection: silence threshold + transcript completion
@@ -240,6 +274,7 @@ export class VanessaVoiceSession {
       return;
     }
     const command = wakeCheck.cleanedText;
+    this.captureAuthorized = false;
     // A committed transcript ends the capture window. Close provider streaming
     // before planning/execution so command latency does not extend ASR billing.
     this.wakeWord.resetSession();
@@ -251,7 +286,9 @@ export class VanessaVoiceSession {
         this.setState("responding");
         const greeting = "Hey boss, how are you? How can I help you?";
         this.handlers.onHudUpdate?.({ state: "responding", transcript: greeting });
-        await this.speak(greeting);
+        try { await this.speak(greeting); }
+        catch { if (generation === this.sessionGeneration) this.handlers.onTtsUnavailable?.("Speech generation failed; activate the microphone to retry."); }
+        if (generation !== this.sessionGeneration) return;
         this.setState("idle");
         this.handlers.onHudUpdate?.({ state: "idle", transcript: "" });
       }
@@ -270,6 +307,9 @@ export class VanessaVoiceSession {
       ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
       : `voice-${randomUUID()}`;
     const idempotencyKey = `voice:${requestId}`;
+    const controller = new AbortController();
+    this.requestController = controller;
+    this.activeRequestId = requestId;
     this.handlers.onFinalTranscript?.(command, requestId);
 
     let responseText: string;
@@ -282,14 +322,16 @@ export class VanessaVoiceSession {
         // dispatch remain owned by the orchestrator.
         const submitStarted = Date.now();
         console.log(`[Voice] submitting request=${requestId} historyTurns=${this.conversationContext.length}`);
-        const execution = await orchestratorClient.executeCommand({
+        const execution = await this.client.executeCommand({
           command,
           requestId,
           idempotencyKey,
           source: "voice",
           language,
           conversationContext: this.conversationContext,
-        });
+        }, controller.signal);
+
+        if (generation !== this.sessionGeneration) return;
 
         console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
@@ -300,14 +342,15 @@ export class VanessaVoiceSession {
         });
         responseText = execution.spokenSummary;
       } catch (err: any) {
-        console.error("[VanessaVoiceSession] Execution error:", err.message);
-        responseText = "I couldn't reach the task coordinator. Your request was not submitted; please try again.";
+        if (generation !== this.sessionGeneration) return;
+        console.error("[VanessaVoiceSession] Execution error:", safeProviderDetail(err.message));
+        responseText = "I couldn't confirm the task result. Check the task timeline before retrying; the request may already be running.";
         this.setState("responding");
         this.handlers.onHudUpdate?.({ state: "responding", transcript: responseText });
       }
 
       if (responseText) {
-        if (!responseText.startsWith("I couldn't reach the task coordinator.")) {
+        if (!responseText.startsWith("I couldn't confirm the task result.")) {
           this.conversationContext.push({ role: "assistant", content: responseText });
           this.conversationContext = this.conversationContext.slice(-8);
           this.asr.setConversationContext?.(this.conversationContext);
@@ -317,11 +360,13 @@ export class VanessaVoiceSession {
           await this.speak(responseText);
           console.log(`[Voice] TTS complete request=${requestId}`);
         } catch (err: any) {
-          console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
-        this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");
+          console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", safeProviderDetail(err.message));
+          if (generation === this.sessionGeneration) this.handlers.onTtsUnavailable?.(safeProviderDetail(err.message || "Voice speech generation is unavailable."));
         }
       }
     } finally {
+      if (generation !== this.sessionGeneration) return;
+      this.requestController = undefined;
       this.isProcessing = false;
       this.turnDetector.reset();
       if (generation === this.sessionGeneration) {
@@ -361,12 +406,9 @@ export class VanessaVoiceSession {
    * Barge-In interrupt: immediately cancels active speech and downstream responses
    */
   interrupt(): void {
-    this.sessionGeneration += 1;
-    this.isSpeaking = false;
-    this.tts.abort();
+    this.cancelCurrentTurn();
     this.bargeIn.reset();
     this.setState("interrupted");
-    this.handlers.onStateChange?.("interrupted");
 
     // Local speech onset is an explicit conversational interruption. Re-open
     // ASR immediately; old response cleanup is generation-guarded above.
@@ -380,15 +422,32 @@ export class VanessaVoiceSession {
   }
 
   stop(): void {
-    this.sessionGeneration += 1;
-    this.isSpeaking = false;
-    this.tts.abort();
+    this.cancelCurrentTurn();
     this.asr.close();
     this.isAsrConnected = false;
+    this.asrConnectPromise = undefined;
     this.wakeWord.resetSession();
     this.turnDetector.reset();
     this.bargeIn.reset();
     this.setState("idle");
+  }
+
+  private cancelCurrentTurn(): void {
+    this.sessionGeneration++;
+    this.requestController?.abort();
+    this.requestController = undefined;
+    const requestId = this.activeRequestId;
+    this.activeRequestId = undefined;
+    if (requestId) void this.client.cancelRequest(requestId).catch(() => {
+      this.handlers.onError?.("Cancellation could not be confirmed. Check the task timeline; already-started actions may continue.");
+    });
+    this.isProcessing = false;
+    this.isSpeaking = false;
+    this.queuedUtterances = [];
+    this.partialTranscript = "";
+    this.tts.abort();
+    this.speechGate.reset();
+    this.captureAuthorized = false;
   }
 
   getState(): SessionState {
@@ -401,10 +460,12 @@ export class VanessaVoiceSession {
   }
 
   private async resumeSessionAfterInterruption(generation: number): Promise<boolean> {
+    this.captureAuthorized = true;
     this.wakeWord.touchActiveSession(25000);
     await this.ensureAsrConnected();
     if (generation !== this.sessionGeneration) return false;
     await this.asr.activateStream?.(25000);
+    if (generation !== this.sessionGeneration) return false;
     this.setState("listening");
     this.turnDetector.reset();
     return true;

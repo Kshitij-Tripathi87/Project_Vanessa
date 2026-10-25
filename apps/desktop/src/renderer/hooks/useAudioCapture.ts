@@ -118,6 +118,7 @@ export function useAudioCapture() {
         } else {
           audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
         }
+        if (playbackGeneration !== playbackGenerationRef.current) return;
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
         activeSourceNodeRef.current = source;
@@ -136,7 +137,8 @@ export function useAudioCapture() {
         source.start(0);
         return;
       } catch (err) {
-        console.warn("[useAudioCapture] AudioBuffer decode/play error, fallback to SpeechSynthesis:", err);
+        if (playbackGeneration !== playbackGenerationRef.current) return;
+        setMicError("Speech audio could not be decoded or played. The response remains available as text.");
       }
     }
 
@@ -203,6 +205,7 @@ export function useAudioCapture() {
 
   const activateConnectedSocket = useCallback((socket: WebSocket) => {
     if (pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
+      bargeResumePendingRef.current = true;
       socket.send(JSON.stringify({ type: "activate" }));
       activatedSocketRef.current = socket;
     }
@@ -256,7 +259,9 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "state_change") {
-            setVoiceState(msg.state);
+            // Synthesis can finish before local playback; do not mark the UI
+            // idle or disable barge-in while the audio queue is still playing.
+            if (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0)) setVoiceState(msg.state);
             if (msg.state === "listening" && bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
               for (const frame of pendingBargeAudioRef.current) ws.send(frame);
               pendingBargeAudioRef.current = [];
@@ -298,6 +303,7 @@ export function useAudioCapture() {
 
           // Low-latency streaming TTS sentence chunk
           if (msg.type === "tts_chunk") {
+            if (pttActiveRef.current || bargeResumePendingRef.current) return;
             setVoiceState("speaking");
             audioQueueRef.current.push({
               text: msg.text,
@@ -344,8 +350,10 @@ export function useAudioCapture() {
 
     ws.onclose = () => {
       if (wsRef.current === ws) {
+        stopCaptureRef.current?.();
+        setMicError("Voice connection closed. Reconnecting; press push-to-talk to start a new turn.");
         activatedSocketRef.current = null;
-        setTimeout(connectVoiceWs, 3000);
+        setTimeout(() => { if (wsRef.current === ws) connectVoiceWs(); }, 3000);
       }
     };
   }, [activateConnectedSocket, setVoiceState, setLastResponse, setActivePlan, playNextInQueue]);
@@ -417,7 +425,12 @@ export function useAudioCapture() {
         // Keep a short local-only lead-in during playback so barge-in does not
         // clip the user's first word. It is sent only after ASR resumes.
         if (pttActiveRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(audioFrame);
+          if (bargeResumePendingRef.current) {
+            pendingBargeAudioRef.current.push(audioFrame);
+            if (pendingBargeAudioRef.current.length > 80) pendingBargeAudioRef.current.shift();
+          } else {
+            wsRef.current.send(audioFrame);
+          }
           preRollRef.current = [];
         } else if (voiceStateRef.current === "speaking") {
           preRollRef.current.push(audioFrame);
@@ -536,7 +549,9 @@ export function useAudioCapture() {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       audioContextRef.current?.close().catch(() => {});
       if (wsRef.current) {
-        wsRef.current.close();
+        const ws = wsRef.current;
+        wsRef.current = null;
+        ws.close();
       }
     };
   }, [connectVoiceWs]);

@@ -134,3 +134,131 @@ test("Sarvam retries transient connection loss with bounded backoff", { timeout:
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("Sarvam ignores malformed audio/events and duplicate finals after deactivation", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let partials = 0;
+  let finals = 0;
+  server.on("connection", (ws) => {
+    ws.send(JSON.stringify({ event: "session.begin" }));
+    ws.on("message", raw => {
+      const msg = JSON.parse(raw.toString());
+      if (msg.event === "audio_input") {
+        ws.send("not-json");
+        ws.send(JSON.stringify(null));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: 42 }));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: "He", language: { value: "en-IN" } }));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: "Hello", language: "en-IN" }));
+      }
+      if (msg.event === "speech_end") {
+        const final = JSON.stringify({ event: "transcript.final", text: "Hello", language: "en-IN" });
+        ws.send(final);
+        setTimeout(() => { if (ws.readyState === ws.OPEN) ws.send(final); }, 10);
+      }
+    });
+  });
+  const adapter = new SarvamAsrAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${address.port}` });
+  adapter.connect({
+    onPartial: result => { partials++; assert.equal(result.language, "en-IN"); },
+    onFinal: result => { finals++; assert.equal(result.text, "Hello"); },
+  });
+  try {
+    await adapter.activateStream(1000);
+    assert.doesNotThrow(() => {
+      adapter.sendAudioChunk(null as unknown as Int16Array);
+      adapter.sendAudioChunk(new Int8Array([1, 2]) as unknown as Int16Array);
+      adapter.sendAudioChunk(new Int16Array());
+    });
+    adapter.sendAudioChunk(new Int16Array([1, -1]));
+    adapter.finalizeTurn();
+    const deadline = Date.now() + 1000;
+    while (finals < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(partials, 1);
+    assert.equal(finals, 1);
+    assert.equal(adapter.getProviderStatus().state, "idle");
+  } finally {
+    adapter.close();
+    for (const ws of server.clients) ws.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("Sarvam readiness and finalization timeouts are bounded and cancellable", { timeout: 5000 }, async () => {
+  const readinessServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(readinessServer, "listening");
+  const readinessAddress = readinessServer.address(); assert(readinessAddress && typeof readinessAddress !== "string");
+  const readinessAdapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${readinessAddress.port}`,
+    maxReconnectAttempts: 0,
+    connectionTimeoutMs: 25,
+  });
+  readinessAdapter.connect({ onPartial: () => {}, onFinal: () => assert.fail("No transcript on timeout") });
+  try {
+    await assert.rejects(readinessAdapter.activateStream(), /session readiness timed out/);
+    assert.equal(readinessAdapter.getProviderStatus().state, "error");
+  } finally {
+    readinessAdapter.close();
+    for (const ws of readinessServer.clients) ws.terminate();
+    await new Promise<void>(resolve => readinessServer.close(() => resolve()));
+  }
+
+  const finalizationServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(finalizationServer, "listening");
+  const finalizationAddress = finalizationServer.address(); assert(finalizationAddress && typeof finalizationAddress !== "string");
+  finalizationServer.on("connection", ws => ws.send(JSON.stringify({ event: "session.begin" })));
+  const finalizationAdapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${finalizationAddress.port}`,
+    finalizationTimeoutMs: 25,
+  });
+  finalizationAdapter.connect({ onPartial: () => {}, onFinal: () => assert.fail("No transcript on timeout") });
+  try {
+    await finalizationAdapter.activateStream(1000);
+    finalizationAdapter.finalizeTurn();
+    const deadline = Date.now() + 1000;
+    while (finalizationAdapter.getProviderStatus().state !== "error" && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(finalizationAdapter.getProviderStatus().state, "error");
+    assert.match(finalizationAdapter.getProviderStatus().detail ?? "", /within 1 seconds/);
+  } finally {
+    finalizationAdapter.close();
+    for (const ws of finalizationServer.clients) ws.terminate();
+    await new Promise<void>(resolve => finalizationServer.close(() => resolve()));
+  }
+});
+
+test("Sarvam cancellation prevents a queued reconnect from reopening the session", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let connections = 0;
+  server.on("connection", ws => {
+    connections++;
+    ws.close();
+  });
+  const adapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${address.port}`,
+    maxReconnectAttempts: 1,
+    reconnectBaseDelayMs: 50,
+  });
+  adapter.connect({ onPartial: () => {}, onFinal: () => {} });
+  const activation = adapter.activateStream();
+  try {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    adapter.close();
+    await assert.rejects(activation, /cancelled/);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(connections, 1);
+    assert.equal(adapter.getProviderStatus().state, "idle");
+  } finally {
+    adapter.close();
+    for (const ws of server.clients) ws.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

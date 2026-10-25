@@ -28,7 +28,7 @@ export class MemoryPalace {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    this.dbPath = customPath || path.join(dataDir, "vanessa_memory_palace.db");
+    this.dbPath = customPath || process.env.VANESSA_MEMORY_DB || path.join(dataDir, "vanessa_memory_palace.db");
     this.db = new DatabaseSync(this.dbPath);
 
     this.initSchema();
@@ -38,6 +38,7 @@ export class MemoryPalace {
     this.pruneTimer = setInterval(() => {
       this.pruneExpired();
     }, 6 * 60 * 60 * 1000);
+    this.pruneTimer.unref();
   }
 
   private initSchema(): void {

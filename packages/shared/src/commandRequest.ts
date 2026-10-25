@@ -43,12 +43,13 @@ export function createCommandRequest(input: CommandRequestInput, now = Date.now(
 }
 
 /** Shared by the voice client, native text bridge, and browser text preview. */
-export async function submitCommandRequest(baseUrl: string, input: CommandRequestInput): Promise<ExecuteCommandResult> {
+export async function submitCommandRequest(baseUrl: string, input: CommandRequestInput, signal?: AbortSignal): Promise<ExecuteCommandResult> {
   const body = createCommandRequest(input);
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
   });
   if (!res.ok) throw new Error(`Orchestrator error HTTP ${res.status}`);
   const result = await res.json() as ExecuteCommandResult;

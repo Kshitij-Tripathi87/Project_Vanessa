@@ -8,6 +8,13 @@ const { ensureService } = require('./launch-vanessa.cjs');
 const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
+test('full Sarvam stack needs no Gemini or Fish credentials and rejects placeholders', () => {
+  const env = { PLANNER_PROVIDER: 'sarvam', VOICE_ASR_PROVIDER: 'sarvam', VOICE_TTS_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test-only-key' };
+  assert.deepEqual(config(env, ['--codex-test']).missing, []);
+  assert(config({ ...env, SARVAM_TTS_MODEL: 'YOUR_SARVAM_TTS_MODEL' }).missing.includes('SARVAM_TTS_MODEL'));
+  assert.throws(() => config({ ...env, SARVAM_API_KEY: 'YOUR_SARVAM_API_KEY' }, ['--codex-test']), /SARVAM_API_KEY/);
+});
+
 test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
   const env = { GEMINI_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
   assert.deepEqual(config(env, ['--codex-test']).missing, []);

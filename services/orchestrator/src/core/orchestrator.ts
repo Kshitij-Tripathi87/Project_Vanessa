@@ -21,6 +21,30 @@ import { memoryPalace } from "../memory/memoryPalace.js";
 import { narrator } from "./narrator.js";
 
 export class VanessaOrchestrator {
+  private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
+
+  cancelRequest(requestId: string): void {
+    let request = this.requests.get(requestId);
+    if (!request) {
+      // A cancellation can overtake the submit HTTP request. Keep a bounded
+      // tombstone so that late delivery cannot start the cancelled work.
+      if (this.requests.size >= 1000) throw new Error("Cancellation registry is full; inspect task state.");
+      request = { controller: new AbortController(), updatedAt: Date.now() };
+      this.requests.set(requestId, request);
+    }
+    request.controller.abort();
+    for (const plannedTask of request.plan?.tasks || []) {
+      // runPlan owns cloned task records while execution is in flight.
+      const task = activeTasks.get(plannedTask.id) || plannedTask;
+      if (!["pending", "running", "awaiting_approval"].includes(task.status)) continue;
+      task.status = "cancelled";
+      task.lifecycleState = "cancelled";
+      task.error = "Request cancelled. Already-started external actions may still finish; inspect their state before retrying.";
+      task.completedAt = Date.now();
+      memoryPalace.recordTaskCheckpoint(task, request.plan?.id);
+      eventBus.emitEvent("task:update", task);
+    }
+  }
   constructor() {
     // Reconcile interrupted tasks from prior crashes on startup
     this.reconcileTasks();
@@ -45,6 +69,22 @@ export class VanessaOrchestrator {
   }
 
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
+    payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
+    // Retain recent completed/approval requests for scoped cancellation, bounded
+    // by the command envelope lifetime. Never cancel another desktop request.
+    for (const [id, entry] of this.requests) {
+      if (entry.updatedAt < Date.now() - 10 * 60_000) this.requests.delete(id);
+    }
+    const requestId = payload.requestId!;
+    const existing = this.requests.get(requestId);
+    if (existing) return this.executeAcceptedCommand(payload, existing);
+    if (this.requests.size >= 1000) throw new Error("Too many recent requests; try again later.");
+    const request = { controller: new AbortController(), updatedAt: Date.now() };
+    this.requests.set(requestId, request);
+    return this.executeAcceptedCommand(payload, request);
+  }
+
+  private async executeAcceptedCommand(payload: ExecuteCommandPayload, request: { controller: AbortController; plan?: Plan; updatedAt: number }): Promise<ExecuteCommandResult> {
     // Also normalize direct API/legacy callers, not just the two desktop clients.
     payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
@@ -103,14 +143,14 @@ export class VanessaOrchestrator {
     let plan: Plan;
     try {
       console.log(`[Planner] start request=${requestId}`);
-      plan = await planner.createPlan(command, conversationContext, payload);
+      plan = await planner.createPlan(command, conversationContext, payload, request.controller.signal);
       console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
     } catch {
-      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check Gemini status above or plan validation.`);
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check provider status or plan validation.`);
       const result: ExecuteCommandResult = {
         status: "failed",
         requestId,
-        spokenSummary: "I couldn't create a plan with Gemini. No tasks were started. Check the Gemini configuration or try again.",
+        spokenSummary: request.controller.signal.aborted ? "Request cancelled before execution. No tasks were started." : "I couldn't create a valid plan. No tasks were started. Check the selected planner provider or try again.",
         verification: {
           verified: false,
           postconditions: ["Planning failed before task execution."],
@@ -123,20 +163,22 @@ export class VanessaOrchestrator {
         agent: "orchestrator",
         action: "planning.failed",
         status: "error",
-        details: "Gemini planning failed; no task execution or keyword fallback was attempted.",
+        details: "Planning failed or was cancelled; no task execution or keyword fallback was attempted.",
       });
       if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
       return result;
     }
 
     // 2. Execute plan through parallel DAG task runner
+    request.plan = plan;
+    if (request.controller.signal.aborted) this.cancelRequest(requestId!);
     const tasks = await runPlan(plan);
     plan.tasks = tasks;
 
     // 3. Inspect results to build spoken response
     const pendingApproval = tasks.filter((t) => t.status === "awaiting_approval");
     const failedTasks = tasks.filter((t) => t.status === "failed");
-    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired");
+    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired" || t.status === "cancelled");
     const successTasks = tasks.filter((t) => t.status === "success");
 
     let status: ExecuteCommandResult["status"] = "success";

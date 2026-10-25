@@ -3,6 +3,8 @@ import WebSocket from "ws";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
+const { launcherConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./launcher-config.cjs");
 
 // Load .env
 let envDir = process.cwd();
@@ -123,7 +125,11 @@ async function main() {
     },
   ];
 
-  for (const s of services) {
+  const asr = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
+  const localNeeded = ["voice", "whisper"].includes(asr) || (asr === "fish" && process.env.VOICE_ALLOW_FALLBACK === "true");
+  const selectedServices = services.filter(s => (s.name !== "Local Whisper ASR" || localNeeded)
+    && (s.name !== "Mobile Relay WSS" || process.env.VANESSA_REQUIRE_RELAY === "true"));
+  for (const s of selectedServices) {
     if (s.protocol === "http") {
       const res = await checkHttp(s.url);
       s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
@@ -149,7 +155,7 @@ async function main() {
   );
   console.log("--------------------------------------------------------------------------------");
 
-  for (const s of services) {
+  for (const s of selectedServices) {
     const statusIcon = s.status === "ONLINE" ? "🟢" : "🔴";
     console.log(
       `${statusIcon} ${s.name.padEnd(21)}` +
@@ -172,14 +178,19 @@ async function main() {
   console.log(`- Configured ASR Provider: ${asrProvider}`);
   console.log(`- Configured TTS Provider: ${ttsProvider}`);
   const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
-  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish ASR unavailable)"}`);
+  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : "Not configured (only required when selected)"}`);
   console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
   console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
   console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
   console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
 
-  const onlineCount = services.filter((s) => s.status === "ONLINE").length;
-  console.log(`\nReadiness: ${onlineCount}/${services.length} services online.`);
+  const config = launcherConfig(process.env, [], process.cwd(), fs.existsSync);
+  console.log(`- Planner: ${process.env.SARVAM_CHAT_PROVIDER || process.env.PLANNER_PROVIDER || "gemini"}`);
+  console.log(`- Selected-provider configuration: ${config.missing.length ? "INCOMPLETE" : "configured (not live-provider verification)"}`);
+  for (const missing of config.missing) console.log(`  Missing: ${missing}`);
+  const onlineCount = selectedServices.filter((s) => s.status === "ONLINE").length;
+  console.log(`\nReadiness: ${onlineCount}/${selectedServices.length} required services online.`);
+  if (config.missing.length || onlineCount !== selectedServices.length) process.exitCode = 1;
 }
 
-main().catch(console.error);
+main().catch(() => { console.error("Readiness configuration invalid; check selected provider settings."); process.exitCode = 1; });

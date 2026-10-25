@@ -6,7 +6,7 @@ import { SarvamChatClient } from "./sarvamChat.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
-dotenv.config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)) });
+if (process.env.VANESSA_SKIP_DOTENV !== "true") dotenv.config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)) });
 
 export interface PlannerProvider {
   name: string;
@@ -26,9 +26,10 @@ export class ModelRouter {
     return this.sarvam.getUsageSnapshot();
   }
 
-  async callLLM(prompt: string, systemPrompt: string): Promise<string | null> {
+  async callLLM(prompt: string, systemPrompt: string, signal?: AbortSignal): Promise<string | null> {
     if (this.activeProvider === "sarvam") {
       const result = await this.sarvam.complete({
+        signal,
         requestId: `planner-${Date.now()}`,
         messages: [
           { role: "system", content: systemPrompt },

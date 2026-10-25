@@ -15,12 +15,22 @@ export class OrchestratorClient {
     requestId?: string;
     idempotencyKey?: string;
     conversationContext?: Array<{ role: "user" | "assistant"; content: string }>;
-  }): Promise<OrchestratorCommandResult> {
+  }, signal?: AbortSignal): Promise<OrchestratorCommandResult> {
     return submitCommandRequest(this.baseUrl, {
       ...input,
       source: input.source || "voice",
       originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
+    }, signal);
+  }
+
+  async cancelRequest(requestId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/cancel/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId }),
+      signal: AbortSignal.timeout(3000),
     });
+    if (!response.ok) throw new Error("Could not confirm request cancellation. Check the task timeline.");
   }
 
   /**

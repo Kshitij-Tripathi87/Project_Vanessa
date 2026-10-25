@@ -46,6 +46,11 @@ export interface UsageBudgetOptions {
   maxEvents?: number;
 }
 
+function nonnegative(value: number, name: string): number {
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be finite and nonnegative.`);
+  return value;
+}
+
 /**
  * Small in-process ledger used before a provider request starts.
  *
@@ -64,8 +69,8 @@ export class UsageBudget {
   private readonly events: UsageEvent[] = [];
 
   constructor(options: UsageBudgetOptions = {}) {
-    this.capInr = Math.max(0, Number(options.capInr || 0));
-    this.perUserCapInr = Math.max(0, Number(options.perUserCapInr || 0));
+    this.capInr = nonnegative(options.capInr ?? 0, "capInr");
+    this.perUserCapInr = nonnegative(options.perUserCapInr ?? 0, "perUserCapInr");
     this.maxEvents = Math.max(10, Math.floor(options.maxEvents || 500));
   }
 
@@ -77,7 +82,10 @@ export class UsageBudget {
     estimatedCostInr: number;
     metadata?: Record<string, unknown>;
   }): UsageReservation {
-    const estimatedCostInr = Math.max(0, Number(input.estimatedCostInr || 0));
+    const estimatedCostInr = nonnegative(input.estimatedCostInr, "estimatedCostInr");
+    if ((this.capInr > 0 || this.perUserCapInr > 0) && estimatedCostInr === 0) {
+      throw new Error("A capped budget requires a positive configured rate/estimate.");
+    }
     const userId = input.userId || "local";
     const userSpent = this.userSpent.get(userId) || 0;
     const userReserved = this.userReserved.get(userId) || 0;
@@ -126,14 +134,15 @@ export class UsageBudget {
   ): UsageEvent {
     const current = this.reservations.get(reservation.id);
     if (!current) throw new Error(`Unknown usage reservation ${reservation.id}.`);
-    const actualCostInr = Math.max(0, Number(input.actualCostInr ?? current.reservedCostInr));
+    const actualCostInr = nonnegative(input.actualCostInr ?? current.reservedCostInr, "actualCostInr");
+    const quantity = nonnegative(input.quantity, "quantity");
     this.reservations.delete(reservation.id);
     this.reservedInr = Math.max(0, this.reservedInr - current.reservedCostInr);
     this.adjustUserReserved(current.userId, -current.reservedCostInr);
     this.spentInr += actualCostInr;
     this.userSpent.set(current.userId, (this.userSpent.get(current.userId) || 0) + actualCostInr);
     return this.updateEvent(reservation.id, {
-      quantity: Math.max(0, Number(input.quantity || 0)),
+      quantity,
       actualCostInr,
       status: "settled",
       settledAt: Date.now(),
@@ -201,14 +210,23 @@ export class UsageBudget {
 
   private pushEvent(event: UsageEvent): void {
     this.events.push(event);
-    while (this.events.length > this.maxEvents) this.events.shift();
+    this.pruneEvents();
+  }
+
+  private pruneEvents(): void {
+    while (this.events.length > this.maxEvents) {
+      const index = this.events.findIndex(event => event.status !== "reserved");
+      if (index < 0) break; // In-flight reservations must remain reconcilable.
+      this.events.splice(index, 1);
+    }
   }
 
   private updateEvent(id: string, patch: Partial<UsageEvent>): UsageEvent {
     const index = this.events.findIndex((event) => event.id === id);
     if (index === -1) throw new Error(`Usage event ${id} was not recorded.`);
-    const next = { ...this.events[index], ...patch };
+    const next = { ...this.events[index], ...patch, metadata: { ...this.events[index].metadata, ...patch.metadata } };
     this.events[index] = next;
+    this.pruneEvents();
     return next;
   }
 }

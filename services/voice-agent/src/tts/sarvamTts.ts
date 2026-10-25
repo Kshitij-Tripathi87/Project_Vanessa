@@ -104,9 +104,20 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
     const controller = new AbortController();
     this.activeAbortController = controller;
     const abortFromCaller = () => controller.abort();
+    if (signal?.aborted) {
+      this.activeAbortController = null;
+      return;
+    }
     signal?.addEventListener("abort", abortFromCaller, { once: true });
     const requestId = `sarvam-tts-${randomUUID()}`;
-    const reservation = this.reserveBudget(requestId, text.length);
+    let reservation: UsageReservation | undefined;
+    try {
+      reservation = this.reserveBudget(requestId, text.length);
+    } catch (error) {
+      signal?.removeEventListener("abort", abortFromCaller);
+      if (this.activeAbortController === controller) this.activeAbortController = null;
+      throw error;
+    }
 
     if (!text.trim()) {
       if (reservation) this.budget.release(reservation, { reason: "empty_text" });
@@ -126,7 +137,8 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
 
     this.setStatus({ requested: "Sarvam", active: "Sarvam", state: "connecting" });
     let receivedAudio = false;
-    let characterCount = text.length;
+    const characterCount = text.length;
+    let requestStarted = false;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -141,43 +153,53 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
         let timeout: NodeJS.Timeout | undefined;
         let settled = false;
         let chunkIndex = 0;
+        const isCurrent = () => this.activeSocket === socket
+          && this.activeAbortController === controller
+          && !controller.signal.aborted
+          && !settled;
 
         const cleanup = () => {
           if (timeout) clearTimeout(timeout);
           controller.signal.removeEventListener("abort", onAbort);
           if (this.activeSocket === socket) this.activeSocket = null;
-          if (this.activeAbortController === controller) this.activeAbortController = null;
           signal?.removeEventListener("abort", abortFromCaller);
         };
         const finish = (error?: Error) => {
           if (settled) return;
           settled = true;
+          if (error && socket.readyState < WebSocket.CLOSING) socket.terminate();
           cleanup();
           if (error) reject(error);
           else resolve();
         };
         const onAbort = () => {
+          if (this.activeAbortController === controller) {
+            this.setStatus({ requested: "Sarvam", active: "Sarvam", state: "idle" });
+          }
           if (socket.readyState < WebSocket.CLOSING) socket.terminate();
           finish();
         };
         const emitAudio = (audio: string) => {
-          if (!audio) return;
+          if (!isCurrent()) return;
           receivedAudio = true;
-          onAudioChunk({
-            chunkIndex: chunkIndex++,
-            text: "",
-            isFinal: false,
-            audioBase64: audio,
-            format: this.codec,
-            sampleRate: this.sampleRate,
-          });
+          // Compressed WS fragments are not necessarily independently decodable.
+          // Assemble a bounded complete utterance before browser decodeAudioData.
+          const bytes = Buffer.from(audio, "base64");
+          audioBytes += bytes.length;
+          if (audioBytes > 16 * 1024 * 1024) return finish(new Error("Sarvam TTS audio exceeded the utterance size limit."));
+          audioParts.push(bytes);
         };
+        const audioParts: Buffer[] = [];
+        let audioBytes = 0;
 
-        diagnoseUpgradeRejection(socket, "TTS", this.apiKey, (error) => finish(error), "Sarvam");
+        diagnoseUpgradeRejection(socket, "TTS", this.apiKey, (error) => {
+          if (isCurrent()) finish(error);
+        }, "Sarvam");
         timeout = setTimeout(() => finish(new Error("Sarvam TTS stream timed out.")), this.timeoutMs);
         controller.signal.addEventListener("abort", onAbort, { once: true });
 
         socket.on("open", () => {
+          if (!isCurrent()) return;
           try {
             this.setStatus({ requested: "Sarvam", active: "Sarvam", state: "ready" });
             socket.send(JSON.stringify({
@@ -187,12 +209,16 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
                 language_code: this.language,
                 output_audio_codec: this.codec,
                 output_audio_bitrate: this.bitrate,
-                output_audio_sample_rate: this.sampleRate,
+                speech_sample_rate: this.sampleRate,
                 min_buffer_size: this.minBufferSize,
                 max_chunk_length: this.maxChunkLength,
               },
             }));
-            socket.send(JSON.stringify({ type: "text", data: { text } }));
+            requestStarted = true;
+            const characters = Array.from(text);
+            for (let offset = 0; offset < characters.length; offset += 2500) {
+              socket.send(JSON.stringify({ type: "text", data: { text: characters.slice(offset, offset + 2500).join("") } }));
+            }
             socket.send(JSON.stringify({ type: "flush" }));
           } catch (error: any) {
             finish(new Error(`Could not start Sarvam TTS: ${error.message}`));
@@ -200,6 +226,7 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
         });
 
         socket.on("message", (raw: WebSocket.RawData) => {
+          if (!isCurrent()) return;
           try {
             const message = JSON.parse(raw.toString()) as Record<string, any>;
             const type = typeof message.type === "string" ? message.type : message.event;
@@ -212,7 +239,11 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
                   ? message.audio
                   : undefined;
 
-            if (type === "audio" && audio) {
+            if (type === "audio") {
+              if (!audio || !this.isValidAudioBase64(audio)) {
+                finish(new Error("Sarvam TTS returned malformed or empty audio."));
+                return;
+              }
               emitAudio(audio);
               return;
             }
@@ -226,9 +257,9 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
               return;
             }
 
-            const eventType = message.event_type || data?.event_type || data?.type;
+            const eventType = message.event_type || data?.event_type;
             if (
-              ["event", "completion", "completed", "done"].includes(String(type).toLowerCase())
+              String(type).toLowerCase() === "event"
               && ["final", "completion", "completed", "done", "flush_done", "synthesis_complete"].includes(String(eventType || type).toLowerCase())
             ) {
               if (!receivedAudio) {
@@ -239,11 +270,13 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
                 chunkIndex: chunkIndex++,
                 text,
                 isFinal: true,
+                audioBase64: Buffer.concat(audioParts).toString("base64"),
                 format: this.codec,
                 sampleRate: this.sampleRate,
               });
-              finish();
+              if (!isCurrent()) return;
               if (socket.readyState < WebSocket.CLOSING) socket.close(1000, "synthesis complete");
+              finish();
             }
           } catch (error: any) {
             finish(new Error(`Invalid Sarvam TTS response: ${error.message}`));
@@ -251,28 +284,33 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
         });
 
         socket.on("error", (error) => {
-          finish(new Error(`Sarvam TTS WebSocket error: ${providerTransportError(error, [this.apiKey])}`));
+          if (isCurrent()) finish(new Error(`Sarvam TTS WebSocket error: ${providerTransportError(error, [this.apiKey])}`));
         });
         socket.on("close", (code, reason) => {
+          if (!isCurrent()) return;
           if (controller.signal.aborted) return finish();
-          if (!settled) finish(new Error(`Sarvam TTS closed before completion (${code}: ${safeProviderDetail(reason.toString(), [this.apiKey])}).`));
+          finish(new Error(`Sarvam TTS closed before completion (${code}: ${safeProviderDetail(reason.toString(), [this.apiKey])}).`));
         });
       });
 
       if (controller.signal.aborted) {
-        if (reservation) this.budget.release(reservation, { requestId, reason: "aborted" });
+        this.settleOrRelease(reservation, requestId, characterCount, requestStarted, "aborted", receivedAudio);
         return;
       }
-      this.budgetSettle(reservation, characterCount, { requestId, receivedAudio });
-      this.setStatus({ requested: "Sarvam", active: "Sarvam", state: "ready" });
+      this.budgetSettle(reservation, characterCount, { requestId, receivedAudio, outcome: "completed" });
+      if (this.activeAbortController === controller) {
+        this.setStatus({ requested: "Sarvam", active: "Sarvam", state: "ready" });
+      }
     } catch (error: any) {
       if (controller.signal.aborted) {
-        if (reservation) this.budget.release(reservation, { requestId, reason: "aborted" });
+        this.settleOrRelease(reservation, requestId, characterCount, requestStarted, "aborted", receivedAudio);
         return;
       }
       const detail = safeProviderDetail(error?.message || "Sarvam TTS request failed.", [this.apiKey]);
-      if (reservation) this.budget.fail(reservation, detail, { requestId, receivedAudio });
-      this.setStatus({ requested: "Sarvam", active: "Unavailable", state: "error", detail });
+      this.failOrSettle(reservation, requestId, characterCount, requestStarted, detail, receivedAudio);
+      if (this.activeAbortController === controller) {
+        this.setStatus({ requested: "Sarvam", active: "Unavailable", state: "error", detail });
+      }
       throw new Error(detail);
     } finally {
       signal?.removeEventListener("abort", abortFromCaller);
@@ -295,6 +333,7 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
         model: this.model,
         kind: "tts_characters",
         estimatedCostInr: rate * Math.max(0, characters) / 1000,
+        metadata: { provider: "sarvam", costBasis: "estimate", providerUsageReported: false },
       });
     } catch (error: any) {
       throw new Error(error.message);
@@ -307,7 +346,59 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
     this.budget.settle(reservation, {
       quantity: characters,
       actualCostInr: rate * Math.max(0, characters) / 1000,
-      metadata,
+      metadata: { ...metadata, costBasis: "estimate", providerUsageReported: false },
     });
+  }
+
+  private settleOrRelease(
+    reservation: UsageReservation | undefined,
+    requestId: string,
+    characters: number,
+    requestStarted: boolean,
+    reason: string,
+    receivedAudio: boolean,
+  ): void {
+    if (!reservation) return;
+    if (requestStarted || receivedAudio) {
+      this.budgetSettle(reservation, characters, {
+        requestId,
+        outcome: "cancelled",
+        reason,
+        receivedAudio,
+        potentiallyBillable: true,
+      });
+    } else {
+      this.budget.release(reservation, { requestId, reason });
+    }
+  }
+
+  private failOrSettle(
+    reservation: UsageReservation | undefined,
+    requestId: string,
+    characters: number,
+    requestStarted: boolean,
+    error: string,
+    receivedAudio: boolean,
+  ): void {
+    if (!reservation) return;
+    if (requestStarted || receivedAudio) {
+      this.budgetSettle(reservation, characters, {
+        requestId,
+        outcome: "failed",
+        error,
+        receivedAudio,
+        potentiallyBillable: true,
+      });
+    } else {
+      this.budget.fail(reservation, error, { requestId, receivedAudio, potentiallyBillable: false });
+    }
+  }
+
+  private isValidAudioBase64(value: string): boolean {
+    const normalized = value.replace(/\s+/g, "");
+    if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return false;
+    const bytes = Buffer.from(normalized, "base64");
+    if (bytes.length === 0) return false;
+    return bytes.toString("base64").replace(/=+$/, "") === normalized.replace(/=+$/, "");
   }
 }

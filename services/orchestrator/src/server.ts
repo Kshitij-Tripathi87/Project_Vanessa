@@ -16,7 +16,7 @@ import { modelRouter } from "./core/router.js";
 
 // Load .env searching current and parent directories
 let envDir = process.cwd();
-for (let i = 0; i < 4; i++) {
+for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
   const p = path.join(envDir, ".env");
   if (fs.existsSync(p)) {
     dotenv.config({ path: p });
@@ -147,6 +147,15 @@ fastify.post("/api/reject", async (request, reply) => {
 fastify.post("/api/cancel", async (request, reply) => {
   orchestrator.cancelAll();
   return reply.send({ success: true, message: "Emergency kill switch engaged." });
+});
+
+fastify.post("/api/cancel/request", async (request, reply) => {
+  const body = request.body as { requestId?: unknown };
+  if (typeof body?.requestId !== "string" || !/^[a-zA-Z0-9:_-]{1,160}$/.test(body.requestId)) {
+    return reply.status(400).send({ error: "Invalid requestId" });
+  }
+  orchestrator.cancelRequest(body.requestId);
+  return { success: true, message: "Cancellation requested; already-started external actions may continue." };
 });
 
 fastify.get("/api/status", async () => {

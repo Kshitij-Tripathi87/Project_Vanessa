@@ -96,12 +96,14 @@ export class SarvamChatClient {
   }): Promise<SarvamChatResult> {
     const configurationError = this.getConfigurationError();
     if (configurationError) throw new Error(configurationError);
+    input.signal?.throwIfAborted();
 
     const requestId = input.requestId || `sarvam-chat-${Date.now()}`;
     const promptText = input.messages.map((message) => `${message.role}: ${message.content}`).join("\n");
     const inputTokensEstimate = estimateTokens(promptText);
     const outputTokensEstimate = input.maxTokens || this.maxTokens;
-    const inputReservation = this.reserve(requestId, "llm_input_tokens", inputTokensEstimate, process.env.SARVAM_CHAT_INR_PER_1K_INPUT_TOKENS);
+    if (!Number.isFinite(outputTokensEstimate) || outputTokensEstimate < 1) throw new Error("Invalid Sarvam chat token limit.");
+    let inputReservation = this.reserve(requestId, "llm_input_tokens", inputTokensEstimate, process.env.SARVAM_CHAT_INR_PER_1K_INPUT_TOKENS);
     let outputReservation: UsageReservation | undefined;
     try {
       outputReservation = this.reserve(requestId, "llm_output_tokens", outputTokensEstimate, process.env.SARVAM_CHAT_INR_PER_1K_OUTPUT_TOKENS);
@@ -144,18 +146,21 @@ export class SarvamChatClient {
       const text = parsed.text.trim();
       if (!text) throw new Error("Sarvam chat returned no usable text.");
 
-      const inputTokens = parsed.usage?.inputTokens || inputTokensEstimate;
-      const outputTokens = parsed.usage?.outputTokens || estimateTokens(text);
+      if (parsed.usage && Object.values(parsed.usage).some(value => !Number.isFinite(value) || value < 0)) throw new Error("Sarvam returned invalid usage metadata.");
+      const inputTokens = parsed.usage?.inputTokens ?? inputTokensEstimate;
+      const outputTokens = parsed.usage?.outputTokens ?? estimateTokens(text);
       if (inputReservation) this.budget.settle(inputReservation, {
         quantity: inputTokens,
         actualCostInr: this.costInr(inputTokens, process.env.SARVAM_CHAT_INR_PER_1K_INPUT_TOKENS),
-        metadata: { requestId, provider: "sarvam" },
+        metadata: { requestId, provider: "sarvam", costBasis: "estimate", providerUsageReported: Boolean(parsed.usage) },
       });
+      inputReservation = undefined;
       if (outputReservation) this.budget.settle(outputReservation, {
         quantity: outputTokens,
         actualCostInr: this.costInr(outputTokens, process.env.SARVAM_CHAT_INR_PER_1K_OUTPUT_TOKENS),
-        metadata: { requestId, provider: "sarvam" },
+        metadata: { requestId, provider: "sarvam", costBasis: "estimate", providerUsageReported: Boolean(parsed.usage) },
       });
+      outputReservation = undefined;
       return {
         text,
         usage: {
@@ -168,8 +173,10 @@ export class SarvamChatClient {
       const detail = error?.name === "AbortError"
         ? "Sarvam chat request timed out or was cancelled."
         : safeProviderDetail(error?.message || "Sarvam chat request failed.", [this.apiKey]);
-      if (inputReservation) this.budget.fail(inputReservation, detail, { requestId });
-      if (outputReservation) this.budget.fail(outputReservation, detail, { requestId });
+      // An aborted/failed HTTP stream may already be billable. Do not refund
+      // its reservation merely because the reply could not be confirmed.
+      if (inputReservation) this.budget.settle(inputReservation, { quantity: inputTokensEstimate, metadata: { requestId, costBasis: "estimate", providerUsageReported: false, outcome: "failed", potentiallyBillable: true } });
+      if (outputReservation) this.budget.settle(outputReservation, { quantity: outputTokensEstimate, metadata: { requestId, costBasis: "estimate", providerUsageReported: false, outcome: "failed", potentiallyBillable: true } });
       throw new Error(detail);
     } finally {
       clearTimeout(timeout);
@@ -204,15 +211,20 @@ export class SarvamChatClient {
     let buffer = "";
     let text = "";
     let usage: SarvamChatResult["usage"];
+    let completed = false;
 
     const consume = (line: string) => {
       const value = line.trim();
       if (!value || !value.startsWith("data:")) return;
       const payload = value.slice(5).trim();
-      if (!payload || payload === "[DONE]") return;
+      if (!payload) return;
+      if (payload === "[DONE]") { completed = true; return; }
       try {
         const event = JSON.parse(payload);
+        if (event.error) throw new Error("Sarvam returned a stream error.");
         const choice = event.choices?.[0];
+        if (choice?.finish_reason === "length") throw new Error("Sarvam response exceeded its token limit.");
+        if (choice?.finish_reason === "stop") completed = true;
         const delta = readContent(choice?.delta?.content ?? choice?.message?.content);
         if (delta) text += delta;
         const rawUsage = event.usage;
@@ -224,21 +236,23 @@ export class SarvamChatClient {
           };
         }
       } catch {
-        // Ignore malformed keepalive/comment lines; the final non-empty text is
-        // still validated by the caller.
+        throw new Error("Sarvam returned an invalid or truncated chat event.");
       }
     };
 
-    while (true) {
+    try { while (true) {
       const next = await reader.read();
       buffer += decoder.decode(next.value || new Uint8Array(), { stream: !next.done });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
       for (const line of lines) consume(line);
       if (next.done) break;
+      if (buffer.length + text.length > 1024 * 1024) throw new Error("Sarvam chat exceeded the response size limit.");
     }
     if (buffer) consume(buffer);
+    if (!completed) throw new Error("Sarvam chat stream ended before completion.");
     return { text, usage };
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
 
   private async readJsonResponse(response: Response): Promise<{ text: string; usage?: SarvamChatResult["usage"] }> {

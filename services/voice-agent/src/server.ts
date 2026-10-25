@@ -20,7 +20,7 @@ function getProviderReadiness() {
   const asrConfigured = asrProvider === "fish"
     ? fishKeyValid || asrFallbackConfigured
     : asrProvider === "elevenlabs"
-      ? Boolean(process.env.ELEVENLABS_API_KEY)
+      ? false // No realtime ASR implementation exists for this provider.
       : asrProvider === "sarvam"
         ? sarvamKeyValid && Boolean(process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime") && !/placeholder|your[_-].*model|replace[-_ ]with/i.test(process.env.SARVAM_ASR_MODEL || "")
       : Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
@@ -36,8 +36,8 @@ function getProviderReadiness() {
   const fallbackActive = (asrProvider === "fish" && !fishKeyValid && asrFallbackConfigured)
     || (ttsProvider === "fish" && !(fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) && ttsFallbackConfigured);
   return {
-    ready: asrConfigured && ttsConfigured,
-    state: !asrConfigured || !ttsConfigured ? "unavailable" : fallbackActive ? "degraded" : "ready",
+    ready: asrConfigured && ttsConfigured && validateFishConfiguration().valid,
+    state: !asrConfigured || !ttsConfigured || !validateFishConfiguration().valid ? "unavailable" : fallbackActive ? "degraded" : "ready",
     providers: {
       asr: { requested: asrProvider, configured: asrConfigured, fallbackConfigured: asrFallbackConfigured },
       tts: { requested: ttsProvider, configured: ttsConfigured, fallbackConfigured: ttsFallbackConfigured },
@@ -62,6 +62,17 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
   const sarvamAsrModel = process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime";
   const sarvamTtsModel = process.env.SARVAM_TTS_MODEL || "bulbul:v4-flash";
   const sarvamTtsSpeaker = process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads";
+
+  if (!["fish", "sarvam", "voice", "whisper"].includes(asrProvider)) errors.push("Unsupported or unimplemented ASR provider.");
+  if (!["fish", "sarvam", "elevenlabs"].includes(ttsProvider)) errors.push("Unsupported TTS provider.");
+  if (ttsProvider === "sarvam" && !["mp3", "wav"].includes(process.env.SARVAM_TTS_OUTPUT_CODEC || "mp3")) errors.push("Sarvam TTS codec must be mp3 or wav.");
+  const capped = Number(process.env.VOICE_BUDGET_CAP_INR || 0) > 0 || Number(process.env.VOICE_BUDGET_PER_USER_CAP_INR || 0) > 0;
+  for (const key of ["VOICE_BUDGET_CAP_INR", "VOICE_BUDGET_PER_USER_CAP_INR", "SARVAM_ASR_INR_PER_AUDIO_SECOND", "SARVAM_TTS_INR_PER_1K_CHARACTERS"]) {
+    const number = Number(process.env[key] || 0);
+    if (!Number.isFinite(number) || number < 0) errors.push(`${key} must be a finite nonnegative number.`);
+  }
+  if (capped && asrProvider === "sarvam" && !(Number(process.env.SARVAM_ASR_INR_PER_AUDIO_SECOND) > 0)) errors.push("A capped Sarvam ASR budget requires a positive audio rate.");
+  if (capped && ttsProvider === "sarvam" && !(Number(process.env.SARVAM_TTS_INR_PER_1K_CHARACTERS) > 0)) errors.push("A capped Sarvam TTS budget requires a positive character rate.");
 
   if (asrProvider === "fish") {
     if (!fishApiKey || !fishApiKey.startsWith("sk-fish-")) {
@@ -140,7 +151,7 @@ export async function createVoiceAgentServer() {
     configValidation.errors.forEach((e) => console.error(`  ✗ ${e}`));
     console.error("========================================================");
     if (process.env.VOICE_STRICT_CONFIG === "true") {
-      process.exit(1);
+      throw new Error("Selected voice provider configuration is invalid.");
     }
   }
   if (configValidation.warnings.length > 0) {
@@ -153,7 +164,7 @@ export async function createVoiceAgentServer() {
   await fastify.register(cors, {
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
   });
-  await fastify.register(websocket);
+  await fastify.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // Health check
   fastify.get("/health", async () => {
@@ -198,6 +209,7 @@ export async function createVoiceAgentServer() {
     }
     const session = new VanessaVoiceSession({
       handlers: {
+        onError: (message) => sendJson(socket, { type: "voice_error", message }),
         onStateChange: (state) => {
           console.log(`[Voice] state=${state}`);
           sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
@@ -266,7 +278,7 @@ export async function createVoiceAgentServer() {
               await session.activateSession(25000);
               sendJson(socket, { type: "state_change", state: "listening" });
             } catch (err: any) {
-              console.warn("[VoiceAgentServer] ASR activation failed:", err.message);
+              console.warn("[VoiceAgentServer] ASR activation failed:", safeProviderDetail(err.message));
               sendJson(socket, {
                 type: "voice_error",
                 message: `Speech recognition could not start: ${safeProviderDetail(err.message)}`,
@@ -280,12 +292,13 @@ export async function createVoiceAgentServer() {
           } else if (json.type === "barge_in" || json.type === "interrupt") {
             session.interrupt();
             sendJson(socket, { type: "barge_in_acknowledged" });
-          } else if (json.type === "transcript_final" && json.text) {
+          } else if (json.type === "transcript_final" && typeof json.text === "string" && json.text.length <= 16000) {
             await session.handleFinalUtterance(json.text, json.language || "en");
           }
         }
       } catch (err: any) {
-        console.warn("[VoiceAgentServer] Message processing error:", err.message);
+        console.warn("[VoiceAgentServer] Message processing error:", safeProviderDetail(err.message));
+        sendJson(socket, { type: "voice_error", message: "Invalid voice message. Activate the microphone to retry." });
       }
     });
 
