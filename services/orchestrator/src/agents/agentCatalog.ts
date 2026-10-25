@@ -64,9 +64,26 @@ export const AGENT_CATALOG: CatalogAgent[] = [
     actions: [
       action("wifi.restart_adapter", "Attempt Wi-Fi adapter restart; temporarily interrupts connectivity.", {}, "AgentResult with data.adapter and data.connected; reported connectivity can be optimistic.", "high", true, ["net_adapter_control"]),
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
-      action("bluetooth.enable", "Attempt to enable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
-      action("bluetooth.disable", "Attempt to disable the Bluetooth radio.", {}, "AgentResult with data.state; may report requested state after failure.", "low", true, ["windows_setting_toggle"]),
-      action("volume.set", "Attempt volume adjustment through media-key events.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "AgentResult; actual output volume is not read back.", "low", true, ["audio_volume_set"]),
+      action("brightness.list", "List active displays that expose brightness control and their observed levels.", {}, "Verified discovery snapshot with display IDs, names and supported levels.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.get", "Read the observed brightness of one display, selected by ID or friendly name.", {
+        targetId: p("string", "Previously discovered display ID."), targetName: p("string", "Unique friendly display name when no ID is available."),
+      }, "Verified read-only display observation.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.set", "Set display brightness and verify the requested value by read-back.", {
+        brightnessPercent: p("number", "Requested integer percentage from 0 to 100.", true),
+        targetId: p("string", "Previously discovered display ID."), targetName: p("string", "Unique friendly display name when no ID is available."),
+      }, "Verified display observation matching the requested brightness; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.list", "List discovered Bluetooth radios and their observed states.", {}, "Verified discovery snapshot with radio IDs, names and states.", "low", true, ["windows_setting_toggle"]),
+      action("bluetooth.status", "Read the observed Bluetooth radio state.", {
+        targetId: p("string", "Previously discovered Bluetooth radio ID."), targetName: p("string", "Unique friendly radio name when no ID is available."),
+      }, "Verified read-only Bluetooth observation.", "low", true, ["windows_setting_toggle"]),
+      action("bluetooth.set", "Set an explicit Bluetooth radio state and verify it by read-back.", {
+        state: p("string", "Explicit state: On or Off.", true), targetId: p("string", "Previously discovered Bluetooth radio ID."), targetName: p("string", "Unique friendly radio name when no ID is available."),
+      }, "Verified Bluetooth observation matching the requested state; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.enable", "Enable the Bluetooth radio and verify its observed state.", {}, "Verified Bluetooth observation showing On; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.disable", "Disable the Bluetooth radio and verify its observed state.", {}, "Verified Bluetooth observation showing Off; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("volume.get", "Read the actual default playback volume and mute state.", {}, "Verified Core Audio read-back with device identity, volume percentage and mute state.", "low", true, ["audio_volume_set"]),
+      action("volume.set", "Set playback volume and verify the actual output level by Core Audio read-back.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "Verified Core Audio read-back matching the requested level; may require approval.", "high", true, ["audio_volume_set"]),
+      action("volume.mute", "Set playback mute explicitly and verify the actual mute state.", { muted: p("boolean", "Whether playback should be muted.", true) }, "Verified Core Audio read-back matching the requested mute state; may require approval.", "high", true, ["audio_volume_set"]),
       action("app.open", "Launch an application by executable name; use browser actions for URLs.", { name: p("string", "Executable or supported name such as notepad, calculator, edge, or terminal.", true) }, "AgentResult indicating whether Windows accepted the launch request.", "low", true, ["windows_app_launch"]),
       action("app.close", "Attempt to stop an application process.", { name: p("string", "Process name to close.", true) }, "AgentResult with process operation output; fallback can overstate success.", "high", true, ["process_control"]),
       action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),
@@ -205,6 +222,8 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
     if (field.type === "number" && !Number.isFinite(value)) return false;
   }
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
+  if (name === "brightness.set" && typeof params.brightnessPercent === "number" && (params.brightnessPercent < 0 || params.brightnessPercent > 100 || !Number.isInteger(params.brightnessPercent))) return false;
+  if (name === "bluetooth.set" && params.state !== "On" && params.state !== "Off") return false;
   if (params.autoDeploy === true) return false;
   if (name === "codex.open" && String(params.prompt).includes("\0")) return false;
   return true;

@@ -81,7 +81,11 @@ test("mock Sarvam STT -> real planner/policy/runner -> Sarvam TTS, including pen
   const chatAddress = chat.address(); assert(chatAddress && typeof chatAddress !== "string");
   const client = new SarvamChatClient({ apiKey: "test-key", url: `http://127.0.0.1:${chatAddress.port}`, model: "test", budget });
   const originalLLM = modelRouter.callLLM;
-  modelRouter.callLLM = async (prompt, system, signal) => (await client.complete({ messages: [{ role: "system", content: system }, { role: "user", content: prompt }], signal })).text;
+  // callLLM signature: (prompt, systemPrompt, requestIdOrSignal?, signal?) - pass signal through correctly
+  modelRouter.callLLM = async (prompt, system, requestIdOrSignal, signal) => (await client.complete({
+    messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+    signal: signal ?? (requestIdOrSignal instanceof AbortSignal ? requestIdOrSignal : undefined)
+  })).text;
   const originalExecute = agentRegistry.windows.execute;
   agentRegistry.windows.execute = async () => { executions++; throw new Error("Approval boundary bypassed"); };
 

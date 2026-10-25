@@ -51,3 +51,17 @@ test("validates action identity, required parameter types, unsupported placehold
   assert(!catalogAccepts("windows", "volume.set", { level: 101 }));
   assert(catalogAccepts("files", "file.search", { query: "report", path: "$folder.result.path" }));
 });
+
+test("exposes verified Windows controls with typed planner contracts", () => {
+  for (const action of ["volume.get", "volume.set", "volume.mute", "brightness.list", "brightness.get", "brightness.set", "bluetooth.list", "bluetooth.status", "bluetooth.set"]) {
+    assert(getCatalogAction("windows", action)?.selectable, `${action} should be planner-selectable`);
+  }
+  assert(catalogAccepts("windows", "volume.get", {}));
+  assert(catalogAccepts("windows", "volume.set", { level: 30 }));
+  assert(catalogAccepts("windows", "volume.mute", { muted: false }));
+  assert(catalogAccepts("windows", "brightness.set", { brightnessPercent: 40 }));
+  assert(!catalogAccepts("windows", "brightness.set", { brightnessPercent: 40.5 }));
+  assert(catalogAccepts("windows", "bluetooth.status", {}));
+  assert(catalogAccepts("windows", "bluetooth.set", { state: "Off" }));
+  assert(!catalogAccepts("windows", "bluetooth.set", { state: "Toggle" }));
+});

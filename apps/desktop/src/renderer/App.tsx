@@ -50,6 +50,8 @@ export function App() {
     liveSentiment,
     partialTranscript,
     providerStatus,
+    micError,
+    cancelVoice,
     toggleRecording,
     resumeAudio,
   } = useAudioCapture();
@@ -97,30 +99,51 @@ export function App() {
   );
 
   // Orb click: Resumes AudioContext, sets visual active cue, and toggles listening/finalize
-  const handleOrbClick = async () => {
+  const handleOrbClick = useCallback(async () => {
     if (resumeAudio) {
       await resumeAudio();
     }
     setJustActivated(true);
     setTimeout(() => setJustActivated(false), 2000);
     toggleRecording();
-  };
+  }, [resumeAudio, toggleRecording]);
 
-  // Alt+Space keyboard shortcut for Push-to-Talk
+  // Show mic/provider errors in the orb area
+  const showErrorToast = useCallback((message: string) => {
+    setLastResponse(message);
+    setTimeout(() => setLastResponse(""), 5000);
+  }, [setLastResponse]);
+
+  const handleKillSwitch = useCallback(async () => {
+    cancelVoice();
+    if (window.vanessa?.cancelTask) {
+      await window.vanessa.cancelTask();
+    } else {
+      try {
+        await fetch("http://127.0.0.1:4319/api/cancel", { method: "POST" });
+      } catch (err) {
+        console.error("Failed to trigger kill switch:", err);
+      }
+    }
+  }, [cancelVoice]);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.code === "Space") {
-        e.preventDefault();
-        handleOrbClick();
-      }
-      if (e.code === "Escape") {
-        e.preventDefault();
-        handleKillSwitch();
-      }
+    if (micError) showErrorToast(micError);
+  }, [micError, showErrorToast]);
+
+  // Global PTT/Cancel via preload IPC (works when another app has focus)
+  useEffect(() => {
+    const unsubscribePtt = window.vanessa?.onTriggerPTT?.(() => {
+      handleOrbClick();
+    });
+    const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(() => {
+      handleKillSwitch();
+    });
+    return () => {
+      unsubscribePtt?.();
+      unsubscribeCancel?.();
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleRecording]);
+  }, [handleOrbClick, handleKillSwitch]);
 
   const handleExecute = async (cmdToRun?: string) => {
     const cmd = cmdToRun || typedCommand;
@@ -146,18 +169,6 @@ export function App() {
       setLastResponse(result.error || "This approval could not be rejected.");
     }
   }, [setPendingApproval, setLastResponse]);
-
-  const handleKillSwitch = async () => {
-    if (window.vanessa?.cancelTask) {
-      await window.vanessa.cancelTask();
-    } else {
-      try {
-        await fetch("http://127.0.0.1:4319/api/cancel", { method: "POST" });
-      } catch (err) {
-        console.error("Failed to trigger kill switch:", err);
-      }
-    }
-  };
 
   const handleAddFolder = async () => {
     if (!newFolderInput.trim()) return;
@@ -262,6 +273,12 @@ export function App() {
               ? "radial-gradient(circle at 35% 30%, #581c87 0%, #2e1065 75%, #000000 100%)"
               : voiceState === "speaking"
               ? "radial-gradient(circle at 35% 30%, #0284c7 0%, #075985 75%, #000000 100%)"
+              : voiceState === "responding"
+              ? "radial-gradient(circle at 35% 30%, #047857 0%, #022c22 75%, #000000 100%)"
+              : voiceState === "interrupted"
+              ? "radial-gradient(circle at 35% 30%, #78350f 0%, #1c1917 75%, #000000 100%)"
+              : voiceState === "error"
+              ? "radial-gradient(circle at 35% 30%, #7f1d1d 0%, #1c1917 75%, #000000 100%)"
               : "radial-gradient(circle at 35% 30%, #0e7490 0%, #0f172a 75%, #020617 100%)",
             border: isMicActive || justActivated
               ? "2px solid #10b981"
@@ -269,6 +286,12 @@ export function App() {
               ? "2px solid #a855f7"
               : voiceState === "speaking"
               ? "2px solid #38bdf8"
+              : voiceState === "responding"
+              ? "2px solid #34d399"
+              : voiceState === "interrupted"
+              ? "2px solid #fbbf24"
+              : voiceState === "error"
+              ? "2px solid #fb7185"
               : "2px solid rgba(0, 242, 254, 0.65)",
             boxShadow: isMicActive || justActivated
               ? `0 0 ${16 + audioLevel * 30}px rgba(16, 185, 129, 0.85), inset 0 0 12px rgba(16, 185, 129, 0.4)`
@@ -276,6 +299,12 @@ export function App() {
               ? "0 0 20px rgba(168, 85, 247, 0.8), inset 0 0 10px rgba(168, 85, 247, 0.3)"
               : voiceState === "speaking"
               ? "0 0 22px rgba(56, 189, 248, 0.8), inset 0 0 10px rgba(56, 189, 248, 0.3)"
+              : voiceState === "responding"
+              ? "0 0 20px rgba(52, 211, 153, 0.7), inset 0 0 10px rgba(52, 211, 153, 0.2)"
+              : voiceState === "interrupted"
+              ? "0 0 20px rgba(251, 191, 36, 0.7), inset 0 0 10px rgba(251, 191, 36, 0.2)"
+              : voiceState === "error"
+              ? "0 0 22px rgba(251, 113, 133, 0.8), inset 0 0 10px rgba(251, 113, 133, 0.3)"
               : "0 0 18px rgba(0, 242, 254, 0.45), inset 0 0 8px rgba(0, 242, 254, 0.2)",
             position: "relative",
             display: "flex",
@@ -326,6 +355,12 @@ export function App() {
                 ? "#c084fc"
                 : voiceState === "speaking"
                 ? "#7dd3fc"
+                : voiceState === "responding"
+                ? "#34d399"
+                : voiceState === "interrupted"
+                ? "#fbbf24"
+                : voiceState === "error"
+                ? "#fb7185"
                 : "rgba(255, 255, 255, 0.85)",
               textTransform: partialTranscript ? "none" : "uppercase",
               marginTop: "2px",
@@ -346,6 +381,12 @@ export function App() {
               ? "THINK"
               : voiceState === "speaking"
               ? "SPEAK"
+              : voiceState === "responding"
+              ? "RESPOND"
+              : voiceState === "interrupted"
+              ? "INTERRUPT"
+              : voiceState === "error"
+              ? "ERROR"
               : "VANESSA"}
           </span>
 
@@ -591,6 +632,11 @@ export function App() {
           >
             <span>ASR · {providerStatus.asr.active}{providerStatus.asr.state === "fallback" ? " (fallback)" : ""}</span>
             <span>TTS · {providerStatus.tts.active}{providerStatus.tts.state === "fallback" ? " (fallback)" : ""}</span>
+            {(providerStatus.asr.state === "error" || providerStatus.tts.state === "error" || providerStatus.asr.state === "fallback" || providerStatus.tts.state === "fallback") && (
+              <span style={{ fontSize: "8px", color: providerStatus.asr.state === "error" || providerStatus.tts.state === "error" ? "#fb7185" : "#fbbf24" }}>
+                {providerStatus.asr.detail || providerStatus.tts.detail || "Provider issue detected"}
+              </span>
+            )}
           </div>
         )}
 

@@ -506,6 +506,27 @@ export function useAudioCapture() {
   }, []);
   stopCaptureRef.current = stopRecording;
 
+  const cancelVoice = useCallback(() => {
+    pttActiveRef.current = false;
+    activatedSocketRef.current = null;
+    pendingBargeAudioRef.current = [];
+    preRollRef.current = [];
+    bargeResumePendingRef.current = false;
+    playbackGenerationRef.current += 1;
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
+    if (activeSourceNodeRef.current) {
+      try { activeSourceNodeRef.current.stop(); } catch {}
+      activeSourceNodeRef.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "deactivate" }));
+    }
+    stopRecording();
+    setVoiceState("idle");
+  }, [setVoiceState, stopRecording]);
+
   const resumeAudio = useCallback(async () => {
     if (audioContextRef.current && audioContextRef.current.state === "suspended") {
       await audioContextRef.current.resume();
@@ -568,6 +589,7 @@ export function useAudioCapture() {
     partialTranscript,
     providerStatus,
     micError,
+    cancelVoice,
     startRecording,
     stopRecording,
     toggleRecording,

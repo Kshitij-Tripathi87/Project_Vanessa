@@ -89,14 +89,28 @@ caps before live testing if you want the local meter to block calls at a limit.
 Sarvam credentials are loaded only by the trusted voice/orchestrator processes;
 they are never sent to the renderer.
 
-### 4. Run Development Server
+### 4. Run the Desktop Application
+
+Use the canonical Windows launcher for the complete Electron application and its managed services:
+
+```powershell
+node scripts/launch-vanessa.cjs --check
+node scripts/launch-vanessa.cjs --build-only
+node scripts/launch-vanessa.cjs --dev
+```
+
+`--check` validates configuration and dependencies without starting services. `--build-only` validates the shared contracts, services and desktop renderer without starting them. `--dev` starts the orchestrator, voice service, renderer and Electron application in the managed order. Use `--text-only` when microphone/provider services are intentionally disabled.
+
+The desktop package's `dev` script serves the renderer only; it is not the complete Electron startup path.
+
+### 5. Run Development Services Directly
 ```bash
 pnpm dev
 ```
 - Orchestrator API runs on `http://127.0.0.1:4319`
 - Desktop HUD runs on `http://localhost:5173`
 
-### 5. Run Scenario Tests
+### 6. Run Scenario Tests
 ```bash
 pnpm test:scenarios
 ```

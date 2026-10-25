@@ -26,8 +26,20 @@ export class PrivacyGuard {
       }
     }
     this.allowedFolders.add(this.defaultFolder);
-    // Also allow current workspace incident lab if running
+    // Also allow the current package and the trusted monorepo workspace. The
+    // launcher starts from the repository root, while package-scoped tests and
+    // dev commands may start from services/orchestrator.
     this.allowedFolders.add(path.resolve(process.cwd()));
+    let workspace = path.resolve(process.cwd());
+    while (true) {
+      if (fs.existsSync(path.join(workspace, "pnpm-workspace.yaml"))) {
+        this.allowedFolders.add(fs.realpathSync(workspace));
+        break;
+      }
+      const parent = path.dirname(workspace);
+      if (parent === workspace) break;
+      workspace = parent;
+    }
   }
 
   getAllowedFolders(): string[] {
