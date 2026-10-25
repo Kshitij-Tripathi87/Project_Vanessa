@@ -3,7 +3,7 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
-import { AudioCapture, PcmFrameAccumulator } from "./audio/capture.js";
+import { PcmFrameAccumulator } from "./audio/capture.js";
 import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
 import { getVoiceUsageBudget } from "./usageBudget.js";
 

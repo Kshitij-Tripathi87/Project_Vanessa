@@ -144,7 +144,7 @@ fastify.post("/api/reject", async (request, reply) => {
   return reply.send({ success: !!task, task });
 });
 
-fastify.post("/api/cancel", async (request, reply) => {
+fastify.post("/api/cancel", async (_request, reply) => {
   orchestrator.cancelAll();
   return reply.send({ success: true, message: "Emergency kill switch engaged." });
 });
@@ -372,14 +372,14 @@ fastify.post("/api/remote/reject", async (request, reply) => {
 });
 
 // Serve Mobile Companion Phone PWA
-fastify.get("/remote", async (request, reply) => {
+fastify.get("/remote", async (_request, reply) => {
   const html = getRemotePwaHtml(PORT);
   return reply.type("text/html").send(html);
 });
 
 // Voice service status - delegates to voice-agent service on port 4500
 // Fish Audio is the selected provider; ElevenLabs integration moved to voice-agent
-fastify.get("/voice/session", async (request, reply) => {
+fastify.get("/voice/session", async (_request, reply) => {
   const voiceAgentUrl = process.env.VOICE_AGENT_URL || "http://127.0.0.1:4500";
 
   try {

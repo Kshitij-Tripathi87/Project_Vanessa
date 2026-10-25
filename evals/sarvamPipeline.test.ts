@@ -107,10 +107,13 @@ test("mock Sarvam STT -> real planner/policy/runner -> Sarvam TTS, including pen
   const asrServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   const ttsServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await Promise.all([once(asrServer, "listening"), once(ttsServer, "listening")]);
-  const asrAddress = asrServer.address(), ttsAddress = ttsServer.address();
+  const asrAddress = asrServer.address();
+  const ttsAddress = ttsServer.address();
   if (!asrAddress || typeof asrAddress === "string" || !ttsAddress || typeof ttsAddress === "string") {
     throw new Error("Mock Sarvam WebSocket servers did not expose listening addresses.");
   }
+  const asrPort = asrAddress.port;
+  const ttsPort = ttsAddress.port;
   asrServer.on("connection", ws => {
     ws.send(JSON.stringify({ event: "session.begin" }));
     ws.on("message", raw => {
@@ -135,8 +138,8 @@ test("mock Sarvam STT -> real planner/policy/runner -> Sarvam TTS, including pen
   }));
   const audio: Buffer[] = [];
   const session = new VanessaVoiceSession({
-    asr: new SarvamAsrAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${asrAddress.port}`, budget }),
-    tts: new SarvamTtsAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${ttsAddress.port}`, codec: "wav", budget }),
+    asr: new SarvamAsrAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${asrPort}`, budget }),
+    tts: new SarvamTtsAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${ttsPort}`, codec: "wav", budget }),
     client: new OrchestratorClient(`http://127.0.0.1:${address.port}`),
     handlers: { onAudioChunkOut: chunk => { if (chunk.audioBase64) audio.push(Buffer.from(chunk.audioBase64, "base64")); } },
   });

@@ -98,7 +98,7 @@ export class PrivacyGuard {
 
     for (const pat of apiKeyPatterns) {
       if (pat.test(clean)) {
-        clean = clean.replace(pat, (match, p1, p2) => {
+        clean = clean.replace(pat, (_match, p1, p2) => {
           redactedCount++;
           if (!types.includes("API_KEY")) types.push("API_KEY");
           return p2 ? `${p1}[REDACTED_API_KEY]` : "[REDACTED_API_KEY]";

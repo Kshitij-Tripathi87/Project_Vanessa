@@ -49,8 +49,11 @@ export class OrchestratorClient {
    * Execute existing plan
    */
   async executePlan(input: { planId: string }): Promise<{ spokenResponse: string }> {
+    const planId = input.planId.trim();
     return {
-      spokenResponse: "Tasks completed successfully.",
+      spokenResponse: planId
+        ? `Direct execution of plan ${planId} is not implemented; submit the original command so the orchestrator can validate and execute it.`
+        : "A plan ID is required. No task was executed.",
     };
   }
 }

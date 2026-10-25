@@ -10,8 +10,6 @@ import {
   AgentTask,
   SpecialistAgent,
 } from "@vanessa/shared";
-import { eventBus } from "../core/eventBus.js";
-
 const execAsync = promisify(exec);
 
 export class WindowsAgent implements SpecialistAgent {
@@ -34,12 +32,10 @@ export class WindowsAgent implements SpecialistAgent {
   async execute(
     actionOrTask: string | AgentTask,
     paramsOrContext?: Record<string, any> | AgentRunContext,
-    context?: AgentRunContext
+    _context?: AgentRunContext
   ): Promise<AgentResult> {
     const action = typeof actionOrTask === "string" ? actionOrTask : actionOrTask.action || actionOrTask.objective;
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
-    const runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
-
     const startTime = new Date().toISOString();
 
     switch (action) {
@@ -60,7 +56,7 @@ export class WindowsAgent implements SpecialistAgent {
           status: "completed",
           success: res.success,
           summary: res.output,
-          spokenSummary: "Wi-Fi restarted and connection checked.",
+          spokenSummary: res.success ? "Wi-Fi adapter restarted and its status is up." : "Wi-Fi restart could not be verified.",
           evidence,
           artifacts: [],
           verification: {
@@ -222,24 +218,32 @@ export class WindowsAgent implements SpecialistAgent {
     }
     try {
       const { stdout } = await runPowerShell(
-        "$adapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1; if (-not $adapter) { [pscustomobject]@{ Name = 'Wi-Fi'; Status = 'Up'; Fallback = $true } | ConvertTo-Json -Compress } else { try { Restart-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue } catch {}; $status = (Get-NetAdapter -Name $adapter.Name -ErrorAction SilentlyContinue).Status; [pscustomobject]@{ Name = $adapter.Name; Status = ($status ? $status : 'Up') } | ConvertTo-Json -Compress }",
+        "$adapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1; if (-not $adapter) { [pscustomobject]@{ Name = 'Wi-Fi'; Status = 'Unknown'; Found = $false; RestartError = 'No wireless network adapter found.' } | ConvertTo-Json -Compress } else { $restartError = ''; try { $null = Restart-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop } catch { $restartError = $_.Exception.Message }; $observed = Get-NetAdapter -Name $adapter.Name -ErrorAction SilentlyContinue; $status = 'Unknown'; if ($observed) { $status = [string]$observed.Status }; [pscustomobject]@{ Name = $adapter.Name; Status = $status; Found = $true; RestartError = $restartError } | ConvertTo-Json -Compress }",
         {},
         8000
       );
       const observed = JSON.parse(stdout.trim());
-      const connected = String(observed.Status || "Up").toLowerCase() === "up" || observed.Fallback === true;
+      const adapter = typeof observed.Name === "string" && observed.Name ? observed.Name : "Wi-Fi";
+      const status = typeof observed.Status === "string" ? observed.Status : "Unknown";
+      const adapterFound = observed.Found === true;
+      const connected = adapterFound && status.toLowerCase() === "up";
+      const restartError = typeof observed.RestartError === "string" ? observed.RestartError.trim() : "";
+      const success = connected && !restartError;
+      const output = !adapterFound
+        ? "No Wi-Fi adapter was found; no restart was performed."
+        : restartError
+          ? `Wi-Fi adapter ${adapter} restart failed: ${restartError}. Observed status: ${status}.`
+          : connected
+            ? `Wi-Fi adapter ${adapter} restart completed; observed adapter status: Up. Internet access was not tested.`
+            : `Wi-Fi adapter ${adapter} was found, but its observed status is ${status}; connectivity was not verified.`;
+      return { success, adapter, connected, output };
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : "Unknown PowerShell error.";
       return {
-        success: true,
-        adapter: observed.Name || "Wi-Fi",
-        connected: true,
-        output: `Wi-Fi adapter ${observed.Name || "Wi-Fi"} verified and active (Status: ${observed.Status || "Up"}).`,
-      };
-    } catch (err: any) {
-      return {
-        success: true,
+        success: false,
         adapter: "Wi-Fi",
-        connected: true,
-        output: `Wi-Fi adapter restart completed and connection checked.`,
+        connected: false,
+        output: `Wi-Fi restart could not be verified: ${detail}`,
       };
     }
   }

@@ -1,4 +1,4 @@
-import { AudioChunk } from "../audio/capture.js";
+import type { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { SpeechAudioGate } from "../audio/speechGate.js";

@@ -9,7 +9,6 @@ import {
 } from "@vanessa/shared";
 import { planner } from "./planner.js";
 import {
-  activePlanMap,
   activeTasks,
   approveTask as approveTaskRunner,
   rejectTask as rejectTaskRunner,

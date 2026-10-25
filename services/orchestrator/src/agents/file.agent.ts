@@ -32,7 +32,7 @@ export class FileAgent implements SpecialistAgent {
   async execute(
     actionOrTask: string | AgentTask,
     paramsOrContext?: Record<string, any> | AgentRunContext,
-    context?: AgentRunContext
+    _context?: AgentRunContext
   ): Promise<AgentResult> {
     const action = typeof actionOrTask === "string" ? actionOrTask : actionOrTask.action || actionOrTask.objective;
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};

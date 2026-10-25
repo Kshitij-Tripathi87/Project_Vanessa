@@ -33,7 +33,6 @@ export class SarvamAsrAdapter implements AsrAdapter {
   private readonly budget: UsageBudget;
   private usageReservation?: UsageReservation;
   private usageRequestId?: string;
-  private turnStartedAt = 0;
   private turnStarted = false;
   private sentBytes = 0;
   private maxAudioBytes = 800000;
@@ -104,7 +103,6 @@ export class SarvamAsrAdapter implements AsrAdapter {
     this.finalizing = false;
     this.delivered = false;
     this.turnStarted = false;
-    this.turnStartedAt = 0;
     this.sentBytes = 0;
     this.reconnectAttempts = 0;
     const turnId = `sarvam:${randomUUID()}`;
@@ -307,7 +305,6 @@ export class SarvamAsrAdapter implements AsrAdapter {
     try {
       if (!this.turnStarted) {
         this.turnStarted = true;
-        this.turnStartedAt = Date.now();
         ws.send(JSON.stringify({ event: "speech_start" }));
       }
       ws.send(JSON.stringify({ event: "audio_input", audio: audio.toString("base64") }));
@@ -333,7 +330,6 @@ export class SarvamAsrAdapter implements AsrAdapter {
     try {
       if (!this.turnStarted) {
         this.turnStarted = true;
-        this.turnStartedAt = Date.now();
         ws.send(JSON.stringify({ event: "speech_start" }));
       }
       ws.send(JSON.stringify({ event: "speech_end" }));
@@ -369,7 +365,6 @@ export class SarvamAsrAdapter implements AsrAdapter {
     this.ws = undefined;
     this.active = false; this.ready = false; this.finalizing = false;
     this.turnStarted = false;
-    this.turnStartedAt = 0;
     this.queued = []; this.queuedBytes = 0;
     if (ws?.readyState === WebSocket.OPEN) {
       try {
