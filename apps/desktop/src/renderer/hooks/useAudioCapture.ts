@@ -571,6 +571,7 @@ export function useAudioCapture() {
     pendingBargeAudioRef.current = [];
     preRollRef.current = [];
     bargeResumePendingRef.current = false;
+    pendingTextCommandRef.current = null;
     playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
