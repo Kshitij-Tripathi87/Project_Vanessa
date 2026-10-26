@@ -26,7 +26,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
     };
     return "partial";
   }
-  if (verification?.passed === true && verificationDetails) {
+  if (verification?.passed === true && verificationDetails && !["failed", "blocked", "partial", "awaiting_approval"].includes(structured?.status)) {
     const successReported = structured.success !== false;
     task.verification = {
       verified: successReported,
