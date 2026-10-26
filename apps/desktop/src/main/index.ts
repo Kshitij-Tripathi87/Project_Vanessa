@@ -20,6 +20,7 @@ function createWindow() {
     x: screenWidth - initialSize - margin,
     y: screenHeight - initialSize - margin,
     title: "Vanessa",
+    icon: path.join(__dirname, "../../assets/vanessa.png"),
     frame: false,
     transparent: true,
     alwaysOnTop: true,

@@ -188,6 +188,41 @@ input {
   height: 90px;
   display: grid;
   place-items: center;
+  isolation: isolate;
+}
+
+.orb-halo {
+  position: absolute;
+  z-index: -1;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: rotate(-18deg);
+}
+
+.orb-halo-one {
+  border: 1px solid rgba(83, 231, 255, 0.42);
+  box-shadow: 0 0 24px rgba(0, 191, 255, 0.42), inset 0 0 14px rgba(0, 191, 255, 0.2);
+  animation: orb-halo-drift 5s ease-in-out infinite;
+}
+
+.orb-halo-two {
+  width: 86px;
+  height: 86px;
+  border: 1px solid rgba(32, 211, 238, 0.18);
+  transform: rotate(42deg) scale(0.96);
+  animation: orb-halo-drift-reverse 7s ease-in-out infinite;
+}
+
+@keyframes orb-halo-drift {
+  0%, 100% { transform: rotate(-18deg) scale(0.96); opacity: 0.65; }
+  50% { transform: rotate(16deg) scale(1.04); opacity: 1; }
+}
+
+@keyframes orb-halo-drift-reverse {
+  0%, 100% { transform: rotate(42deg) scale(0.96); opacity: 0.3; }
+  50% { transform: rotate(-24deg) scale(1.05); opacity: 0.7; }
 }
 
 .orb-button {
@@ -213,6 +248,7 @@ input {
   object-fit: cover;
   object-position: center;
   mix-blend-mode: screen;
+  filter: saturate(1.08) contrast(1.04);
 }
 
 .orb-button.orb-planning,
@@ -289,6 +325,8 @@ input {
 .assistant-identity { display: flex; align-items: center; gap: 9px; }
 .assistant-identity strong { display: block; font-size: 14px; letter-spacing: 0.02em; }
 .assistant-identity span { display: block; margin-top: 2px; color: var(--text-muted); font-size: 10px; }
+.wordmark { display: inline-flex !important; align-items: center; gap: 5px; letter-spacing: 0.04em !important; }
+.wordmark-dot { width: 5px; height: 5px; border-radius: 50%; background: #52e4ff; box-shadow: 0 0 8px #52e4ff; }
 .mini-orb { width: 29px; height: 29px; overflow: hidden; border: 1px solid rgba(0, 218, 255, 0.6); border-radius: 50%; background: #000; }
 .mini-orb img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: screen; }
 .assistant-header-actions { display: flex; gap: 4px; }
@@ -346,6 +384,10 @@ input {
 .footer-hint { display: flex; align-items: center; justify-content: space-between; min-height: 17px; margin-top: 6px; color: var(--text-dim); font-size: 9px; }
 .verified { display: inline-flex; align-items: center; gap: 3px; color: #6ee7b7; }
 .spin { animation: spin 1s linear infinite; }
+
+@media (hover: hover) {
+  .orb-button:hover + .orb-expand { border-color: rgba(82, 228, 255, 0.7); color: #52e4ff; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

@@ -82,6 +82,8 @@ export function CompactAssistant({
   if (!expanded) {
     return (
       <div className="orb-widget drag-region" title="Vanessa">
+        <span className="orb-halo orb-halo-one" aria-hidden="true" />
+        <span className="orb-halo orb-halo-two" aria-hidden="true" />
         <button
           className={`orb-button no-drag orb-${taskStage}`}
           onClick={onOrbClick}
@@ -104,8 +106,8 @@ export function CompactAssistant({
         <div className="assistant-identity">
           <div className="mini-orb"><img src={orbImage} alt="" /></div>
           <div>
-            <strong>Vanessa</strong>
-            <span>Voice assistant</span>
+            <strong className="wordmark"><span className="wordmark-dot" />Vanessa</strong>
+            <span>Voice-native assistant</span>
           </div>
         </div>
         <div className="assistant-header-actions no-drag">

@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist/main/index.js",
+  "build": {
+    "appId": "com.vanessa.desktop",
+    "productName": "Vanessa",
+    "icon": "assets/vanessa.png",
+    "files": ["dist/**/*", "assets/**/*"]
+  },
   "scripts": {
     "start": "electron .",
     "dev": "vite",
