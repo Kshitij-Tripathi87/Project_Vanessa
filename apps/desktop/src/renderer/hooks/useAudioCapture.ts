@@ -43,7 +43,7 @@ function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Floa
 }
 
 export function useAudioCapture() {
-  const { voiceState, setVoiceState, setLastResponse, setActivePlan } = useVanessaStore();
+  const { voiceState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, setTaskStage } = useVanessaStore();
 
   const [isMicActive, setIsMicActive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0); // 0.0 to 1.0 for VoiceOrb scaling
@@ -51,12 +51,14 @@ export function useAudioCapture() {
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
+  const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected">("connecting");
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const processorRef = useRef<AudioWorkletNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingTextCommandRef = useRef<{ type: "transcript_final"; text: string; language: string; turnId: string } | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
@@ -210,22 +212,53 @@ export function useAudioCapture() {
     }
   }, []);
 
-  // Keep the control channel ready, but do not start audio capture or ASR until PTT.
+  const dispatchTextCommand = useCallback((
+    socket: WebSocket,
+    command: { type: "transcript_final"; text: string; language: string; turnId: string },
+  ) => {
+    if (socket.readyState !== WebSocket.OPEN) return false;
+    if (pttActiveRef.current) {
+      pttActiveRef.current = false;
+      activatedSocketRef.current = null;
+      pendingBargeAudioRef.current = [];
+      preRollRef.current = [];
+      bargeResumePendingRef.current = false;
+      stopCaptureRef.current?.(true);
+      socket.send(JSON.stringify({ type: "deactivate" }));
+    }
+    socket.send(JSON.stringify(command));
+    setPartialTranscript(command.text);
+    setLastResponse("");
+    setCurrentRequestId(null);
+    setTaskStage("accepted", "Request received.");
+    setVoiceState("thinking");
+    return true;
+  }, [setCurrentRequestId, setLastResponse, setTaskStage, setVoiceState, setPartialTranscript]);
+
+  // Keep the control channel ready; ASR/capture starts only after explicit PTT.
   const connectVoiceWs = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
-
+    setVoiceConnectionState("connecting");
     const ws = new WebSocket("ws://127.0.0.1:4500/ws");
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("[useAudioCapture] Connected to Vanessa Voice Real-Time WebSocket on port 4500");
       setMicError(null);
-      activateConnectedSocket(ws);
+      setVoiceConnectionState("connected");
+      const pending = pendingTextCommandRef.current;
+      if (pending) {
+        if (!dispatchTextCommand(ws, pending)) return;
+        pendingTextCommandRef.current = null;
+      } else {
+        activateConnectedSocket(ws);
+      }
     };
 
     ws.onerror = () => {
+      setVoiceConnectionState("disconnected");
       setMicError("Vanessa voice service is unavailable. Start the voice agent and try again.");
       pttActiveRef.current = false;
       setVoiceState("error");
@@ -294,6 +327,7 @@ export function useAudioCapture() {
 
           if (msg.type === "transcript_final") {
             setPartialTranscript(msg.text);
+            if (typeof msg.requestId === "string") setCurrentRequestId(msg.requestId);
             // Fish may commit before PTT release. Stop cloud streaming while
             // retaining local capture for an interruption during TTS playback.
             pttActiveRef.current = false;
@@ -350,13 +384,38 @@ export function useAudioCapture() {
     ws.onclose = () => {
       if (wsRef.current === ws) {
         stopCaptureRef.current?.();
+        setVoiceConnectionState("disconnected");
         setMicError("Voice connection closed. Reconnecting; press push-to-talk to start a new turn.");
         activatedSocketRef.current = null;
         setTimeout(() => { if (wsRef.current === ws) connectVoiceWs(); }, 3000);
       }
     };
-  }, [activateConnectedSocket, setVoiceState, setLastResponse, setActivePlan, playNextInQueue]);
+  }, [activateConnectedSocket, dispatchTextCommand, setVoiceConnectionState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, playNextInQueue]);
 
+
+  const submitTextCommand = useCallback((rawText: string, language = "en") => {
+    const text = rawText.trim();
+    if (!text || text.length > 16000) {
+      setLastResponse(text ? "That request is too long." : "Enter a request first.");
+      return false;
+    }
+    const command = {
+      type: "transcript_final" as const,
+      text,
+      language: language.slice(0, 32) || "en",
+      turnId: `desktop-${globalThis.crypto.randomUUID()}`,
+    };
+    const socket = wsRef.current;
+    if (socket && dispatchTextCommand(socket, command)) return true;
+
+    // Only an unsent command is buffered. An issued action is never replayed automatically.
+    pendingTextCommandRef.current = command;
+    setPartialTranscript(text);
+    setLastResponse("Connecting to Vanessa voice service…");
+    setTaskStage("accepted", "Waiting for the local voice service.");
+    connectVoiceWs();
+    return true;
+  }, [connectVoiceWs, dispatchTextCommand, setLastResponse, setTaskStage, setPartialTranscript]);
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
@@ -574,6 +633,7 @@ export function useAudioCapture() {
       processorRef.current?.disconnect();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       audioContextRef.current?.close().catch(() => {});
+      pendingTextCommandRef.current = null;
       if (wsRef.current) {
         const ws = wsRef.current;
         wsRef.current = null;
@@ -589,6 +649,8 @@ export function useAudioCapture() {
     partialTranscript,
     providerStatus,
     micError,
+    voiceConnectionState,
+    submitTextCommand,
     cancelVoice,
     startRecording,
     stopRecording,
