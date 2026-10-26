@@ -50,10 +50,12 @@ if (typeof window !== "undefined" && !window.vanessa) {
       });
       return res.json();
     },
-    cancelTask: async () => {
-      const res = await fetch("http://127.0.0.1:4319/api/cancel", {
+    cancelTask: async (requestId) => {
+      const endpoint = requestId ? "/api/cancel/request" : "/api/cancel";
+      const res = await fetch(`http://127.0.0.1:4319${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: requestId ? JSON.stringify({ requestId }) : undefined,
       });
       return res.json();
     },

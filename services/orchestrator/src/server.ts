@@ -61,8 +61,17 @@ eventBus.on("approval:required", forwardEvent);
 eventBus.on("approval:granted", forwardEvent);
 eventBus.on("approval:rejected", forwardEvent);
 eventBus.on("plan:created", forwardEvent);
+eventBus.on("plan:started", forwardEvent);
 eventBus.on("plan:completed", forwardEvent);
 eventBus.on("audit:log", forwardEvent);
+eventBus.on("voice:state", forwardEvent);
+eventBus.on("agent.started", forwardEvent);
+eventBus.on("tool.started", forwardEvent);
+eventBus.on("tool.completed", forwardEvent);
+eventBus.on("agent.completed", forwardEvent);
+eventBus.on("verification.completed", forwardEvent);
+eventBus.on("task.failed", forwardEvent);
+eventBus.on("task.cancelled", forwardEvent);
 
 // WebSocket endpoint for real-time HUD streaming
 fastify.get("/events", { websocket: true }, (socket, req) => {
@@ -73,6 +82,8 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
   }
   connectedClients.add(socket);
 
+  const since = Number((req.query as any)?.since || 0);
+
   // Send current status immediately
   socket.send(
     JSON.stringify({
@@ -81,6 +92,12 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
       timestamp: Date.now(),
     })
   );
+
+  // Replay the bounded in-memory stream so a short desktop reconnect does not
+  // erase the task currently shown in the HUD.
+  for (const event of eventBus.getEventsAfter(Number.isFinite(since) ? since : 0)) {
+    socket.send(JSON.stringify(event));
+  }
 
   socket.on("close", () => {
     connectedClients.delete(socket);

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
+export type TaskStage = "idle" | "accepted" | "planning" | "executing" | "verifying" | "completed" | "failed" | "cancelled";
 
 interface VanessaState {
   voiceState: VoiceState;
@@ -12,6 +13,10 @@ interface VanessaState {
   transcript: string;
   lastResponse: string;
   voiceProvider: "elevenlabs" | "fish" | "mock";
+  taskStage: TaskStage;
+  currentRequestId: string | null;
+  currentTaskId: string | null;
+  progressMessage: string;
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -22,6 +27,9 @@ interface VanessaState {
   setTranscript: (text: string) => void;
   setLastResponse: (text: string) => void;
   setVoiceProvider: (provider: "elevenlabs" | "fish" | "mock") => void;
+  setTaskStage: (stage: TaskStage, message?: string) => void;
+  setCurrentRequestId: (requestId: string | null) => void;
+  setCurrentTaskId: (taskId: string | null) => void;
 }
 
 export const useVanessaStore = create<VanessaState>((set) => ({
@@ -33,6 +41,10 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   transcript: "",
   lastResponse: "Vanessa online. What should I do?",
   voiceProvider: "elevenlabs",
+  taskStage: "idle",
+  currentRequestId: null,
+  currentTaskId: null,
+  progressMessage: "Ready when you are.",
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),
@@ -60,4 +72,10 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   setTranscript: (transcript) => set({ transcript }),
   setLastResponse: (lastResponse) => set({ lastResponse }),
   setVoiceProvider: (voiceProvider) => set({ voiceProvider }),
+  setTaskStage: (taskStage, progressMessage) => set((state) => ({
+    taskStage,
+    progressMessage: progressMessage || state.progressMessage,
+  })),
+  setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
+  setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
 }));

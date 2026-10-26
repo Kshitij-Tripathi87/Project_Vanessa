@@ -98,4 +98,9 @@ export interface VanessaEvent<T = any> {
   type: EventType;
   payload: T;
   timestamp: number;
+  /** Monotonic stream metadata used by reconnecting desktop clients. */
+  sequence?: number;
+  eventId?: string;
+  requestId?: string;
+  taskId?: string;
 }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ExecuteCommandPayload } from "@vanessa/shared";
+import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
 
 contextBridge.exposeInMainWorld("vanessa", {
   executeCommand: (payload: ExecuteCommandPayload) =>
@@ -11,10 +11,10 @@ contextBridge.exposeInMainWorld("vanessa", {
   rejectTask: (taskId: string) =>
     ipcRenderer.invoke("vanessa:reject-task", taskId),
 
-  cancelTask: (taskId?: string) =>
-    ipcRenderer.invoke("vanessa:cancel-task", taskId),
+  cancelTask: (requestId?: string) =>
+    ipcRenderer.invoke("vanessa:cancel-task", requestId),
 
-  onEvent: (callback: (event: any) => void) => {
+  onEvent: (callback: (event: VanessaEvent) => void) => {
     const handler = (_: any, data: any) => callback(data);
     ipcRenderer.on("vanessa:event", handler);
     return () => {
