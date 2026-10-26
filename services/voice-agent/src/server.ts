@@ -292,8 +292,11 @@ export async function createVoiceAgentServer() {
           } else if (json.type === "barge_in" || json.type === "interrupt") {
             session.interrupt();
             sendJson(socket, { type: "barge_in_acknowledged" });
-          } else if (json.type === "transcript_final" && typeof json.text === "string" && json.text.length <= 16000) {
-            await session.handleFinalUtterance(json.text, json.language || "en");
+          } else if (json.type === "transcript_final" && typeof json.text === "string" && json.text.trim().length > 0 && json.text.length <= 16000) {
+            const language = typeof json.language === "string" && json.language.length <= 32 ? json.language : "en";
+            const turnId = typeof json.turnId === "string" && /^[a-zA-Z0-9:_-]{1,160}$/.test(json.turnId) ? json.turnId : undefined;
+            // HUD text is explicit user intent; it does not need an ambient wake phrase.
+            await session.handleFinalUtterance(json.text, language, turnId, true);
           }
         }
       } catch (err: any) {
