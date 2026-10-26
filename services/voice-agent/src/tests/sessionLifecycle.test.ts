@@ -152,6 +152,7 @@ test("barge-in aborts TTS playback without cancelling the completed task", async
     tts: {
       async streamSpeech(text, callback) {
         callback({ text, isFinal: false, chunkIndex: 0 });
+        announceTtsStarted();
         await new Promise<void>((resolve) => { releaseTts = resolve; });
       },
       abort() { ttsAbortCalls++; },
