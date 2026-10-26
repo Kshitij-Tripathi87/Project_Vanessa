@@ -99,3 +99,40 @@ test("a final transcript arriving after the capture deadline is accepted only fo
   await handlers.onFinal({ text: "must not run", language: "en", isFinal: true, turnId: "stale-final" });
   assert.equal(submissions, 1);
 });
+
+test("stopping during TTS does not cancel a command that already returned", async () => {
+  let releaseTts!: () => void;
+  let announceTtsStarted!: () => void;
+  let requestSignal: AbortSignal | undefined;
+  const ttsStarted = new Promise<void>((resolve) => { announceTtsStarted = resolve; });
+  const cancelled: string[] = [];
+  const asr: AsrAdapter = {
+    connect() {}, activateStream() {}, sendAudioChunk() {}, deactivateStream() {}, close() {},
+  };
+  const session = new VanessaVoiceSession({
+    asr,
+    tts: {
+      async streamSpeech(text, callback) {
+        callback({ text, isFinal: true, chunkIndex: 0 });
+        announceTtsStarted();
+        await new Promise<void>((resolve) => { releaseTts = resolve; });
+      },
+      abort() {},
+    },
+    client: {
+      async executeCommand(_input, signal) {
+        requestSignal = signal;
+        return { status: "success", spokenSummary: "The task completed." };
+      },
+      async cancelRequest(requestId) { cancelled.push(requestId); },
+    },
+  });
+  await session.activateSession();
+  const response = session.handleFinalUtterance("run the task", "en", "completed-task");
+  await ttsStarted;
+  session.stop();
+  assert.equal(requestSignal?.aborted, false);
+  assert.deepEqual(cancelled, []);
+  releaseTts();
+  await response;
+});
