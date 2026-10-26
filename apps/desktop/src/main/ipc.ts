@@ -110,22 +110,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
-  // 4. Window Resize (Compact Orb vs Expanded Drawer)
+  // 4. Resize and dock the floating window. Reposition immediately after
+  // resizing so the expanded panel stays visible on the selected display.
   ipcMain.handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {
     assertTrustedRenderer(event, mainWindow);
     if (!payload || !Number.isInteger(payload.width) || !Number.isInteger(payload.height) || payload.width < 70 || payload.width > 900 || payload.height < 70 || payload.height > 900) {
       return { success: false };
     }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setSize(payload.width, payload.height);
-      // Keep the selected corner fixed as the orb expands to its task panel.
-      const position = positionWindowAtCorner(mainWindow, dockedCorner, payload);
-      return { success: true, corner: dockedCorner, ...position };
-    }
-    return { success: false };
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    mainWindow.setSize(payload.width, payload.height);
+    const position = positionWindowAtCorner(mainWindow, dockedCorner, payload);
+    return { success: true, corner: dockedCorner, ...position };
   });
 
-  // 5. Dock to Screen Corner (bottom-right, top-right, bottom-left, top-left)
   ipcMain.handle("vanessa:dock-corner", (event, corner: DockCorner) => {
     assertTrustedRenderer(event, mainWindow);
     if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };

@@ -21,7 +21,8 @@
     "smoke:windows-audio": "tsx src/scripts/windows-audio-smoke.ts",
     "test:windows-controls": "tsx --test src/tests/windowsControls.test.ts",
     "smoke:windows-controls": "tsx src/scripts/windows-controls-smoke.ts",
-    "test:agent-result": "tsx --test src/tests/agentResult.test.ts"
+    "test:agent-result": "tsx --test src/tests/agentResult.test.ts",
+    "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

@@ -118,6 +118,15 @@ html, body {
   }
 }
 
+@keyframes orb-pulse-speaking {
+  0%, 100% {
+    box-shadow: 0 0 25px rgba(0, 190, 255, 0.38), inset 0 0 18px rgba(0, 190, 255, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 46px rgba(0, 242, 254, 0.72), inset 0 0 26px rgba(0, 190, 255, 0.34);
+  }
+}
+
 @keyframes ripple {
   0% {
     transform: scale(0.9);
@@ -139,6 +148,10 @@ html, body {
 
 .orb-thinking {
   animation: orb-pulse-thinking 2s linear infinite;
+}
+
+.orb-speaking {
+  animation: orb-pulse-speaking 1.7s ease-in-out infinite;
 }
 
 .ripple-effect {
@@ -282,6 +295,7 @@ input {
 .orb-button.voice-interrupted { border-color: #fbbf24; }
 .orb-button.voice-error { border-color: #fb7185; box-shadow: 0 0 25px rgba(251, 113, 133, 0.68); }
 
+
 .orb-button.orb-completed { border-color: #34d399; box-shadow: 0 0 26px rgba(52, 211, 153, 0.65); }
 .orb-button.orb-partial { border-color: #fbbf24; box-shadow: 0 0 24px rgba(251, 191, 36, 0.5); }
 .orb-button.orb-failed { border-color: #fb7185; box-shadow: 0 0 26px rgba(251, 113, 133, 0.62); }
@@ -369,6 +383,10 @@ input {
 .status-inline.connection-disabled i { background: #64748b; box-shadow: none; }
 .menu-divider { height: 1px; margin: 7px 0; background: var(--border-subtle); }
 .menu-action { width: 100%; padding: 6px; border-radius: 6px; color: #8eeeff; background: rgba(0, 208, 255, 0.08); text-align: left; font-size: 10px; }
+.dock-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.dock-option { min-width: 0; padding: 7px 4px; border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 7px; color: var(--text-muted); background: rgba(255, 255, 255, 0.035); font-size: 9px; }
+.dock-option:hover { border-color: rgba(82, 228, 255, 0.4); color: var(--text-main); background: rgba(0, 208, 255, 0.08); }
+.dock-option.selected { border-color: rgba(82, 228, 255, 0.55); color: #bff6ff; background: rgba(0, 208, 255, 0.13); box-shadow: inset 0 0 0 1px rgba(82, 228, 255, 0.08); }
 
 .assistant-content { flex: 1; min-height: 0; overflow-y: auto; padding: 19px 18px 10px; }
 .assistant-status { min-height: 108px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 13px; background: rgba(255, 255, 255, 0.035); }

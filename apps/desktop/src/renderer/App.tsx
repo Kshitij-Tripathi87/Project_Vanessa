@@ -6,6 +6,7 @@ import { CompactAssistant } from "./components/CompactAssistant.js";
 
 const PANEL_SIZE = { width: 360, height: 440 };
 const ORB_SIZE = { width: 90, height: 90 };
+type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 export function App() {
   const {
@@ -38,6 +39,7 @@ export function App() {
     resumeAudio,
   } = useAudioCapture();
   const [expanded, setExpanded] = useState(false);
+  const [dockCorner, setDockCorner] = useState<DockCorner>("bottom-right");
   const [typedInput, setTypedInput] = useState("");
 
   // Keep typed input local to the surface. It should never become task state
@@ -46,8 +48,17 @@ export function App() {
 
   const resizeSurface = useCallback((open: boolean) => {
     const size = open ? PANEL_SIZE : ORB_SIZE;
-    void window.vanessa?.resizeWindow?.(size);
-    if (!open) void window.vanessa?.dockCorner?.("bottom-right");
+    // Resize first, then re-anchor using the new dimensions so expanded panels
+    // remain entirely visible on screen.
+    void (async () => {
+      await window.vanessa?.resizeWindow?.(size);
+      await window.vanessa?.dockCorner?.(dockCorner);
+    })();
+  }, [dockCorner]);
+
+  const handleDockCorner = useCallback((corner: DockCorner) => {
+    setDockCorner(corner);
+    void window.vanessa?.dockCorner?.(corner);
   }, []);
 
   const openPanel = useCallback(() => {
@@ -75,8 +86,8 @@ export function App() {
     setPendingApproval(null);
     if (requestId) {
       const result = await window.vanessa?.cancelTask?.(requestId);
-      if (result && !result.success) {
-        setLastResponse(result.error || "Cancellation could not be confirmed. Check task status before retrying.");
+      if (!result?.success) {
+        setLastResponse(result?.error || "Cancellation could not be confirmed. Check task status before retrying.");
         setTaskStage("failed", "Cancellation could not be confirmed.");
         return;
       }
@@ -91,11 +102,17 @@ export function App() {
     // Escape is the explicit emergency action for all orchestrator work.
     cancelVoice();
     const result = await window.vanessa?.cancelTask?.();
+    if (!result?.success) {
+      setLastResponse(result?.error || "Emergency stop could not be confirmed. Inspect task status.");
+      if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
+        setTaskStage("failed", "Emergency stop could not be confirmed.");
+      }
+      return;
+    }
     setCurrentRequestId(null);
     setPendingApproval(null);
-    if (result && !result.success) setLastResponse(result.error || "Emergency stop could not be confirmed.");
     if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
-      setTaskStage("cancelled", "Emergency stop requested.");
+      setTaskStage("cancelled", "Emergency stop acknowledged by the orchestrator.");
     }
   }, [cancelVoice, setCurrentRequestId, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
 
@@ -137,6 +154,7 @@ export function App() {
   return (
     <CompactAssistant
       expanded={expanded}
+      dockCorner={dockCorner}
       voiceState={voiceState}
       taskStage={taskStage}
       progressMessage={progressMessage}
@@ -155,6 +173,7 @@ export function App() {
       onOrbClick={handleOrbClick}
       onExpand={openPanel}
       onCollapse={collapsePanel}
+      onDockCorner={handleDockCorner}
       onStop={handleStop}
       onTypedCommandChange={setTypedInput}
       onExecute={() => void execute()}

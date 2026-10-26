@@ -5,8 +5,11 @@ import type { ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCaptu
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
 
+type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
 interface CompactAssistantProps {
   expanded: boolean;
+  dockCorner: DockCorner;
   voiceState: VoiceState;
   taskStage: TaskStage;
   progressMessage: string;
@@ -25,6 +28,7 @@ interface CompactAssistantProps {
   onOrbClick: () => void;
   onExpand: () => void;
   onCollapse: () => void;
+  onDockCorner: (corner: DockCorner) => void;
   onStop: () => void;
   onTypedCommandChange: (value: string) => void;
   onExecute: () => void;
@@ -53,6 +57,7 @@ function providerLabel(provider: ProviderStatus | undefined) {
 
 export function CompactAssistant({
   expanded,
+  dockCorner,
   voiceState,
   taskStage,
   progressMessage,
@@ -71,6 +76,7 @@ export function CompactAssistant({
   onOrbClick,
   onExpand,
   onCollapse,
+  onDockCorner,
   onStop,
   onTypedCommandChange,
   onExecute,
@@ -82,6 +88,21 @@ export function CompactAssistant({
   const taskBusy = taskStage !== "idle" && !["completed", "partial", "failed", "cancelled"].includes(taskStage);
   const voiceBusy = ["thinking", "executing", "responding", "speaking"].includes(voiceState);
   const isBusy = taskBusy || voiceBusy;
+  const isListening = voiceState === "listening";
+  const isSpeaking = voiceState === "speaking" || voiceState === "responding";
+  const orbVoiceState = isListening
+    ? "listening"
+    : voiceState === "thinking"
+      ? "thinking"
+      : isSpeaking
+        ? "speaking"
+        : voiceState === "error"
+          ? "failed"
+          : voiceState === "interrupted"
+            ? "cancelled"
+            : taskStage === "accepted"
+              ? "thinking"
+              : taskStage;
   const orbScale = isMicActive ? 1 + Math.min(0.14, audioLevel * 0.3) : 1;
 
   if (!expanded) {
@@ -90,9 +111,9 @@ export function CompactAssistant({
         <span className="orb-halo orb-halo-one" aria-hidden="true" />
         <span className="orb-halo orb-halo-two" aria-hidden="true" />
         <button
-          className={`orb-button no-drag orb-${taskStage} voice-${voiceState}`}
+          className={`orb-button no-drag orb-${taskStage} orb-${orbVoiceState} voice-${voiceState}`}
           onClick={onOrbClick}
-          aria-label={isMicActive ? "Stop listening" : "Start speaking to Vanessa"}
+          aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Start speaking to Vanessa"}
           style={{ transform: `scale(${orbScale})` }}
         >
           <img src={orbImage} alt="Vanessa" />
@@ -129,6 +150,23 @@ export function CompactAssistant({
             <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : voiceConnectionState === "disabled" ? "Text-only mode" : "Offline"}</span></div>
             <div className="menu-row"><span>Speech recognition</span><span>{providerLabel(providerStatus?.asr)}</span></div>
             <div className="menu-row"><span>Speech output</span><span>{providerLabel(providerStatus?.tts)}</span></div>
+            <div className="menu-divider" />
+            <div className="menu-title">Dock position</div>
+            <div className="dock-options" role="group" aria-label="Dock Vanessa to a screen corner">
+              {([
+                ["top-left", "Top left"],
+                ["top-right", "Top right"],
+                ["bottom-left", "Bottom left"],
+                ["bottom-right", "Bottom right"],
+              ] as const).map(([corner, label]) => (
+                <button
+                  key={corner}
+                  className={`dock-option ${dockCorner === corner ? "selected" : ""}`}
+                  aria-pressed={dockCorner === corner}
+                  onClick={() => { onDockCorner(corner); setMoreOpen(false); }}
+                >{label}</button>
+              ))}
+            </div>
             <div className="menu-divider" />
             <button className="menu-action" onClick={() => setDetailsOpen((open) => !open)}>Task details</button>
           </div>
@@ -176,9 +214,9 @@ export function CompactAssistant({
 
       <footer className="assistant-footer no-drag">
         <div className="command-row">
-          <button className={`talk-button ${isMicActive ? "talking" : ""}`} onClick={onOrbClick} aria-label={isMicActive ? "Stop listening" : "Talk to Vanessa"}>
-            {isMicActive ? <MicOff size={16} /> : <Mic size={16} />}
-            <span>{isMicActive ? "Listening" : "Talk"}</span>
+          <button className={`talk-button ${isListening ? "talking" : ""}`} onClick={onOrbClick} aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Talk to Vanessa"}>
+            {isListening ? <MicOff size={16} /> : <Mic size={16} />}
+            <span>{isListening ? "Listening" : isSpeaking ? "Interrupt" : "Talk"}</span>
           </button>
           <input
             value={typedCommand}
