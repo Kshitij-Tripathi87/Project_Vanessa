@@ -86,8 +86,8 @@ export function App() {
     setPendingApproval(null);
     if (requestId) {
       const result = await window.vanessa?.cancelTask?.(requestId);
-      if (result && !result.success) {
-        setLastResponse(result.error || "Cancellation could not be confirmed. Check task status before retrying.");
+      if (!result?.success) {
+        setLastResponse(result?.error || "Cancellation could not be confirmed. Check task status before retrying.");
         setTaskStage("failed", "Cancellation could not be confirmed.");
         return;
       }
@@ -102,11 +102,17 @@ export function App() {
     // Escape is the explicit emergency action for all orchestrator work.
     cancelVoice();
     const result = await window.vanessa?.cancelTask?.();
+    if (!result?.success) {
+      setLastResponse(result?.error || "Emergency stop could not be confirmed. Inspect task status.");
+      if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
+        setTaskStage("failed", "Emergency stop could not be confirmed.");
+      }
+      return;
+    }
     setCurrentRequestId(null);
     setPendingApproval(null);
-    if (result && !result.success) setLastResponse(result.error || "Emergency stop could not be confirmed.");
     if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
-      setTaskStage("cancelled", "Emergency stop requested.");
+      setTaskStage("cancelled", "Emergency stop acknowledged by the orchestrator.");
     }
   }, [cancelVoice, setCurrentRequestId, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
 
