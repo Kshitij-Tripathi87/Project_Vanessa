@@ -26,6 +26,8 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Verify incident log target resolution
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
+      - name: Run orchestrator scenario regression suite
+        run: pnpm test:scenarios
       - name: Type-check evaluation harness
         run: pnpm exec tsc --noEmit -p tsconfig.json
       - run: pnpm run test:sarvam:gate
