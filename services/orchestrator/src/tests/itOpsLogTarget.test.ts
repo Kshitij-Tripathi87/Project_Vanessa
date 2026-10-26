@@ -120,3 +120,17 @@ test("analyzing a non-empty log without the checkout signature does not fabricat
     assert.deepEqual(data.probableCauses, []);
   });
 });
+
+test("the default target resolves the tracked synthetic fixture from package or repository cwd", async () => {
+  const agent = new ITOpsAgent();
+  const result = await agent.execute("it_ops.analyze_logs", {});
+
+  assert.equal(result.success, true);
+  assert.equal(result.status, "completed");
+  assert.equal(result.verification?.passed, true);
+  const data = result.data as Record<string, unknown>;
+  assert.equal(data.logPath, "logs/checkout-service.log");
+  assert.equal(data.logLineCount, 4);
+  assert.equal(data.totalErrorsDetected, 3);
+  assert.equal(data.signatureMatches, 3);
+});
