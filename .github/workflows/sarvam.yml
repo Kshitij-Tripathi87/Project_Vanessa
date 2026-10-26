@@ -26,6 +26,8 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Type-check evaluation harness
         run: pnpm exec tsc --noEmit -p tsconfig.json
+      - name: Test floating-window docking geometry
+        run: pnpm run test:desktop:layout
       - run: pnpm run test:sarvam:gate
       - run: node --test scripts/security.test.cjs
       # No real microphone, cloud credentials, or billable provider calls in CI.
