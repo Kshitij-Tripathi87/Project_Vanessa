@@ -4,15 +4,28 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
-  if (task.action === "codex.open" && structured?.success === true && structured?.status === "started") {
-    task.spokenSummary = "I started a Codex terminal with your request. Coding completion is not yet reported to Vanessa.";
-  }
   const evidence = Array.isArray(structured?.evidence) ? structured.evidence : [];
   task.evidence = evidence;
   task.artifacts = Array.isArray(structured?.artifacts) ? structured.artifacts : [];
 
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
+
+  // Opening an interactive coding terminal is a handoff, not proof that code was
+  // written or tested. Keep that distinction even if the launcher itself worked.
+  if ((task.action === "codex.open" || task.action === "claude_code.open") && structured?.success === true && structured?.status === "started") {
+    const detail = "Interactive coding session started; patch creation and test completion have not been reported.";
+    task.spokenSummary = "I opened the coding session. I have not yet verified a code change or test result.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: 0,
+      artifacts: task.artifacts,
+      outcome: "partial",
+      details: detail,
+    };
+    return "partial";
+  }
   if (verification?.passed === true && verificationDetails) {
     const successReported = structured.success !== false;
     task.verification = {
@@ -56,24 +69,18 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
   }
 
   if (structured?.success === true || verification?.passed === true) {
-    const detail = verificationDetails || (typeof structured?.output === "string" ? structured.output : (typeof structured?.spokenSummary === "string" ? structured.spokenSummary : "Operation completed successfully"));
+    const detail = verificationDetails || (typeof structured?.output === "string" ? structured.output : (typeof structured?.spokenSummary === "string" ? structured.spokenSummary : ""));
     task.verification = {
-      verified: true,
-      postconditions: [detail],
+      verified: false,
+      postconditions: [detail
+        ? `Agent reported success, but did not provide a passing verification result: ${detail}`
+        : "Agent reported success, but did not provide a passing verification result."],
       exitCode: 0,
       artifacts: task.artifacts,
-      outcome: "succeeded",
-      details: detail,
+      outcome: "partial",
+      details: detail || undefined,
     };
-    if (evidence.length === 0) {
-      evidence.push({
-        description: detail,
-        source: "agent_execution",
-        timestamp: new Date().toISOString(),
-        confidence: 0.9,
-      });
-    }
-    return "success";
+    return "partial";
   }
 
   task.verification = {
