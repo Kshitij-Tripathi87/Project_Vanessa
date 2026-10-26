@@ -152,6 +152,8 @@ export interface Task {
 export interface Plan {
   id: string;
   command: string;
+  /** Correlates plan lifecycle events with the originating user request. */
+  requestId?: string;
   source?: "voice" | "desktop" | "phone";
   intent?: "single_task" | "multi_task" | string;
   risk: RiskLevel;
