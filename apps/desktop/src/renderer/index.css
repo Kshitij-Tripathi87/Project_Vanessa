@@ -344,6 +344,7 @@ input {
 .status-inline i { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 6px #34d399; }
 .status-inline.connection-connecting i { background: #fbbf24; box-shadow: 0 0 6px #fbbf24; }
 .status-inline.connection-disconnected i { background: #fb7185; box-shadow: 0 0 6px #fb7185; }
+.status-inline.connection-disabled i { background: #64748b; box-shadow: none; }
 .menu-divider { height: 1px; margin: 7px 0; background: var(--border-subtle); }
 .menu-action { width: 100%; padding: 6px; border-radius: 6px; color: #8eeeff; background: rgba(0, 208, 255, 0.08); text-align: left; font-size: 10px; }
 
