@@ -341,6 +341,11 @@ export class VanessaVoiceSession {
 
         if (generation !== this.sessionGeneration) return;
 
+        // The orchestrator has returned the final command result. Do not keep a
+        // completed request eligible for cancellation during TTS playback.
+        if (this.activeRequestId === requestId) this.activeRequestId = undefined;
+        if (this.requestController === controller) this.requestController = undefined;
+
         console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
         this.handlers.onHudUpdate?.({
