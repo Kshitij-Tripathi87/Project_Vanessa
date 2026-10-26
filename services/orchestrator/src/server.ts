@@ -4,7 +4,7 @@ import websocket from "@fastify/websocket";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
 import { VanessaEvent } from "@vanessa/shared";
@@ -26,6 +26,7 @@ for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
 }
 
 const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
+const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
 
 await fastify.register(cors, {
@@ -82,20 +83,23 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
   }
   connectedClients.add(socket);
 
-  const since = Number((req.query as any)?.since || 0);
+  const query = req.query as any;
+  const since = Number(query?.since || 0);
+  const clientStreamId = typeof query?.streamId === "string" ? query.streamId : null;
+  const replayAfter = clientStreamId === EVENT_STREAM_ID && Number.isFinite(since) ? since : 0;
 
   // Send current status immediately
   socket.send(
     JSON.stringify({
       type: "system:status",
-      payload: orchestrator.getSystemStatus(),
+      payload: { ...orchestrator.getSystemStatus(), eventStreamId: EVENT_STREAM_ID },
       timestamp: Date.now(),
     })
   );
 
   // Replay the bounded in-memory stream so a short desktop reconnect does not
   // erase the task currently shown in the HUD.
-  for (const event of eventBus.getEventsAfter(Number.isFinite(since) ? since : 0)) {
+  for (const event of eventBus.getEventsAfter(replayAfter)) {
     socket.send(JSON.stringify(event));
   }
 
