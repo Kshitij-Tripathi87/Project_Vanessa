@@ -8,7 +8,7 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const { x: workAreaX, y: workAreaY, width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
   const initialSize = 90;
   const margin = 24;
 
@@ -17,8 +17,8 @@ function createWindow() {
     height: initialSize,
     minWidth: 70,
     minHeight: 70,
-    x: screenWidth - initialSize - margin,
-    y: screenHeight - initialSize - margin,
+    x: workAreaX + screenWidth - initialSize - margin,
+    y: workAreaY + screenHeight - initialSize - margin,
     title: "Vanessa",
     icon: path.join(__dirname, "../../assets/vanessa.png"),
     frame: false,
