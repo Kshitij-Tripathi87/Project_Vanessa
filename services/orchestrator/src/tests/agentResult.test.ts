@@ -68,6 +68,21 @@ test("a failed verification remains failed even when execution returned data", (
   assert.equal(task.verification?.outcome, "failed");
 });
 
+test("explicit failed or blocked status overrides a contradictory passing verification", () => {
+  for (const status of ["failed", "blocked"] as const) {
+    const task = taskTemplate();
+    const outcome = recordAgentResult(task, {
+      success: true,
+      status,
+      verification: { passed: true, details: "Contradictory positive text must not override the terminal status." },
+    });
+
+    assert.equal(outcome, "failed", `status=${status}`);
+    assert.equal(task.verification?.verified, false, `status=${status}`);
+    assert.equal(task.verification?.outcome, "failed", `status=${status}`);
+  }
+});
+
 test("opening Codex is a partial interactive handoff, not completed coding work", () => {
   const task = taskTemplate({ action: "codex.open" });
   const outcome = recordAgentResult(task, {
