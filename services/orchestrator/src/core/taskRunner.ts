@@ -120,17 +120,6 @@ function recordAgentResult(task: Task, result: any): "success" | "partial" | "fa
     return "success";
   }
 
-  if (result !== undefined && result !== null && result !== false && structured?.status !== "failed") {
-    task.verification = {
-      verified: true,
-      postconditions: [verificationDetails || "Task completed without error."],
-      exitCode: 0,
-      artifacts: task.artifacts,
-      outcome: "succeeded",
-    };
-    return "success";
-  }
-
   task.verification = {
     verified: false,
     postconditions: ["No explicit passing verification result was returned by the agent."],
