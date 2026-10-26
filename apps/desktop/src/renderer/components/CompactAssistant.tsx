@@ -5,8 +5,11 @@ import type { ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCaptu
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
 
+type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
 interface CompactAssistantProps {
   expanded: boolean;
+  dockCorner: DockCorner;
   voiceState: VoiceState;
   taskStage: TaskStage;
   progressMessage: string;
@@ -25,6 +28,7 @@ interface CompactAssistantProps {
   onOrbClick: () => void;
   onExpand: () => void;
   onCollapse: () => void;
+  onDockCorner: (corner: DockCorner) => void;
   onStop: () => void;
   onTypedCommandChange: (value: string) => void;
   onExecute: () => void;
@@ -53,6 +57,7 @@ function providerLabel(provider: ProviderStatus | undefined) {
 
 export function CompactAssistant({
   expanded,
+  dockCorner,
   voiceState,
   taskStage,
   progressMessage,
@@ -71,6 +76,7 @@ export function CompactAssistant({
   onOrbClick,
   onExpand,
   onCollapse,
+  onDockCorner,
   onStop,
   onTypedCommandChange,
   onExecute,
@@ -129,6 +135,23 @@ export function CompactAssistant({
             <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : voiceConnectionState === "disabled" ? "Text-only mode" : "Offline"}</span></div>
             <div className="menu-row"><span>Speech recognition</span><span>{providerLabel(providerStatus?.asr)}</span></div>
             <div className="menu-row"><span>Speech output</span><span>{providerLabel(providerStatus?.tts)}</span></div>
+            <div className="menu-divider" />
+            <div className="menu-title">Dock position</div>
+            <div className="dock-options" role="group" aria-label="Dock Vanessa to a screen corner">
+              {([
+                ["top-left", "Top left"],
+                ["top-right", "Top right"],
+                ["bottom-left", "Bottom left"],
+                ["bottom-right", "Bottom right"],
+              ] as const).map(([corner, label]) => (
+                <button
+                  key={corner}
+                  className={`dock-option ${dockCorner === corner ? "selected" : ""}`}
+                  aria-pressed={dockCorner === corner}
+                  onClick={() => { onDockCorner(corner); setMoreOpen(false); }}
+                >{label}</button>
+              ))}
+            </div>
             <div className="menu-divider" />
             <button className="menu-action" onClick={() => setDetailsOpen((open) => !open)}>Task details</button>
           </div>
