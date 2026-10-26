@@ -66,14 +66,26 @@ export function App() {
     toggleRecording();
   }, [expanded, openPanel, resumeAudio, toggleRecording]);
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
+    const requestId = currentRequestId;
     const taskWasActive = ["accepted", "planning", "executing", "verifying"].includes(taskStage);
-    // Stop this turn through the voice session; do not trigger the global kill switch.
+    // Stop the local voice turn and use request-scoped cancellation as a fallback
+    // if the voice socket is down. Never escalate ordinary Stop to cancel-all.
     cancelVoice();
-    setCurrentRequestId(null);
     setPendingApproval(null);
-    if (taskWasActive) setTaskStage("cancelled", "Cancellation requested.");
-  }, [cancelVoice, setCurrentRequestId, setPendingApproval, setTaskStage, taskStage]);
+    if (requestId) {
+      const result = await window.vanessa?.cancelTask?.(requestId);
+      if (result && !result.success) {
+        setLastResponse(result.error || "Cancellation could not be confirmed. Check task status before retrying.");
+        setTaskStage("failed", "Cancellation could not be confirmed.");
+        return;
+      }
+    }
+    setCurrentRequestId(null);
+    if (taskWasActive) {
+      setTaskStage("cancelled", requestId ? "Cancellation requested for this task." : "Voice turn stopped; task cancellation was not independently confirmed.");
+    }
+  }, [cancelVoice, currentRequestId, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, taskStage]);
 
   const handleEmergencyStop = useCallback(async () => {
     // Escape is the explicit emergency action for all orchestrator work.
