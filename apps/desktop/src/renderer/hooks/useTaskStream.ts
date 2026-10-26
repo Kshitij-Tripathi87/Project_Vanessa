@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { TaskStage, useVanessaStore } from "../stores/vanessaStore.js";
-import { VanessaEvent } from "@vanessa/shared";
+import type { Plan, Task, VanessaEvent } from "@vanessa/shared";
 
 function stageForStatus(status: string): { stage: TaskStage; message: string } | null {
   switch (status) {
@@ -19,12 +19,12 @@ function stageForStatus(status: string): { stage: TaskStage; message: string } |
       return { stage: "verifying", message: "Checking that the result is real." };
     case "success":
     case "succeeded":
-      return { stage: "completed", message: "Done — result verified." };
+      return { stage: "verifying", message: "Step finished. Checking the overall result." };
     case "failed":
     case "blocked":
     case "expired":
     case "partial":
-      return { stage: "failed", message: "The task could not be fully completed." };
+      return { stage: "executing", message: "A step needs attention. Checking the overall result." };
     case "cancelled":
     case "interrupted":
       return { stage: "cancelled", message: "Task stopped." };
@@ -34,13 +34,38 @@ function stageForStatus(status: string): { stage: TaskStage; message: string } |
 }
 
 
+function terminalPlanOutcome(planValue: unknown): { stage: TaskStage; message: string; approval: Task | null } {
+  const plan = planValue as Plan | null;
+  const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+  if (tasks.length === 0) return { stage: "failed", message: "Task ended without a verifiable result.", approval: null };
+  const stateOf = (task: Task) => {
+    if (["success", "succeeded", "failed", "partial", "blocked", "expired", "cancelled", "interrupted", "awaiting_approval"].includes(task.status)) return task.status;
+    return task.lifecycleState || task.status;
+  };
+  const approval = tasks.find((task) => stateOf(task) === "awaiting_approval") || null;
+  if (approval) return { stage: "executing", message: "I need your approval before continuing.", approval };
+  const states = tasks.map(stateOf);
+  if (states.every((status) => status === "cancelled" || status === "interrupted")) {
+    return { stage: "cancelled", message: "Task stopped.", approval: null };
+  }
+  const incomplete = tasks.filter((task) => !["success", "succeeded"].includes(stateOf(task)));
+  const unverified = tasks.filter((task) => ["success", "succeeded"].includes(stateOf(task)) && task.verification?.verified !== true);
+  if (incomplete.length > 0) {
+    const hasSuccess = tasks.some((task) => ["success", "succeeded"].includes(stateOf(task)));
+    const hasPartial = states.some((status) => status === "partial");
+    if (hasSuccess || hasPartial) return { stage: "partial", message: "Partially completed. Review the task results.", approval: null };
+    return { stage: "failed", message: "The task did not complete successfully.", approval: null };
+  }
+  if (unverified.length > 0) return { stage: "failed", message: "The action finished, but verification evidence is missing.", approval: null };
+  return { stage: "completed", message: "Done — result verified.", approval: null };
+}
+
 export function useTaskStream() {
   const {
     updateTask,
     setPendingApproval,
     addAuditLog,
     setActivePlan,
-    setVoiceState,
     setTaskStage,
     setCurrentRequestId,
     setCurrentTaskId,
@@ -60,13 +85,17 @@ export function useTaskStream() {
           if (oldest) seenEvents.current.delete(oldest);
         }
       }
+      if (event.requestId) setCurrentRequestId(event.requestId);
       switch (event.type) {
         case "task:update":
           updateTask(event.payload);
           setCurrentTaskId(event.payload.id);
           if (event.payload.requestId) setCurrentRequestId(event.payload.requestId);
           {
-            const lifecycle = stageForStatus(event.payload.lifecycleState || event.payload.status);
+            const status = ["success", "succeeded", "failed", "partial", "blocked", "expired", "cancelled", "interrupted", "awaiting_approval"].includes(event.payload.status)
+              ? event.payload.status
+              : event.payload.lifecycleState || event.payload.status;
+            const lifecycle = stageForStatus(status);
             if (lifecycle) setTaskStage(lifecycle.stage, lifecycle.message);
           }
           break;
@@ -82,32 +111,29 @@ export function useTaskStream() {
           break;
         case "approval:rejected":
           setPendingApproval(null);
-          setTaskStage("cancelled", "You declined this action.");
+          setTaskStage("executing", "Action declined. Checking the remaining work.");
           break;
         case "plan:created":
           setActivePlan(event.payload);
-          setCurrentRequestId(event.payload.tasks?.find((task: any) => task.requestId)?.requestId || null);
           setTaskStage("planning", "Plan created. Preparing the next step.");
-          setVoiceState("thinking");
           break;
         case "plan:started":
           setTaskStage("executing", "Working on it.");
-          setVoiceState("executing");
           break;
-        case "plan:completed":
-          setTaskStage("completed", "Done — result verified.");
-          setVoiceState("responding");
+        case "plan:completed": {
+          const outcome = terminalPlanOutcome(event.payload);
+          setTaskStage(outcome.stage, outcome.message);
+          setPendingApproval(outcome.approval);
           break;
+        }
         case "task.failed":
-          setTaskStage("failed", event.payload.error || "The task failed.");
-          setVoiceState("error");
+          setTaskStage("executing", "A step failed. Checking the overall result.");
           break;
         case "task.cancelled":
           setTaskStage("cancelled", event.payload.reason || "Task stopped.");
-          setVoiceState("interrupted");
           break;
         case "verification.completed":
-          setTaskStage(event.payload.verified === false ? "failed" : "verifying", event.payload.verified === false ? "Verification failed." : "Checking the result.");
+          setTaskStage(event.payload.verified === false ? "executing" : "verifying", event.payload.verified === false ? "A step did not pass verification. Checking remaining work." : "Checking the result.");
           break;
         case "audit:log":
           addAuditLog(event.payload);
@@ -120,5 +146,5 @@ export function useTaskStream() {
     return () => {
       unsubscribe();
     };
-  }, [updateTask, setPendingApproval, addAuditLog, setActivePlan, setVoiceState, setTaskStage, setCurrentRequestId, setCurrentTaskId]);
+  }, [updateTask, setPendingApproval, addAuditLog, setActivePlan, setTaskStage, setCurrentRequestId, setCurrentTaskId]);
 }
