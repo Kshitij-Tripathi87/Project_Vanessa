@@ -249,16 +249,38 @@ input {
   object-position: center;
   mix-blend-mode: screen;
   filter: saturate(1.08) contrast(1.04);
-  transform: scale(1.28);
+  /* Crop the reference artwork's black margins inside the small circular window. */
+  transform: scale(1.42);
 }
 
 .orb-button.orb-planning,
 .orb-button.orb-executing,
 .orb-button.orb-verifying {
   border-color: #a78bfa;
-  box-shadow: 0 0 26px rgba(139, 92, 246, 0.72);
-  animation: orb-pulse-thinking 2s linear infinite;
+  box-shadow: 0 0 26px rgba(139, 92, 246, 0.52);
 }
+
+/* Voice activity is separate from task lifecycle so the orb remains responsive
+   while listening or speaking even when no task is currently executing. */
+@keyframes orb-voice-listening {
+  0%, 100% { box-shadow: 0 0 19px rgba(52, 211, 153, 0.32), inset 0 0 12px rgba(52, 211, 153, 0.1); }
+  50% { box-shadow: 0 0 34px rgba(52, 211, 153, 0.78), inset 0 0 18px rgba(52, 211, 153, 0.22); }
+}
+@keyframes orb-voice-processing {
+  0%, 100% { box-shadow: 0 0 20px rgba(0, 207, 255, 0.38), inset 0 0 12px rgba(0, 207, 255, 0.12); }
+  50% { box-shadow: 0 0 34px rgba(139, 92, 246, 0.72), inset 0 0 18px rgba(0, 207, 255, 0.24); }
+}
+@keyframes orb-voice-speaking {
+  0%, 100% { box-shadow: 0 0 21px rgba(0, 207, 255, 0.42), inset 0 0 12px rgba(0, 207, 255, 0.12); }
+  50% { box-shadow: 0 0 37px rgba(0, 207, 255, 0.82), inset 0 0 18px rgba(0, 207, 255, 0.28); }
+}
+.orb-button.voice-listening { border-color: #34d399; animation: orb-voice-listening 1.2s ease-in-out infinite; }
+.orb-button.voice-thinking,
+.orb-button.voice-executing,
+.orb-button.voice-responding { border-color: #60a5fa; animation: orb-voice-processing 1.6s ease-in-out infinite; }
+.orb-button.voice-speaking { border-color: #22d3ee; animation: orb-voice-speaking 1.15s ease-in-out infinite; }
+.orb-button.voice-interrupted { border-color: #fbbf24; }
+.orb-button.voice-error { border-color: #fb7185; box-shadow: 0 0 25px rgba(251, 113, 133, 0.68); }
 
 .orb-button.orb-completed { border-color: #34d399; box-shadow: 0 0 26px rgba(52, 211, 153, 0.65); }
 .orb-button.orb-partial { border-color: #fbbf24; box-shadow: 0 0 24px rgba(251, 191, 36, 0.5); }
@@ -331,7 +353,7 @@ input {
 .wordmark { display: inline-flex !important; align-items: center; gap: 5px; letter-spacing: 0.04em !important; }
 .wordmark-dot { width: 5px; height: 5px; border-radius: 50%; background: #52e4ff; box-shadow: 0 0 8px #52e4ff; }
 .mini-orb { width: 29px; height: 29px; overflow: hidden; border: 1px solid rgba(0, 218, 255, 0.6); border-radius: 50%; background: #000; }
-.mini-orb img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: screen; transform: scale(1.3); }
+.mini-orb img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: screen; transform: scale(1.42); }
 .assistant-header-actions { display: flex; gap: 4px; }
 .icon-button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; color: var(--text-muted); background: transparent; }
 .icon-button:hover { border-color: var(--border-subtle); color: var(--text-main); background: rgba(255, 255, 255, 0.07); }
