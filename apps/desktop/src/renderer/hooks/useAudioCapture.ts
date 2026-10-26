@@ -59,6 +59,7 @@ export function useAudioCapture() {
   const processorRef = useRef<AudioWorkletNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingTextCommandRef = useRef<{ type: "transcript_final"; text: string; language: string; turnId: string } | null>(null);
+  const activeTextOnlyRequestRef = useRef<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
@@ -403,14 +404,24 @@ export function useAudioCapture() {
     // --text-only deliberately omits the voice service. Preserve a usable typed
     // command path through the trusted Electron main process to the same orchestrator.
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
+      const requestId = `desktop-${globalThis.crypto.randomUUID()}`;
+      activeTextOnlyRequestRef.current = requestId;
       setPartialTranscript(text);
       setLastResponse("");
-      setCurrentRequestId(null);
+      setCurrentRequestId(requestId);
       setPendingApproval(null);
       setTaskStage("accepted", "Request received.");
       setVoiceState("thinking");
-      void window.vanessa.executeCommand({ command: text, language: language.slice(0, 32) || "en", source: "desktop" })
+      void window.vanessa.executeCommand({
+        command: text,
+        language: language.slice(0, 32) || "en",
+        source: "desktop",
+        requestId,
+        idempotencyKey: `text-only:${requestId}`,
+      })
         .then((result) => {
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
           if (result.requestId) setCurrentRequestId(result.requestId);
           if (result.plan) setActivePlan(result.plan);
           setLastResponse(result.spokenSummary || "The orchestrator returned without a summary.");
@@ -429,8 +440,11 @@ export function useAudioCapture() {
           setVoiceState("idle");
         })
         .catch((error: unknown) => {
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
           const detail = error instanceof Error ? error.message : "Unknown connection error";
           setLastResponse(`Orchestrator request failed: ${detail}`);
+          setCurrentRequestId(null);
           setTaskStage("failed", "The request could not be completed.");
           setVoiceState("error");
         });
@@ -610,6 +624,7 @@ export function useAudioCapture() {
     preRollRef.current = [];
     bargeResumePendingRef.current = false;
     pendingTextCommandRef.current = null;
+    activeTextOnlyRequestRef.current = null;
     playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
