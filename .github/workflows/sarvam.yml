@@ -26,6 +26,8 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Verify incident log target resolution
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
+      # Full legacy scenarios require a user-selected live planner and include removed legacy actions;
+      # deterministic planner/voice contracts are covered below without live API calls.
       - name: Type-check evaluation harness
         run: pnpm exec tsc --noEmit -p tsconfig.json
       - name: Test floating-window docking geometry
