@@ -27,7 +27,7 @@ function stageForStatus(status: string): { stage: TaskStage; message: string } |
       return { stage: "executing", message: "A step needs attention. Checking the overall result." };
     case "cancelled":
     case "interrupted":
-      return { stage: "cancelled", message: "Task stopped." };
+      return { stage: "executing", message: "A step was stopped. Checking the overall result." };
     default:
       return null;
   }
@@ -130,7 +130,7 @@ export function useTaskStream() {
           setTaskStage("executing", "A step failed. Checking the overall result.");
           break;
         case "task.cancelled":
-          setTaskStage("cancelled", event.payload.reason || "Task stopped.");
+          setTaskStage("executing", event.payload.reason || "A step was stopped. Checking the remaining work.");
           break;
         case "verification.completed":
           setTaskStage(event.payload.verified === false ? "executing" : "verifying", event.payload.verified === false ? "A step did not pass verification. Checking remaining work." : "Checking the result.");
