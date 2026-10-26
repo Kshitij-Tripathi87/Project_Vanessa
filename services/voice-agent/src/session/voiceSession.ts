@@ -341,6 +341,13 @@ export class VanessaVoiceSession {
 
         if (generation !== this.sessionGeneration) return;
 
+        // Only terminal results release the cancellation handle. An approval
+        // request remains cancellable even while Vanessa speaks the approval prompt.
+        if (["success", "failed", "partial"].includes(execution.status)) {
+          if (this.activeRequestId === requestId) this.activeRequestId = undefined;
+        }
+        if (this.requestController === controller) this.requestController = undefined;
+
         console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
         this.handlers.onHudUpdate?.({
@@ -411,21 +418,36 @@ export class VanessaVoiceSession {
   }
 
   /**
-   * Barge-In interrupt: immediately cancels active speech and downstream responses
+   * Barge-in stops speech output and opens a fresh listening turn.
+   * It deliberately does not cancel the orchestrator task: playback interruption
+   * and task cancellation are different user intents. Explicit stop/deactivate
+   * still uses cancelCurrentTurn() and requests orchestrator cancellation.
    */
   interrupt(): void {
-    this.cancelCurrentTurn();
+    // Fence the prior response so late callbacks cannot speak over the new turn.
+    // Barge-in normally occurs after the orchestrator response has arrived, so
+    // there is no reason to send a second, potentially misleading cancel request.
+    this.sessionGeneration++;
+    this.requestController = undefined;
+    // Preserve a non-terminal request ID (for example awaiting_approval) so an
+    // explicit Stop can still cancel it. Terminal request IDs are cleared above.
+    this.isProcessing = false;
+    this.isSpeaking = false;
+    this.queuedUtterances = [];
+    this.partialTranscript = "";
+    this.tts.abort();
+    this.sarvamSpeechGate.reset();
+    this.captureAuthorized = false;
     this.bargeIn.reset();
     this.setState("interrupted");
-
-    // Local speech onset is an explicit conversational interruption. Re-open
-    // ASR immediately; old response cleanup is generation-guarded above.
     this.turnDetector.reset();
-    this.resumeSessionAfterInterruption(this.sessionGeneration).then((resumed) => {
+
+    const generation = this.sessionGeneration;
+    this.resumeSessionAfterInterruption(generation).then((resumed) => {
       if (resumed) this.handlers.onHudUpdate?.({ state: "listening", transcript: "" });
     }).catch((err) => {
       console.warn("[VanessaVoiceSession] Could not resume ASR after interruption:", err.message);
-      if (this.state === "interrupted") this.setState("idle");
+      if (generation === this.sessionGeneration && this.state === "interrupted") this.setState("idle");
     });
   }
 
