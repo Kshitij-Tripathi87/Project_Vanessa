@@ -108,30 +108,30 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
-    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    const { x: workAreaX, y: workAreaY, width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workArea;
     const [winWidth, winHeight] = mainWindow.getSize();
     const margin = 24;
 
-    let x = screenWidth - winWidth - margin;
-    let y = screenHeight - winHeight - margin;
+    let x = workAreaX + screenWidth - winWidth - margin;
+    let y = workAreaY + screenHeight - winHeight - margin;
 
     switch (corner) {
       case "top-left":
-        x = margin;
-        y = margin;
+        x = workAreaX + margin;
+        y = workAreaY + margin;
         break;
       case "top-right":
-        x = screenWidth - winWidth - margin;
-        y = margin;
+        x = workAreaX + screenWidth - winWidth - margin;
+        y = workAreaY + margin;
         break;
       case "bottom-left":
-        x = margin;
-        y = screenHeight - winHeight - margin;
+        x = workAreaX + margin;
+        y = workAreaY + screenHeight - winHeight - margin;
         break;
       case "bottom-right":
       default:
-        x = screenWidth - winWidth - margin;
-        y = screenHeight - winHeight - margin;
+        x = workAreaX + screenWidth - winWidth - margin;
+        y = workAreaY + screenHeight - winHeight - margin;
         break;
     }
 
