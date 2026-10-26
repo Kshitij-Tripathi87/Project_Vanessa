@@ -1,12 +1,17 @@
 import { session } from "electron";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export function configureSecurity() {
   // Vite's React refresh preamble is inline only in explicit development mode.
   const developmentScripts = process.env.VANESSA_DEV_MODE === "1" ? " 'unsafe-inline'" : "";
+  const trustedRendererPath = path.resolve(__dirname, "../renderer/index.html").toLowerCase();
   const isTrustedApp = (url: string) => {
-    if (url.startsWith("file://")) return true;
     try {
       const parsed = new URL(url);
+      if (parsed.protocol === "file:") {
+        return path.resolve(fileURLToPath(parsed)).toLowerCase() === trustedRendererPath;
+      }
       return parsed.protocol === "http:" &&
         ["localhost", "127.0.0.1"].includes(parsed.hostname) &&
         parsed.port === "5173";
