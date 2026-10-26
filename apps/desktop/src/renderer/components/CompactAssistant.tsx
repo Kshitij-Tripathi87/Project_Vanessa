@@ -17,7 +17,7 @@ interface CompactAssistantProps {
   activeTask: Task | null;
   pendingApproval: Task | null;
   providerStatus: VoiceProviderStatus | null;
-  voiceConnectionState: "connecting" | "connected" | "disconnected";
+  voiceConnectionState: "connecting" | "connected" | "disconnected" | "disabled";
   isMicActive: boolean;
   audioLevel: number;
   currentRequestId: string | null;
@@ -126,7 +126,7 @@ export function CompactAssistant({
         {moreOpen && (
           <div className="more-menu no-drag">
             <div className="menu-title">Connection</div>
-            <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : "Offline"}</span></div>
+            <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : voiceConnectionState === "disabled" ? "Text-only mode" : "Offline"}</span></div>
             <div className="menu-row"><span>Speech recognition</span><span>{providerLabel(providerStatus?.asr)}</span></div>
             <div className="menu-row"><span>Speech output</span><span>{providerLabel(providerStatus?.tts)}</span></div>
             <div className="menu-divider" />
@@ -191,7 +191,7 @@ export function CompactAssistant({
           {isBusy ? <button className="stop-button" onClick={onStop}><CircleStop size={16} /> Stop</button> : <button className="send-button" onClick={onExecute} aria-label="Send request">Send</button>}
         </div>
         <div className="footer-hint">
-          <span>{voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>
+          <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>
           {taskStage === "completed" && <span className="verified"><Check size={12} /> Verified</span>}
           {isBusy && taskStage === "planning" && <Loader2 size={13} className="spin" />}
         </div>
