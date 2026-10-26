@@ -88,6 +88,21 @@ export function CompactAssistant({
   const taskBusy = taskStage !== "idle" && !["completed", "partial", "failed", "cancelled"].includes(taskStage);
   const voiceBusy = ["thinking", "executing", "responding", "speaking"].includes(voiceState);
   const isBusy = taskBusy || voiceBusy;
+  const isListening = voiceState === "listening";
+  const isSpeaking = voiceState === "speaking" || voiceState === "responding";
+  const orbVoiceState = isListening
+    ? "listening"
+    : voiceState === "thinking"
+      ? "thinking"
+      : isSpeaking
+        ? "speaking"
+        : voiceState === "error"
+          ? "failed"
+          : voiceState === "interrupted"
+            ? "cancelled"
+            : taskStage === "accepted"
+              ? "thinking"
+              : taskStage;
   const orbScale = isMicActive ? 1 + Math.min(0.14, audioLevel * 0.3) : 1;
 
   if (!expanded) {
@@ -96,9 +111,9 @@ export function CompactAssistant({
         <span className="orb-halo orb-halo-one" aria-hidden="true" />
         <span className="orb-halo orb-halo-two" aria-hidden="true" />
         <button
-          className={`orb-button no-drag orb-${taskStage}`}
+          className={`orb-button no-drag orb-${taskStage} orb-${orbVoiceState}`}
           onClick={onOrbClick}
-          aria-label={isMicActive ? "Stop listening" : "Start speaking to Vanessa"}
+          aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Start speaking to Vanessa"}
           style={{ transform: `scale(${orbScale})` }}
         >
           <img src={orbImage} alt="Vanessa" />
@@ -199,9 +214,9 @@ export function CompactAssistant({
 
       <footer className="assistant-footer no-drag">
         <div className="command-row">
-          <button className={`talk-button ${isMicActive ? "talking" : ""}`} onClick={onOrbClick} aria-label={isMicActive ? "Stop listening" : "Talk to Vanessa"}>
-            {isMicActive ? <MicOff size={16} /> : <Mic size={16} />}
-            <span>{isMicActive ? "Listening" : "Talk"}</span>
+          <button className={`talk-button ${isListening ? "talking" : ""}`} onClick={onOrbClick} aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Talk to Vanessa"}>
+            {isListening ? <MicOff size={16} /> : <Mic size={16} />}
+            <span>{isListening ? "Listening" : isSpeaking ? "Interrupt" : "Talk"}</span>
           </button>
           <input
             value={typedCommand}
