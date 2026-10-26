@@ -118,6 +118,15 @@ html, body {
   }
 }
 
+@keyframes orb-pulse-speaking {
+  0%, 100% {
+    box-shadow: 0 0 25px rgba(0, 190, 255, 0.38), inset 0 0 18px rgba(0, 190, 255, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 46px rgba(0, 242, 254, 0.72), inset 0 0 26px rgba(0, 190, 255, 0.34);
+  }
+}
+
 @keyframes ripple {
   0% {
     transform: scale(0.9);
@@ -139,6 +148,10 @@ html, body {
 
 .orb-thinking {
   animation: orb-pulse-thinking 2s linear infinite;
+}
+
+.orb-speaking {
+  animation: orb-pulse-speaking 1.7s ease-in-out infinite;
 }
 
 .ripple-effect {
