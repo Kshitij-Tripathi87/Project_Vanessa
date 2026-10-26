@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
 import WebSocket from "ws";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
+import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
@@ -11,6 +12,24 @@ const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
 let wsClient: WebSocket | null = null;
 let lastEventSequence = 0;
 let lastEventStreamId: string | null = null;
+let dockedCorner: DockCorner = "bottom-right";
+
+function positionWindowAtCorner(
+  mainWindow: BrowserWindow,
+  corner: DockCorner,
+  requestedSize?: { width: number; height: number },
+) {
+  const display = screen.getDisplayMatching(mainWindow.getBounds());
+  const [currentWidth, currentHeight] = mainWindow.getSize();
+  const position = calculateDockPosition(
+    display.workArea,
+    requestedSize || { width: currentWidth, height: currentHeight },
+    corner,
+    24,
+  );
+  mainWindow.setPosition(position.x, position.y, true);
+  return position;
+}
 
 function assertTrustedRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWindow) {
   if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -99,44 +118,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setSize(payload.width, payload.height);
+      // Keep the selected corner fixed as the orb expands to its task panel.
+      const position = positionWindowAtCorner(mainWindow, dockedCorner, payload);
+      return { success: true, corner: dockedCorner, ...position };
     }
-    return { success: true };
+    return { success: false };
   });
 
   // 5. Dock to Screen Corner (bottom-right, top-right, bottom-left, top-left)
-  ipcMain.handle("vanessa:dock-corner", (event, corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
+  ipcMain.handle("vanessa:dock-corner", (event, corner: DockCorner) => {
     assertTrustedRenderer(event, mainWindow);
     if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
-    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    const [winWidth, winHeight] = mainWindow.getSize();
-    const margin = 24;
-
-    let x = screenWidth - winWidth - margin;
-    let y = screenHeight - winHeight - margin;
-
-    switch (corner) {
-      case "top-left":
-        x = margin;
-        y = margin;
-        break;
-      case "top-right":
-        x = screenWidth - winWidth - margin;
-        y = margin;
-        break;
-      case "bottom-left":
-        x = margin;
-        y = screenHeight - winHeight - margin;
-        break;
-      case "bottom-right":
-      default:
-        x = screenWidth - winWidth - margin;
-        y = screenHeight - winHeight - margin;
-        break;
-    }
-
-    mainWindow.setPosition(x, y, true);
-    return { success: true, corner, x, y };
+    dockedCorner = corner;
+    const position = positionWindowAtCorner(mainWindow, dockedCorner);
+    return { success: true, corner: dockedCorner, ...position };
   });
 
   // 5. Window Controls
