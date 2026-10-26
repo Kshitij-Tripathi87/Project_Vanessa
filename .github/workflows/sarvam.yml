@@ -25,5 +25,6 @@ jobs:
       - name: Type-check evaluation harness
         run: pnpm exec tsc --noEmit -p tsconfig.json
       - run: pnpm run test:sarvam:gate
+      - run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
       - run: node --test scripts/security.test.cjs
       # No real microphone, cloud credentials, or billable provider calls in CI.
