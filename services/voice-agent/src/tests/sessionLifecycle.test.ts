@@ -136,3 +136,45 @@ test("stopping during TTS does not cancel a command that already returned", asyn
   releaseTts();
   await response;
 });
+
+test("barge-in aborts TTS playback without cancelling the completed task", async () => {
+  let releaseTts!: () => void;
+  let announceTtsStarted!: () => void;
+  let ttsAbortCalls = 0;
+  let cancelCalls = 0;
+  let audioChunks = 0;
+  const ttsStarted = new Promise<void>((resolve) => { announceTtsStarted = resolve; });
+  const asr: AsrAdapter = {
+    connect() {}, activateStream() {}, sendAudioChunk() {}, deactivateStream() {}, close() {},
+  };
+  const session = new VanessaVoiceSession({
+    asr,
+    tts: {
+      async streamSpeech(text, callback) {
+        callback({ text, isFinal: false, chunkIndex: 0 });
+        await new Promise<void>((resolve) => { releaseTts = resolve; });
+      },
+      abort() { ttsAbortCalls++; },
+    },
+    client: {
+      async executeCommand() {
+        return { status: "success", spokenSummary: "Task completed." };
+      },
+      async cancelRequest() { cancelCalls++; },
+    },
+    handlers: { onAudioChunkOut: () => { audioChunks++; } },
+  });
+
+  await session.activateSession();
+  const response = session.handleFinalUtterance("check task status", "en", "barge-in-tts");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await ttsStarted;
+  session.interrupt();
+
+  assert.equal(ttsAbortCalls, 1);
+  assert.equal(cancelCalls, 0);
+  assert.equal(audioChunks, 1);
+  releaseTts();
+  await response;
+  session.stop();
+});
