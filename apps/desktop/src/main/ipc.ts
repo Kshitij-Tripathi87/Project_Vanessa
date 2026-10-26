@@ -10,6 +10,7 @@ const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
 
 let wsClient: WebSocket | null = null;
 let lastEventSequence = 0;
+let lastEventStreamId: string | null = null;
 
 function assertTrustedRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWindow) {
   if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -154,12 +155,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // Connect to WebSocket stream and forward to Renderer
   function initWebSocket() {
     try {
-      const separator = WS_URL.includes("?") ? "&" : "?";
-      wsClient = new WebSocket(`${WS_URL}${separator}since=${lastEventSequence}`);
+      const eventsUrl = new URL(WS_URL);
+      eventsUrl.searchParams.set("since", String(lastEventSequence));
+      if (lastEventStreamId) eventsUrl.searchParams.set("streamId", lastEventStreamId);
+      wsClient = new WebSocket(eventsUrl.toString());
 
       wsClient.on("message", (data: any) => {
         try {
            const parsed = JSON.parse(data.toString());
+           if (parsed.type === "system:status" && typeof parsed.payload?.eventStreamId === "string") {
+             const nextStreamId = parsed.payload.eventStreamId as string;
+             if (lastEventStreamId && lastEventStreamId !== nextStreamId) lastEventSequence = 0;
+             lastEventStreamId = nextStreamId;
+           }
            if (typeof parsed.sequence === "number") {
              lastEventSequence = Math.max(lastEventSequence, parsed.sequence);
            }
