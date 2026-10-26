@@ -23,14 +23,14 @@ function fixture() {
   return { session, cancelled, spoken, hud, requests, activations: () => activations };
 }
 
-test("interruption aborts its request and drops late replies without cancelling the next turn", async () => {
+test("barge-in ignores stale replies without cancelling the orchestrator task", async () => {
   const f = fixture();
   await f.session.activateSession();
   const old = f.session.handleFinalUtterance("old request", "en", "old");
   f.session.interrupt();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(f.requests[0].signal?.aborted, true);
-  assert.equal(f.cancelled.length, 1);
+  assert.equal(f.requests[0].signal?.aborted, false);
+  assert.equal(f.cancelled.length, 0);
   const current = f.session.handleFinalUtterance("new request", "en", "new");
   f.requests[0].resolve({ status: "success", spokenSummary: "STALE REPLY" });
   await old;
@@ -47,6 +47,8 @@ test("stop drops pending results, closes capture, and allows a clean restart", a
   await f.session.activateSession();
   const old = f.session.handleFinalUtterance("first", "en", "first");
   f.session.stop();
+  assert.equal(f.requests[0].signal?.aborted, true);
+  assert.equal(f.cancelled.length, 1);
   f.requests[0].resolve({ status: "success", spokenSummary: "must not speak" });
   await old;
   assert.deepEqual(f.spoken, []);
