@@ -43,7 +43,7 @@ function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Floa
 }
 
 export function useAudioCapture() {
-  const { voiceState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, setTaskStage } = useVanessaStore();
+  const { voiceState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, setTaskStage, setPendingApproval } = useVanessaStore();
 
   const [isMicActive, setIsMicActive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0); // 0.0 to 1.0 for VoiceOrb scaling
@@ -51,7 +51,7 @@ export function useAudioCapture() {
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
-  const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected">("connecting");
+  const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -399,6 +399,44 @@ export function useAudioCapture() {
       setLastResponse(text ? "That request is too long." : "Enter a request first.");
       return false;
     }
+
+    // --text-only deliberately omits the voice service. Preserve a usable typed
+    // command path through the trusted Electron main process to the same orchestrator.
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
+      setPartialTranscript(text);
+      setLastResponse("");
+      setCurrentRequestId(null);
+      setPendingApproval(null);
+      setTaskStage("accepted", "Request received.");
+      setVoiceState("thinking");
+      void window.vanessa.executeCommand({ command: text, language: language.slice(0, 32) || "en", source: "desktop" })
+        .then((result) => {
+          if (result.requestId) setCurrentRequestId(result.requestId);
+          if (result.plan) setActivePlan(result.plan);
+          setLastResponse(result.spokenSummary || "The orchestrator returned without a summary.");
+          if (result.status === "awaiting_approval") {
+            setPendingApproval(result.pendingTasks?.[0] || null);
+            setTaskStage("executing", "I need your approval before continuing.");
+          } else if (result.status === "success" && result.verification?.verified === true) {
+            setTaskStage("completed", "Done — result verified.");
+          } else if (result.status === "partial" || result.status === "accepted" || result.status === "success") {
+            setTaskStage("partial", result.status === "accepted"
+              ? "The request is already being processed."
+              : "Execution returned without a fully verified result.");
+          } else {
+            setTaskStage("failed", "The request failed or could not be verified.");
+          }
+          setVoiceState("idle");
+        })
+        .catch((error: unknown) => {
+          const detail = error instanceof Error ? error.message : "Unknown connection error";
+          setLastResponse(`Orchestrator request failed: ${detail}`);
+          setTaskStage("failed", "The request could not be completed.");
+          setVoiceState("error");
+        });
+      return true;
+    }
+
     const command = {
       type: "transcript_final" as const,
       text,
@@ -415,7 +453,7 @@ export function useAudioCapture() {
     setTaskStage("accepted", "Waiting for the local voice service.");
     connectVoiceWs();
     return true;
-  }, [connectVoiceWs, dispatchTextCommand, setLastResponse, setTaskStage, setPartialTranscript]);
+  }, [connectVoiceWs, dispatchTextCommand, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
@@ -628,6 +666,7 @@ export function useAudioCapture() {
 
   useEffect(() => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false") connectVoiceWs();
+    else setVoiceConnectionState("disabled");
     return () => {
       pttActiveRef.current = false;
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
