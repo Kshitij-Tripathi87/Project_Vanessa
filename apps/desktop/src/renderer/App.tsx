@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useVanessaStore } from "./stores/vanessaStore.js";
 import { useTaskStream } from "./hooks/useTaskStream.js";
-import { useElevenLabs } from "./hooks/useElevenLabs.js";
 import { useAudioCapture } from "./hooks/useAudioCapture.js";
 import { CompactAssistant } from "./components/CompactAssistant.js";
 
@@ -21,10 +20,11 @@ export function App() {
     lastResponse,
     setLastResponse,
     setPendingApproval,
+    setCurrentRequestId,
+    setTaskStage,
   } = useVanessaStore();
 
   useTaskStream();
-  const { executeSpeechCommand } = useElevenLabs();
   const {
     isMicActive,
     audioLevel,
@@ -32,6 +32,8 @@ export function App() {
     providerStatus,
     micError,
     cancelVoice,
+    submitTextCommand,
+    voiceConnectionState,
     toggleRecording,
     resumeAudio,
   } = useAudioCapture();
@@ -64,17 +66,31 @@ export function App() {
     toggleRecording();
   }, [expanded, openPanel, resumeAudio, toggleRecording]);
 
-  const handleStop = useCallback(async () => {
+  const handleStop = useCallback(() => {
+    const taskWasActive = ["accepted", "planning", "executing", "verifying"].includes(taskStage);
+    // Stop this turn through the voice session; do not trigger the global kill switch.
     cancelVoice();
-    const result = await window.vanessa?.cancelTask?.(currentRequestId || undefined);
-    if (result && !result.success) setLastResponse(result.error || "Vanessa could not stop the task.");
-  }, [cancelVoice, currentTaskId, setLastResponse]);
+    setCurrentRequestId(null);
+    setPendingApproval(null);
+    if (taskWasActive) setTaskStage("cancelled", "Cancellation requested.");
+  }, [cancelVoice, setCurrentRequestId, setPendingApproval, setTaskStage, taskStage]);
 
-  const execute = useCallback(async (value = command) => {
+  const handleEmergencyStop = useCallback(async () => {
+    // Escape is the explicit emergency action for all orchestrator work.
+    cancelVoice();
+    const result = await window.vanessa?.cancelTask?.();
+    setCurrentRequestId(null);
+    setPendingApproval(null);
+    if (result && !result.success) setLastResponse(result.error || "Emergency stop could not be confirmed.");
+    if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
+      setTaskStage("cancelled", "Emergency stop requested.");
+    }
+  }, [cancelVoice, setCurrentRequestId, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
+
+  const execute = useCallback((value = command) => {
     if (!value.trim()) return;
-    setTypedInput("");
-    await executeSpeechCommand(value.trim());
-  }, [command, executeSpeechCommand]);
+    if (submitTextCommand(value.trim())) setTypedInput("");
+  }, [command, submitTextCommand]);
 
   const approve = useCallback(async (taskId: string) => {
     const result = await window.vanessa.approveTask(taskId);
@@ -94,12 +110,12 @@ export function App() {
 
   useEffect(() => {
     const unsubscribePtt = window.vanessa?.onTriggerPTT?.(handleOrbClick);
-    const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(handleStop);
+    const unsubscribeCancel = window.vanessa?.onTriggerCancel?.(handleEmergencyStop);
     return () => {
       unsubscribePtt?.();
       unsubscribeCancel?.();
     };
-  }, [handleOrbClick, handleStop]);
+  }, [handleOrbClick, handleEmergencyStop]);
 
   const activeTask = useMemo(() => {
     if (currentTaskId) return tasks.find((task) => task.id === currentTaskId) || null;
@@ -119,6 +135,7 @@ export function App() {
       activeTask={activeTask}
       pendingApproval={pendingApproval}
       providerStatus={providerStatus}
+      voiceConnectionState={voiceConnectionState}
       isMicActive={isMicActive}
       audioLevel={audioLevel}
       currentRequestId={currentRequestId}
