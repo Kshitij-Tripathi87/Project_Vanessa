@@ -45,6 +45,8 @@ async function runVoicePlanningTests() {
     assert.match(receivedPrompt, /Vanessa: I found the project report/);
     assert.match(receivedPrompt, /Current user request \(plan this request\):\nopen it/);
     assert.strictEqual(plan.command, "open it");
+    assert.equal(plan.requestId, "planning-log-correlation");
+    assert.equal(plan.tasks[0].requestId, "planning-log-correlation");
     assert.strictEqual(plan.tasks[0].agent, "files");
     assert.strictEqual(plan.tasks[0].status, "pending", "Model tasks must be ready for the runner");
     assert.equal(receivedSystem, PLANNER_SYSTEM_PROMPT);

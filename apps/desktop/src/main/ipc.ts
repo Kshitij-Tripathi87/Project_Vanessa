@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
 import WebSocket from "ws";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
+import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
@@ -11,6 +12,24 @@ const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
 let wsClient: WebSocket | null = null;
 let lastEventSequence = 0;
 let lastEventStreamId: string | null = null;
+let dockedCorner: DockCorner = "bottom-right";
+
+function positionWindowAtCorner(
+  mainWindow: BrowserWindow,
+  corner: DockCorner,
+  requestedSize?: { width: number; height: number },
+) {
+  const display = screen.getDisplayMatching(mainWindow.getBounds());
+  const [currentWidth, currentHeight] = mainWindow.getSize();
+  const position = calculateDockPosition(
+    display.workArea,
+    requestedSize || { width: currentWidth, height: currentHeight },
+    corner,
+    24,
+  );
+  mainWindow.setPosition(position.x, position.y, true);
+  return position;
+}
 
 function assertTrustedRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWindow) {
   if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -91,52 +110,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
-  // 4. Window Resize (Compact Orb vs Expanded Drawer)
+  // 4. Resize and dock the floating window. Reposition immediately after
+  // resizing so the expanded panel stays visible on the selected display.
   ipcMain.handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {
     assertTrustedRenderer(event, mainWindow);
     if (!payload || !Number.isInteger(payload.width) || !Number.isInteger(payload.height) || payload.width < 70 || payload.width > 900 || payload.height < 70 || payload.height > 900) {
       return { success: false };
     }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setSize(payload.width, payload.height);
-    }
-    return { success: true };
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    mainWindow.setSize(payload.width, payload.height);
+    const position = positionWindowAtCorner(mainWindow, dockedCorner, payload);
+    return { success: true, corner: dockedCorner, ...position };
   });
 
-  // 5. Dock to Screen Corner (bottom-right, top-right, bottom-left, top-left)
-  ipcMain.handle("vanessa:dock-corner", (event, corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
+  ipcMain.handle("vanessa:dock-corner", (event, corner: DockCorner) => {
     assertTrustedRenderer(event, mainWindow);
     if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
-    const { x: workAreaX, y: workAreaY, width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workArea;
-    const [winWidth, winHeight] = mainWindow.getSize();
-    const margin = 24;
-
-    let x = workAreaX + screenWidth - winWidth - margin;
-    let y = workAreaY + screenHeight - winHeight - margin;
-
-    switch (corner) {
-      case "top-left":
-        x = workAreaX + margin;
-        y = workAreaY + margin;
-        break;
-      case "top-right":
-        x = workAreaX + screenWidth - winWidth - margin;
-        y = workAreaY + margin;
-        break;
-      case "bottom-left":
-        x = workAreaX + margin;
-        y = workAreaY + screenHeight - winHeight - margin;
-        break;
-      case "bottom-right":
-      default:
-        x = workAreaX + screenWidth - winWidth - margin;
-        y = workAreaY + screenHeight - winHeight - margin;
-        break;
-    }
-
-    mainWindow.setPosition(x, y, true);
-    return { success: true, corner, x, y };
+    dockedCorner = corner;
+    const position = positionWindowAtCorner(mainWindow, dockedCorner);
+    return { success: true, corner: dockedCorner, ...position };
   });
 
   // 5. Window Controls

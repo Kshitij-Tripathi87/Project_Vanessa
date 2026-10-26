@@ -171,7 +171,7 @@ export class VanessaPlanner {
     const ranks: RiskLevel[] = ["low", "medium", "high"];
     const risk = ranks[Math.max(ranks.indexOf(spec.risk), ranks.indexOf(t.risk || "low"))];
     const task: Task = {
-      id: t.id, agent: t.agent, action: t.action, params: { ...t.params },
+      id: t.id, requestId: t.requestId, agent: t.agent, action: t.action, params: { ...t.params },
       dependsOn: [...t.dependsOn], acceptanceCriteria: t.acceptanceCriteria,
       status: "pending", risk, allowedTools: [...spec.tools],
     };
@@ -254,7 +254,7 @@ export class VanessaPlanner {
         const tasks = modelTasks.map((t: Task) => {
           const params = JSON.parse(JSON.stringify(t.params).replace(/"\$([a-zA-Z0-9_]+)\.result\.([a-zA-Z0-9_.]+)"/g,
             (reference: string, id: string, field: string) => ids.has(id) ? JSON.stringify(`$${ids.get(id)}.result.${field}`) : reference));
-          const task = this.enrichTask({ ...t, params }, command, recentContext, workspaceRoot);
+          const task = this.enrichTask({ ...t, params, requestId: requestContext.requestId }, command, recentContext, workspaceRoot);
           task.id = ids.get(t.id)!;
           task.dependsOn = t.dependsOn.map((id: string) => ids.get(id)!);
           return task;
@@ -263,6 +263,7 @@ export class VanessaPlanner {
         const plan: Plan = {
           id: planId,
           command,
+          requestId: requestContext.requestId,
           intent: tasks.length > 1 ? "multi_task" : "single_task",
           risk: ranks[Math.max(ranks.indexOf(parsed.risk), ...tasks.map((task: Task) => ranks.indexOf(task.risk || "low")))],
           tasks,
