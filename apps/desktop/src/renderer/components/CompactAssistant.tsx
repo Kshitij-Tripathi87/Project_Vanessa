@@ -111,7 +111,7 @@ export function CompactAssistant({
         <span className="orb-halo orb-halo-one" aria-hidden="true" />
         <span className="orb-halo orb-halo-two" aria-hidden="true" />
         <button
-          className={`orb-button no-drag orb-${taskStage} orb-${orbVoiceState}`}
+          className={`orb-button no-drag orb-${taskStage} orb-${orbVoiceState} voice-${voiceState}`}
           onClick={onOrbClick}
           aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Start speaking to Vanessa"}
           style={{ transform: `scale(${orbScale})` }}
