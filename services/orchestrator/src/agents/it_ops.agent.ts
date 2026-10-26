@@ -162,19 +162,38 @@ export class ITOpsAgent implements SpecialistAgent {
   }
 
   async systemStatus(_ctx?: AgentRunContext): Promise<AgentResult> {
+    const memoryUsage = process.memoryUsage();
+    const uptime = process.uptime();
+    const platform = process.platform;
+    const telemetryValid =
+      Object.values(memoryUsage).every((value) => Number.isFinite(value) && value >= 0) &&
+      Number.isFinite(uptime) && uptime > 0 &&
+      typeof platform === "string" && platform.length > 0;
+    const details = telemetryValid
+      ? `Runtime telemetry verified: uptime=${uptime.toFixed(2)}s, platform=${platform}, memory counters are finite and nonnegative.`
+      : "Runtime telemetry validation failed; at least one expected runtime value was missing or invalid.";
+
     return {
       agentId: this.id,
-      status: "completed",
-      success: true,
-      summary: "System diagnostics normal",
-      spokenSummary: "System state is healthy.",
-      evidence: [],
+      status: telemetryValid ? "completed" : "failed",
+      success: telemetryValid,
+      summary: details,
+      spokenSummary: telemetryValid
+        ? "Vanessa is responding. I collected and validated runtime telemetry."
+        : "I could not validate Vanessa runtime telemetry.",
+      evidence: [{
+        description: details,
+        source: "process.runtime",
+        timestamp: new Date().toISOString(),
+        confidence: telemetryValid ? 1 : 0.5,
+        data: { memoryUsage, uptime, platform },
+      }],
       artifacts: [],
-      data: {
-        memoryUsage: process.memoryUsage(),
-        uptime: process.uptime(),
-        platform: process.platform,
+      verification: {
+        passed: telemetryValid,
+        details,
       },
+      data: { memoryUsage, uptime, platform },
     };
   }
 }
