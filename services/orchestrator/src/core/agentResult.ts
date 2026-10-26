@@ -46,7 +46,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
     return successReported ? "success" : "failed";
   }
 
-  if (structured?.success === false || structured?.status === "failed") {
+  if (structured?.success === false || ["failed", "blocked"].includes(structured?.status)) {
     task.verification = {
       verified: false,
       postconditions: [verificationDetails || "Agent reported execution failure."],
