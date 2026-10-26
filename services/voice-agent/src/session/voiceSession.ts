@@ -341,9 +341,11 @@ export class VanessaVoiceSession {
 
         if (generation !== this.sessionGeneration) return;
 
-        // The orchestrator has returned the final command result. Do not keep a
-        // completed request eligible for cancellation during TTS playback.
-        if (this.activeRequestId === requestId) this.activeRequestId = undefined;
+        // Only terminal results release the cancellation handle. An approval
+        // request remains cancellable even while Vanessa speaks the approval prompt.
+        if (["success", "failed", "partial"].includes(execution.status)) {
+          if (this.activeRequestId === requestId) this.activeRequestId = undefined;
+        }
         if (this.requestController === controller) this.requestController = undefined;
 
         console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
@@ -427,7 +429,8 @@ export class VanessaVoiceSession {
     // there is no reason to send a second, potentially misleading cancel request.
     this.sessionGeneration++;
     this.requestController = undefined;
-    this.activeRequestId = undefined;
+    // Preserve a non-terminal request ID (for example awaiting_approval) so an
+    // explicit Stop can still cancel it. Terminal request IDs are cleared above.
     this.isProcessing = false;
     this.isSpeaking = false;
     this.queuedUtterances = [];
