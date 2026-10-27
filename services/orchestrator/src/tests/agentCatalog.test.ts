@@ -16,7 +16,20 @@ test("canonical catalog excludes legacy coding/incident routing and documents Co
   assert.match(prompt, /AGENT developer:/);
   assert.match(prompt, /projectPath \(string, required\)/);
   assert.match(prompt, /prompt \(string, required\)/);
-  assert.match(prompt, /no coding completion/);
+  assert.match(prompt, /completed CLI turn is execution evidence only/i);
+  const managed = getCatalogAction("developer", "codex.run_task");
+  assert(managed?.selectable);
+  assert.equal(managed?.risk, "high");
+  assert.match(managed?.returns || "", /not independent verification/i);
+  assert(catalogAccepts("developer", "codex.run_task", {
+    projectPath: "C:/repo",
+    prompt: "Add regression coverage",
+    expectedBranch: "feature/work",
+    acceptanceCriteria: ["The regression test passes"],
+    allowedPaths: ["services/orchestrator/src/tests"],
+    timeoutMs: 60000,
+  }));
+  assert(!catalogAccepts("developer", "codex.run_task", { projectPath: "C:/repo" }));
 });
 
 test("every catalog action matches a real canonical handler switch, and names are unique", () => {
