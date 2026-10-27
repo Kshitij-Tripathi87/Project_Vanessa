@@ -30,6 +30,8 @@ export type TaskLifecycleState =
   | "queued"
   | "running"
   | "awaiting_approval"
+  | "cancel_requested"
+  | "termination_unconfirmed"
   | "verifying"
   | "succeeded"
   | "partial"
@@ -47,6 +49,7 @@ export type TaskStatus =
   | "success"
   | "failed"
   | "cancelled"
+  | "termination_unconfirmed"
   | "received"
   | "accepted"
   | "planning"
@@ -148,6 +151,10 @@ export interface Task {
   startedAt?: number;
   completedAt?: number;
   approvalExpiresAt?: number;
+  /** SHA-256 binding of the exact one-use approved operation. */
+  approvalDigest?: string;
+  approvalPolicyVersion?: string;
+  approvalConsumedAt?: number;
 }
 
 export interface Plan {
