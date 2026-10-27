@@ -125,6 +125,38 @@ function redactOutput(value: string): string {
     .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization)\s*[:=]\s*([^\s,;\"']+)/gi, "$1=[REDACTED]");
 }
 
+
+async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> {
+  if (!Number.isSafeInteger(rootPid) || rootPid < 1) return null;
+  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance Win32_Process); $ids = New-Object 'System.Collections.Generic.HashSet[int]'; [void]$ids.Add($root); do { $old = $ids.Count; foreach ($p in $all) { if ($ids.Contains([int]$p.ParentProcessId)) { [void]$ids.Add([int]$p.ProcessId) } } } while ($ids.Count -gt $old); $items = @($ids | ForEach-Object { $_ }); ConvertTo-Json -InputObject $items -Compress";
+  try {
+    const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: { ...minimalEnvironment(), VANESSA_ROOT_PID: String(rootPid) },
+      timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
+    });
+    const value = JSON.parse(result.stdout.trim());
+    const ids = (Array.isArray(value) ? value : [value]).map(Number);
+    return ids.length > 0 && ids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && ids.includes(rootPid) ? ids : null;
+  } catch {
+    return null;
+  }
+}
+
+async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | null> {
+  if (!processIds.length || processIds.some((pid) => !Number.isSafeInteger(pid) || pid < 1)) return null;
+  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $alive = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId } | Select-Object -ExpandProperty ProcessId); ConvertTo-Json -InputObject @($alive) -Compress";
+  try {
+    const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
+      timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
+    });
+    const value = JSON.parse(result.stdout.trim());
+    return Array.isArray(value) ? value.length === 0 : value === null || value === undefined;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Owns subprocess lifecycle for migrated execution paths. This service only
  * accepts executable + argv arrays, uses shell:false, limits inherited
@@ -299,14 +331,29 @@ export class ProcessSupervisor {
       if (!pid) return true;
 
       if (process.platform === "win32") {
-        await new Promise<void>((resolve) => {
-          const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-            shell: false, windowsHide: true, stdio: "ignore",
+        // Capture descendants before termination. If process inventory is
+        // unavailable, fail closed instead of claiming the tree was stopped.
+        const processIds = await getWindowsProcessTree(pid);
+        if (!processIds) return false;
+        try {
+          await execFileAsync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+            env: minimalEnvironment(),
+            timeout: 3000,
+            maxBuffer: 16 * 1024,
+            windowsHide: true,
+            encoding: "utf8",
           });
-          killer.once("error", () => resolve());
-          killer.once("close", () => resolve());
-        });
-        // taskkill is an attempt, not proof that every descendant exited.
+        } catch {
+          // A non-zero taskkill result can indicate an exit race; verify the
+          // process IDs below instead of trusting taskkill's exit code.
+        }
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          const gone = await areWindowsProcessesGone(processIds);
+          if (gone === true) return true;
+          if (gone === null) return false;
+          await delay(100);
+        }
         return false;
       }
 
