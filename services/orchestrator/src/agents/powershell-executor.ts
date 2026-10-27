@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { powerShellRunner } from './powershell-runner.js';
+import { buildPowerShellEnvironment } from './powershell.js';
 
 export interface PowerShellRequest {
   steps: Array<{ id: string; command: string }>;
@@ -58,7 +59,10 @@ export async function executePowerShellSteps(request: PowerShellRequest): Promis
     await new Promise<void>((finish) => {
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(powerShellRunner, 'utf16le').toString('base64')], {
         shell: false, windowsHide: true, cwd,
-        env: { ...process.env, VANESSA_EXEC_REQUEST: input, VANESSA_EXEC_EVENTS: events },
+        env: buildPowerShellEnvironment({
+          VANESSA_EXEC_REQUEST: input,
+          VANESSA_EXEC_EVENTS: events,
+        }),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       const terminate = () => {
