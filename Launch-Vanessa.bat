@@ -3,6 +3,9 @@ setlocal
 title Vanessa - Desktop Control Layer
 cd /d "%~dp0"
 
+rem Explicit diagnostics bypass automatic repair so users can inspect the failure first.
+if /I "%~1"=="--doctor" goto doctor
+
 rem The first launch bootstraps dependencies and local models; later launches go straight to the app.
 set "NEEDS_SETUP=0"
 if not exist ".env" set "NEEDS_SETUP=1"
@@ -58,3 +61,14 @@ echo.
 echo [Launcher] Session ended with exit code %VANESSA_EXIT%.
 if not "%VANESSA_EXIT%"=="0" pause
 exit /b %VANESSA_EXIT%
+
+:doctor
+where node >nul 2>nul
+if errorlevel 1 goto doctor_no_node
+node "%~dp0scripts\doctor.cjs" %*
+exit /b %ERRORLEVEL%
+
+:doctor_no_node
+echo [Doctor] Node.js is not available yet, so diagnostics cannot run.
+echo [Doctor] Run Launch-Vanessa.bat without --doctor once to install required prerequisites.
+exit /b 2
