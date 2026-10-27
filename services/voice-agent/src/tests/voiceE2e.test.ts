@@ -159,7 +159,7 @@ test("voice final transcript reaches the orchestrator HTTP contract and returns 
     assert.equal(request.body.source, "voice");
     assert.equal(request.body.command, command);
     assert.equal(request.body.language, "en");
-    assert.equal(request.body.originDeviceId, "desktop-local");
+    assert.equal(request.body.envelope.originDeviceId, "desktop-local");
     assert.equal(request.body.requestId, "voice-" + createHash("sha256").update(turnId).digest("hex").slice(0, 32));
     assert.equal(request.body.idempotencyKey, "voice:" + request.body.requestId);
     assert.equal(request.body.envelope.requestId, request.body.requestId);
