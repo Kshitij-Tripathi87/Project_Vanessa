@@ -13,8 +13,13 @@ function Invoke-GitChecked([string[]]$Arguments) {
 }
 
 function Test-ExampleEnvFile([string]$Name) {
-    return $Name.StartsWith('.env', [StringComparison]::OrdinalIgnoreCase) -and
-        $Name.EndsWith('.example', [StringComparison]::OrdinalIgnoreCase)
+    return $Name.EndsWith('.env.example', [StringComparison]::OrdinalIgnoreCase) -or
+        ($Name.StartsWith('.env', [StringComparison]::OrdinalIgnoreCase) -and
+        $Name.EndsWith('.example', [StringComparison]::OrdinalIgnoreCase))
+}
+
+function Test-EnvironmentFile([string]$Name) {
+    return $Name -eq '.env' -or $Name -like '.env.*' -or $Name -match '\.env(\.|$)'
 }
 
 $commit = Invoke-GitChecked @('rev-parse', '--verify', 'HEAD^{commit}')
@@ -61,7 +66,7 @@ try {
     foreach ($item in $files) {
         $name = $item.Name
         $remove = $false
-        if (($name -eq '.env' -or $name -like '.env.*') -and -not (Test-ExampleEnvFile $name)) {
+        if ((Test-EnvironmentFile $name) -and -not (Test-ExampleEnvFile $name)) {
             $remove = $true
         }
         if ($name -match '\.(log|pem|key|pfx|p12|sqlite|sqlite3|db|mp3|wav|m4a|ogg|flac|pcap|gguf|safetensors|onnx|pt|pth)$') {
@@ -100,7 +105,7 @@ try {
             $relative = $entry -replace '^Vanessa/', ''
             $name = [IO.Path]::GetFileName($relative)
             $isEnvExample = Test-ExampleEnvFile $name
-            if (($name -eq '.env' -or $name -like '.env.*') -and -not $isEnvExample) {
+            if ((Test-EnvironmentFile $name) -and -not $isEnvExample) {
                 $forbidden += $entry
                 continue
             }
