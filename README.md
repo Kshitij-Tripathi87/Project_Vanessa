@@ -88,11 +88,19 @@ Optional diagnostics:
 
 The read-only doctor checks the Windows/Node prerequisites, workspace packages, selected provider configuration, local speech runtime, and the configured local LLM/model. Use `--live` while Vanessa is running to check the orchestrator and voice gateway. It never prints `.env` values or claims microphone capture works; test the microphone by speaking into the running HUD.
 
-- Default local profile: PLANNER_PROVIDER=ollama, CONVERSATION_PROVIDER=ollama, VOICE_ASR_PROVIDER=whisper, and browser speech fallback. No provider API key is required.
+- Default local profile: PLANNER_PROVIDER=ollama, CONVERSATION_PROVIDER=ollama, VOICE_ASR_PROVIDER=whisper, and browser speech fallback. No provider API key is required. Local Whisper can keep a wake-word monitor active for “Hey, Vanessa”; standby audio stays on this device. Hosted Sarvam/Fish/ElevenLabs ASR uses push-to-talk and does not stream idle room audio.
 - If the microphone is denied or unavailable, Vanessa shows Windows/device troubleshooting steps and typed commands remain available.
 - Optional cloud providers require your own key and an explicit provider selection in .env. Never put a shared provider key into a distributed .env, source code, installer, or renderer bundle.
 - --check requires the selected local model and local Whisper runtime to be ready. --build-only compiles without starting services or checking model availability.
-- Launch-Vanessa.bat is still a bootstrap entry point, not a self-contained signed customer installer. The Windows CI workflow can publish a sanitized `Vanessa-Windows-Bootstrap-<commit>.zip` artifact containing the tracked source needed by the setup flow; download it from the successful workflow run's **Artifacts** section. Extract it to a user-writable folder and run `Launch-Vanessa.bat`. The ZIP does not bundle Node/Python/Ollama or large speech/LLM models; first-run setup downloads/configures those prerequisites. Native signed EXE/MSI packaging remains separate work.
+- Launch-Vanessa.bat is still a bootstrap entry point, not a self-contained signed customer installer. The Windows CI workflow can publish a sanitized `Vanessa-Windows-Bootstrap-<commit>.zip` artifact containing the tracked source needed by the setup flow; download it from the successful workflow run's **Artifacts** section. Extract it to a user-writable folder and run `Launch-Vanessa.bat`. The ZIP does not bundle Node/Python/Ollama or large speech/LLM models; first-run setup downloads/configures those prerequisites. The Windows Setup EXE is built by the repository's **Windows installer** workflow. First launch provisions local runtimes and models; the current installer is not code-signed or fully offline, and no provider credentials are packaged.
+
+### 4. Windows installation
+
+Download `Vanessa-Setup-x64.exe` from the successful **Windows installer** workflow's **Artifacts** section (or from a GitHub Release for a version tag). Run it as your user; administrator rights are not required. It creates a Start Menu shortcut, optional Desktop shortcut and optional launch-at-sign-in task for the floating orb. First launch may install Node.js, Python, Ollama and local speech/language models; internet access and several GB of free disk space are required. Allow microphone access in Windows.
+
+Settings and optional user-provided keys live in `%APPDATA%\\Vanessa`; project/task files live in `Documents\\Vanessa`. A real `.env` file or API key is never packaged. Choosing Sarvam on another computer requires that user's own key or a properly authenticated managed gateway; never embed a shared Sarvam key in an EXE, repository, renderer bundle or distributed `.env`.
+
+Developers can clone the repository and run `pnpm install` followed by `pnpm run setup:windows`. `Launch-Vanessa.bat` remains available for developer/bootstrap use. The installer is not currently code-signed or a fully offline bundle.
 
 ### 5. Run Development Services Directly
 ```bash
