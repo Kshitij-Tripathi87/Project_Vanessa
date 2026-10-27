@@ -126,7 +126,7 @@ test("testing requires an unexpired one-use approval bound to exact registered a
 test("agent-local dispatch blocks unknown actions and direct autonomous Codex execution", async () => {
   const coding = await new CodingAgent().execute("coding.unknown_operation", {});
   assert.equal(coding.status, "blocked");
-  assert.equal(coding.data?.outcome, "blocked");
+  assert.equal(coding.verification?.passed, false);
 
   const incident = await new IncidentAgent().execute("incident.unknown_operation", {});
   assert.equal(incident.status, "blocked");
