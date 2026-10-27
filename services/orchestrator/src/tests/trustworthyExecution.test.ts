@@ -6,7 +6,10 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import type { Task } from "@vanessa/shared";
-import { parseRegressionSummary, validateRegressionRequest } from "../agents/testing.agent.js";
+import { parseRegressionSummary, validateRegressionRequest, validateTestingApproval } from "../agents/testing.agent.js";
+import { CodingAgent } from "../agents/coding.agent.js";
+import { DeveloperAgent } from "../agents/developer.agent.js";
+import { IncidentAgent } from "../agents/incident.agent.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { ProcessSupervisor } from "../core/processSupervisor.js";
@@ -18,12 +21,30 @@ const validTestParams = {
   expectedDiffHash: "a".repeat(64),
 };
 
-test("structured regression parser rejects keyword-only and partial-pass output", () => {
-  assert.deepEqual(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2)"), { passed: 2, total: 2 });
-  assert.equal(parseRegressionSummary("some tests pass"), null);
-  assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (1/2)"), null);
-  assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (0/0)"), null);
-  assert.deepEqual(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2) with additional diagnostics"), { passed: 2, total: 2 });
+function reportLine(runId: string, overrides: Record<string, unknown> = {}): string {
+  return "VANESSA_REGRESSION_REPORT " + JSON.stringify({
+    schema: "vanessa.regression-report",
+    version: 1,
+    suiteId: "incident-lab.regression",
+    runId,
+    passed: 2,
+    total: 2,
+    failed: 0,
+    ...overrides,
+  });
+}
+
+test("structured regression parser rejects keyword-only, partial, malformed and stale-run output", () => {
+  assert.deepEqual(parseRegressionSummary(reportLine("run-1"), "run-1"), { passed: 2, total: 2 });
+  assert.equal(parseRegressionSummary("some tests pass", "run-1"), null);
+  assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2)", "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("another-run"), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1", { passed: 1 }), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1", { failed: 1 }), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1", { total: 0, passed: 0 }), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1", { command: "echo pass" }), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1") + "\n" + reportLine("run-1"), "run-1"), null);
+  assert.equal(parseRegressionSummary(reportLine("run-1")), null);
 });
 
 test("testing request schema rejects arbitrary commands and non-registered runners", () => {
@@ -82,6 +103,50 @@ test("managed actions without evidence cannot turn a positive flag into success"
   assert.equal(task.verification?.outcome, "inconclusive");
 });
 
+test("testing requires an unexpired one-use approval bound to exact registered arguments", () => {
+  assert.equal(validateTestingApproval(validTestParams, undefined, 1000).valid, false);
+  const task: Task = {
+    id: "approved-testing-task",
+    agent: "testing",
+    action: "testing.run_incident_lab",
+    params: validTestParams,
+    dependsOn: [],
+    status: "running",
+    approvalDigest: "b".repeat(64),
+    approvalConsumedAt: 200,
+    approvalExpiresAt: 2000,
+    approvalPolicyVersion: "trustworthy-execution-v1",
+  };
+  assert.deepEqual(validateTestingApproval(validTestParams, task, 1000), { valid: true });
+  assert.equal(validateTestingApproval({ ...validTestParams, expectedDiffHash: "c".repeat(64) }, task, 1000).valid, false);
+  assert.equal(validateTestingApproval(validTestParams, task, 2000).valid, false);
+  assert.equal(validateTestingApproval(validTestParams, { ...task, approvalConsumedAt: undefined }, 1000).valid, false);
+});
+
+test("agent-local dispatch blocks unknown actions and direct autonomous Codex execution", async () => {
+  const coding = await new CodingAgent().execute("coding.unknown_operation", {});
+  assert.equal(coding.status, "blocked");
+  assert.equal(coding.data?.outcome, "blocked");
+
+  const incident = await new IncidentAgent().execute("incident.unknown_operation", {});
+  assert.equal(incident.status, "blocked");
+  assert.equal(incident.data?.processStarted, false);
+
+  const developer = new DeveloperAgent();
+  const autonomous = await developer.execute("codex.run_task", {
+    projectPath: "/not-a-real-project",
+    prompt: "Modify files in the active checkout",
+  });
+  assert.equal(autonomous.status, "blocked");
+  assert.equal(autonomous.data?.processStarted, false);
+
+  const directLaunch = await developer.execute("codex.open", {
+    projectPath: "/not-a-real-project",
+    prompt: "Run arbitrary commands",
+  });
+  assert.equal(directLaunch.status, "blocked");
+  assert.equal(directLaunch.data?.processStarted, false);
+});
 test("real worktree runner binds to the patch digest, redacts output, and kills timed-out process trees", async () => {
   const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-trust-test-"));
   const repositoryRoot = path.join(tempRoot, "fixture-repo");
@@ -109,7 +174,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       'const path = require("node:path");',
       'const checkout = fs.readFileSync(path.join(__dirname, "src", "checkout.ts"), "utf8");',
       'if (checkout.includes("HANG_TEST_MARKER")) { setInterval(() => {}, 1000); }',
-      'else { console.log("api_key=supersecret-token-value"); console.log("ALL REGRESSION TESTS PASSED (2/2)"); }',
+      'else { console.log("api_key=supersecret-token-value"); console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({ schema: "vanessa.regression-report", version: 1, suiteId: "incident-lab.regression", runId: process.env.VANESSA_EXECUTION_RUN_ID, passed: 2, total: 2, failed: 0 })); }',
       "",
     ].join("\n");
     await fs.writeFile(path.join(packageRoot, "test.js"), fixtureTestScript);
@@ -172,7 +237,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     assert.equal(processResult.status, "exited");
     assert.equal(processResult.exitCode, 0);
     assert.equal(processResult.terminationVerified, true);
-    assert.match(processResult.stdout + processResult.stderr, /ALL REGRESSION TESTS PASSED \(2\/2\)/);
+    assert.deepEqual(parseRegressionSummary(processResult.stdout + processResult.stderr, processResult.runId), { passed: 2, total: 2 });
     assert.doesNotMatch(processResult.stdout + processResult.stderr, /supersecret-token-value/);
     assert.match(processResult.stdout + processResult.stderr, /api_key=\[REDACTED\]/);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
