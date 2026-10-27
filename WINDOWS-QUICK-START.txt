@@ -1,0 +1,34 @@
+VANESSA — WINDOWS FIRST-RUN GUIDE
+=================================
+
+Supported target: Windows 11.
+
+1. Extract this ZIP to a folder your Windows user can write to. Do not extract it into
+   C:\Program Files. The folder contains the source needed by the local bootstrap.
+
+2. Double-click Launch-Vanessa.bat. On first run the setup may install Node.js,
+   Python 3.11 and Ollama using Windows Package Manager (winget), then install project
+   dependencies and download the selected speech/language models.
+
+3. The default local profile uses local Faster-Whisper, local Ollama and browser/OS
+   speech fallback. No cloud provider API key is required for that profile. The first
+   setup requires internet access and disk space; the default Ollama model is roughly
+   2 GB, and the speech model download size depends on VOICE_MODEL.
+
+4. If startup fails after prerequisites are installed, run:
+      Launch-Vanessa.bat --doctor
+   If Vanessa is already running, use:
+      Launch-Vanessa.bat --doctor --live
+
+5. Start voice from the Vanessa HUD and speak a short phrase to verify microphone
+   capture. The command-line doctor cannot grant Windows microphone permission or
+   prove that your physical microphone is working. Check Windows Settings > Privacy
+   & security > Microphone if capture fails.
+
+6. Optional provider credentials belong in a local .env file only when you explicitly
+   select a cloud provider. Never share .env, API keys, transcripts, or diagnostic
+   files containing private project information.
+
+This is a reproducible Windows bootstrap ZIP, not a signed, self-contained EXE
+installer. It does not bundle Node/Python/Ollama installations, speech models, API
+credentials, or a claim that microphone and speaker hardware has been accepted.
