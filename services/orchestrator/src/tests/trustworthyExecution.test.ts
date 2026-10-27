@@ -52,6 +52,13 @@ test("action registry canonicalizes legacy names and fails closed on unknown or 
 
   const shell = resolveManagedAction("terminal.run_command", { command: "whoami" });
   assert.equal(shell.blocked, true);
+
+  const autonomousCoding = resolveManagedAction("codex.run_task", {
+    projectPath: "C:/repo",
+    prompt: "Modify files in the active checkout",
+  });
+  assert.equal(autonomousCoding.managed, true);
+  assert.equal(autonomousCoding.blocked, true);
 });
 
 test("managed actions without evidence cannot turn a positive flag into success", () => {
