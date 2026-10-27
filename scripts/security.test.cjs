@@ -25,3 +25,29 @@ test('private environment and memory files are not tracked', () => {
   const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0');
   assert(!tracked.some(file => /(^|\/)\.env$|(^|\/)\.env\.local$|vanessa_memory_palace\.db/.test(file)), 'Private runtime files must remain untracked.');
 });
+
+// Exercise the emitted production worklet, where asset inlining previously
+// hid raw TypeScript behind a CSP-blocked data:video/mp2t URL.
+test('microphone worklet is emitted as executable JavaScript and referenced by the renderer', () => {
+  const vm = require('node:vm');
+  const output = path.join(root, 'apps/desktop/dist/renderer');
+  const emitted = files(output);
+  const worklet = emitted.find(file => /pcmCapture\.worklet-[^/\\]+\.js$/.test(file));
+  assert(worklet, 'The worklet must be compiled to a separate JavaScript file.');
+  const name = path.basename(worklet);
+  assert(emitted.some(file => file !== worklet && file.endsWith('.js') && fs.readFileSync(file, 'utf8').includes(name)), 'The renderer must reference the compiled worklet URL.');
+  let Processor;
+  let posted;
+  vm.runInNewContext(fs.readFileSync(worklet, 'utf8'), {
+    AudioWorkletProcessor: class { port = { postMessage(samples) { posted = samples; } }; },
+    registerProcessor(id, implementation) { assert.equal(id, 'vanessa-pcm-capture'); Processor = implementation; },
+    Float32Array,
+  });
+  assert(Processor);
+  const samples = new Float32Array([0.25, -0.5, 0.75]);
+  const mutedOutput = new Float32Array([1, 1, 1]);
+  assert.equal(new Processor().process([[samples]], [[mutedOutput]]), true);
+  assert.deepEqual(posted, samples);
+  assert.notEqual(posted, samples, 'Transfer a copy so the input audio buffer remains usable.');
+  assert.deepEqual([...mutedOutput], [0, 0, 0]);
+});
