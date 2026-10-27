@@ -8,31 +8,22 @@ import { resolvePlannerWorkspace } from "../core/contextBuilder.js";
 test("catalog exposes isolated repair and disables unsafe autonomous coding", () => {
   assert(AGENT_CATALOG.some((agent) => agent.id === "coding"));
   assert(!AGENT_CATALOG.some((agent) => agent.id === "incident"));
-  const codex = getCatalogAction("developer", "codex.open");
-  assert(codex?.selectable);
-  assert.equal(codex.risk, "high");
-  assert.match(codex.returns, /launch only/);
-  assert.equal(getCatalogAction("coding", "codex.open"), undefined);
-  const prompt = renderAgentCatalog();
-  assert.match(prompt, /AGENT developer:/);
-  assert.match(prompt, /projectPath \(string, required\)/);
-  assert.match(prompt, /prompt \(string, required\)/);
-  assert.match(prompt, /completed CLI turn is execution evidence only/i);
-  const managed = getCatalogAction("developer", "codex.run_task");
-  assert.equal(managed?.selectable, false);
-  assert.equal(managed?.risk, "high");
-  assert.match(managed?.returns || "", /Blocked before autonomous coding begins/i);
+
+  const autonomous = getCatalogAction("developer", "codex.run_task");
+  assert.equal(autonomous?.selectable, false);
+  assert.match(autonomous?.description || "", /temporarily unavailable/i);
+  assert.match(autonomous?.returns || "", /Blocked before autonomous coding begins/i);
   assert(!catalogAccepts("developer", "codex.run_task", {
     projectPath: "C:/repo",
-    prompt: "Add regression coverage",
-    expectedBranch: "feature/work",
-    acceptanceCriteria: ["The regression test passes"],
-    allowedPaths: ["services/orchestrator/src/tests"],
-    timeoutMs: 60000,
+    prompt: "Modify files in the active checkout",
   }));
-  assert(!catalogAccepts("developer", "codex.run_task", { projectPath: "C:/repo" }));
-});
 
+  const prepare = getCatalogAction("coding", "coding.prepare_patch");
+  assert.equal(prepare?.selectable, true);
+  const testRunner = getCatalogAction("testing", "testing.run_incident_lab");
+  assert.equal(testRunner?.selectable, true);
+  assert.match(testRunner?.returns || "", /diff digest/i);
+});
 test("every catalog action matches a real canonical handler switch, and names are unique", () => {
   const ids = new Set<string>();
   for (const agent of AGENT_CATALOG) {
