@@ -1,6 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
 const {
   buildReport,
   getEffectiveEnv,
@@ -139,20 +141,33 @@ test("live checks distinguish a stopped stack from a broken prerequisite", async
   assert.equal(findCheck(report, "voice-live").status, "info");
 });
 
-test("environment parsing reads assignments but diagnostic text never prints values", () => {
-  const parsed = parseEnvFile(path.join(__dirname, "fixtures-do-not-exist.env"));
-  assert.deepEqual(parsed, {});
-  const secret = "test-key-do-not-emit";
-  const report = {
-    schemaVersion: 1,
-    overall: "ready",
-    summary: { pass: 1, warn: 0, fail: 0, info: 0 },
-    checks: [{ id: "example", status: "pass", message: "Provider selected." }],
-    nextStep: "Ready.",
-  };
-  assert.equal(JSON.stringify(report).includes(secret), false);
-  const effective = getEffectiveEnv(root, { TEST_FROM_PROCESS: "one", TEST_OVERRIDE: "process" });
-  assert.equal(effective.TEST_FROM_PROCESS, "one");
+test("environment parsing supports normal assignments and keeps credential values out of reports", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "vanessa-doctor-"));
+  try {
+    const envPath = path.join(temporary, ".env");
+    const secret = "sk-fish-test-secret-value";
+    fs.writeFileSync(envPath, [
+      "# Comment line",
+      "VOICE_ASR_PROVIDER=whisper",
+      "OLLAMA_BASE_URL=http://127.0.0.1:11434 # local-only",
+      "SARVAM_API_KEY=\"" + secret + "\"",
+      "export OLLAMA_MODEL='qwen2.5:3b'",
+      "",
+    ].join("\n"), "utf8");
+
+    const parsed = parseEnvFile(envPath);
+    assert.equal(parsed.VOICE_ASR_PROVIDER, "whisper");
+    assert.equal(parsed.OLLAMA_BASE_URL, "http://127.0.0.1:11434");
+    assert.equal(parsed.SARVAM_API_KEY, secret);
+    assert.equal(parsed.OLLAMA_MODEL, "qwen2.5:3b");
+
+    const effective = getEffectiveEnv(temporary, { TEST_FROM_PROCESS: "one", VOICE_ASR_PROVIDER: "fish" });
+    assert.equal(effective.TEST_FROM_PROCESS, "one");
+    assert.equal(effective.VOICE_ASR_PROVIDER, "whisper", ".env must override inherited values");
+    assert.equal(JSON.stringify({ checks: [{ message: "Provider selected." }] }).includes(secret), false);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test("doctor JSON output has a stable schema and strict mode catches warnings", async () => {
