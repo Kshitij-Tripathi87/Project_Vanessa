@@ -15,6 +15,7 @@ import { MemoryAgent } from "../agents/memory.agent.js";
 import { BrowserAgent } from "../agents/browser.agent.js";
 import { FileAgent } from "../agents/file.agent.js";
 import { WindowsAgent } from "../agents/windows.agent.js";
+import { buildPowerShellEnvironment } from "../agents/powershell.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
@@ -223,6 +224,22 @@ test("incident memory retrieval reports the unmanaged Python bridge as disabled"
   assert.equal(result.findings.memoryProcessStarted, false);
   assert.match(String(result.findings.memoryRetrievalError), /registered process supervisor/i);
   assert.equal((result.findings.sourcesUsed as string[]).includes("local-memory"), false);
+});
+
+test("PowerShell helper excludes inherited secrets and only accepts explicit VANESSA data values", () => {
+  const previousSecret = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "must-not-cross-process-boundary";
+  try {
+    const env = buildPowerShellEnvironment({ VANESSA_URL: "https://example.invalid" });
+    assert.equal(env.OPENAI_API_KEY, undefined);
+    assert.equal(env.VANESSA_URL, "https://example.invalid");
+    assert.ok(Object.keys(env).some((key) => key.toUpperCase() === "PATH"), "Windows executable lookup path remains available");
+    assert.throws(() => buildPowerShellEnvironment({ PATH: "unapproved" }), /Invalid PowerShell environment key/);
+    assert.throws(() => buildPowerShellEnvironment({ VANESSA_URL: "x\\0y" }), /Invalid value/);
+  } finally {
+    if (previousSecret === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousSecret;
+  }
 });
 
 test("FAKE mode can never report file creation, browser navigation, or Wi-Fi restart as real success", async () => {
