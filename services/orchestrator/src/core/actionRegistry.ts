@@ -79,8 +79,8 @@ const policyList: ManagedActionPolicy[] = [
   { canonicalId: "incident.analyze_logs", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: noParams },
   { canonicalId: "incident.retrieve_memory", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: noParams },
   { canonicalId: "incident.diagnose", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: validateDiagnosis },
-  { canonicalId: "incident.investigate", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", validate: taskIdOnly },
-  { canonicalId: "incident.prepare_and_verify", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", validate: taskIdOnly },
+  { canonicalId: "incident.investigate", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: taskIdOnly },
+  { canonicalId: "incident.prepare_and_verify", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", blocked: true, validate: taskIdOnly },
   { canonicalId: "terminal.run_command", aliases: [], approvalRequired: true, sideEffectClass: "machine_state", blocked: true, validate: () => "Arbitrary shell execution is disabled until routed through a registered executor." },
   { canonicalId: "tests.run", aliases: [], approvalRequired: true, sideEffectClass: "machine_state", blocked: true, validate: () => "Generic test commands are disabled; use a registered test suite in an isolated workspace." },
   { canonicalId: "claude_code.open", aliases: [], approvalRequired: true, sideEffectClass: "machine_state", blocked: true, validate: () => "Prompt-bearing dynamic PowerShell launch is disabled until a fixed, data-only launcher is implemented." },
@@ -93,7 +93,7 @@ for (const policy of policyList) {
 }
 
 const failClosedPrefixes = ["testing.", "incident.", "coding."];
-const explicitlyBlockedActions = new Set(["terminal.run_command", "tests.run", "claude_code.open", "developer.claude_code.open_autonomous"]);
+const explicitlyBlockedActions = new Set(["terminal.run_command", "tests.run", "claude_code.open", "developer.claude_code.open_autonomous", "incident.prepare_and_verify"]);
 
 /**
  * Canonical policy registry for the incident/repair/testing execution surface.
