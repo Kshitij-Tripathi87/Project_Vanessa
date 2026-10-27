@@ -42,9 +42,10 @@ Voice Command (Desktop Mic / Phone Door)
 |---|---|---|
 | **Desktop App** | Electron + React + TypeScript | Fast HUD control, native window overlays, cross-platform |
 | **Local Orchestrator** | Node.js + Fastify + WebSocket | High-performance local API, real-time event streaming |
-| **Voice Option A** | ElevenLabs Conversational AI | Client tools (`vanessa_execute`), natural Indian English/Hinglish |
-| **Voice Option B** | Fish Audio | Custom streaming TTS/ASR pipeline |
-| **Planner LLM** | GPT-4o-mini / Claude Sonnet | Converts intent into structured JSON task graphs |
+| **Default speech recognition** | Local Faster-Whisper | No STT API key; local PCM/WebSocket pipeline |
+| **Default speech output** | Browser/OS SpeechSynthesis fallback | No TTS API key; optional Fish/Sarvam/ElevenLabs adapters |
+| **Default planner LLM** | Local Ollama (qwen2.5:3b) | Local-only request path; no LLM provider key |
+| **Optional hosted providers** | Sarvam / NVIDIA / Fish / ElevenLabs | Explicitly selected BYOK providers; no shared key is bundled |
 | **OS Control** | PowerShell / Windows Radio APIs | Deep Windows 11 control without brittle GUI clicking |
 | **Browser Control** | Direct browser commands & Playwright | Rapid Chrome & YouTube automation |
 | **Files & Cloud** | Node fs + Google Drive integration | Zip projects, upload files, generate shareable links |
@@ -59,49 +60,34 @@ Voice Command (Desktop Mic / Phone Door)
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
-- **Node.js**: v20+ (tested on v26+)
-- **pnpm**: v9+ (tested on v11+)
-- **Windows 11** with PowerShell 5.1+
+- Windows 11, PowerShell 5.1+
+- Node.js 22+ and pnpm 11.24.0 for the current repository bootstrap
+- Python 3.11 for local Faster-Whisper STT (the setup script creates a virtual environment)
+- Ollama for local planning/conversation. Install from the official Windows page at https://ollama.com/download/windows and open Ollama before setup.
 
-### 2. Setup
-Run the automated Windows setup script:
-```powershell
-.\scripts\setup_windows.ps1
-```
-Or manually:
-```bash
-pnpm install
-pnpm --filter @vanessa/shared build
-```
+### 2. First-time setup (no API keys required)
+Run:
 
-### 3. Configure Environment
-Copy `.env.example` to `.env` and fill in any keys you have:
-```bash
-cp .env.example .env
-```
+    .\scripts\setup_windows.ps1
 
-For the Sarvam voice path, set `VOICE_ASR_PROVIDER=sarvam`,
-`VOICE_TTS_PROVIDER=sarvam`, `PLANNER_PROVIDER=sarvam`, and
-`SARVAM_CHAT_PROVIDER=sarvam`, then add your key to `SARVAM_API_KEY` in `.env`.
-The example file supplies compatible model defaults; confirm the speaker and
-language settings against your intended voice. Configure the positive budget
-caps before live testing if you want the local meter to block calls at a limit.
-Sarvam credentials are loaded only by the trusted voice/orchestrator processes;
-they are never sent to the renderer.
+The script preserves an existing .env; on a clean checkout it creates one from .env.example with the local profile selected. It installs workspace packages, builds the code, installs local speech dependencies, warms the selected Whisper model, and pulls the configured Ollama model if missing. The default qwen2.5:3b model is about 2 GB; additional disk/network use occurs only for first-time model downloads. The setup script does not silently install the Ollama or Python executables; those runtimes must be installed first if absent.
 
-### 4. Run the Desktop Application
+### 3. Launch Vanessa
+Use the canonical launcher to start the orchestrator, local Whisper WebSocket, voice service and desktop together:
 
-Use the canonical Windows launcher for the complete Electron application and its managed services:
+    .\Launch-Vanessa.bat
 
-```powershell
-node scripts/launch-vanessa.cjs --check
-node scripts/launch-vanessa.cjs --build-only
-node scripts/launch-vanessa.cjs --dev
-```
+Optional diagnostics:
 
-`--check` validates configuration and dependencies without starting services. `--build-only` validates the shared contracts, services and desktop renderer without starting them. `--dev` starts the orchestrator, voice service, renderer and Electron application in the managed order. Use `--text-only` when microphone/provider services are intentionally disabled.
+    node scripts/launch-vanessa.cjs --check
+    node scripts/launch-vanessa.cjs --build-only
+    node scripts/launch-vanessa.cjs --text-only
 
-The desktop package's `dev` script serves the renderer only; it is not the complete Electron startup path.
+- Default local profile: PLANNER_PROVIDER=ollama, CONVERSATION_PROVIDER=ollama, VOICE_ASR_PROVIDER=whisper, and browser speech fallback. No provider API key is required.
+- If the microphone is denied or unavailable, Vanessa shows Windows/device troubleshooting steps and typed commands remain available.
+- Optional cloud providers require your own key and an explicit provider selection in .env. Never put a shared provider key into a distributed .env, source code, installer, or renderer bundle.
+- --check requires the selected local model and local Whisper runtime to be ready. --build-only compiles without starting services or checking model availability.
+- Launch-Vanessa.bat is still a repository bootstrap that requires the developer/runtime prerequisites above, not a self-contained signed customer installer. Native packaging and managed hosted AI are separate planned phases.
 
 ### 5. Run Development Services Directly
 ```bash

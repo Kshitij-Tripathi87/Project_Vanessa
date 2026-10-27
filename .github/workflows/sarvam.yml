@@ -1,9 +1,9 @@
 name: Sarvam deterministic acceptance
 on:
   push:
-    branches: [Vanessa-Prototype-1-MAIN]
+    branches: [Vanessa-Prototype-1-MAIN, feature/kshitij-voice-agent-plane]
   pull_request:
-    branches: [Vanessa-Prototype-1-MAIN]
+    branches: [Vanessa-Prototype-1-MAIN, feature/kshitij-voice-agent-plane]
 permissions:
   contents: read
 jobs:
@@ -26,12 +26,16 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Verify incident log target resolution
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
+      - name: Verify local Ollama client contracts
+        run: pnpm --filter @vanessa/orchestrator test:ollama-client
       # Full legacy scenarios require a user-selected live planner and include removed legacy actions;
       # deterministic planner/voice contracts are covered below without live API calls.
       - name: Type-check evaluation harness
         run: pnpm exec tsc --noEmit -p tsconfig.json
       - name: Test floating-window docking geometry
         run: pnpm run test:desktop:layout
+      - name: Test microphone failure diagnostics
+        run: pnpm run test:desktop:microphone
       - run: pnpm run test:sarvam:gate
       - run: node --test scripts/security.test.cjs
       # No real microphone, cloud credentials, or billable provider calls in CI.
