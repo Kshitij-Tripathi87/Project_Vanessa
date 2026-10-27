@@ -26,15 +26,6 @@ export class WakeWordDetector {
           cleanedText: remainder,
         };
       }
-      if (lower.includes(phrase)) {
-        this.touchActiveSession();
-        const parts = lower.split(phrase);
-        const remainder = parts.slice(1).join(" ").replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
-        return {
-          detected: true,
-          cleanedText: remainder,
-        };
-      }
     }
 
     if (this.isActiveSession) {
