@@ -5,6 +5,7 @@
   "description": "Vanessa: Voice-native AI control layer for personal computers",
   "scripts": {
     "test:launcher": "node --test scripts/launcher.test.cjs",
+    "package:bootstrap": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-bootstrap.ps1",
     "test:desktop:layout": "pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/windowLayout.test.ts",
     "test:sarvam:gate": "pnpm --filter @vanessa/shared build && pnpm test:launcher && pnpm --filter @vanessa/voice-agent exec tsx --import ../../scripts/test-env.mjs --test src/tests/sarvamAdapter.test.ts src/tests/sarvamTts.test.ts src/tests/sessionLifecycle.test.ts src/tests/voiceSocket.test.ts src/tests/providerDiagnostics.test.ts src/tests/commandContract.test.ts ../../packages/shared/src/usageMeter.test.ts ../../evals/sarvamPipeline.test.ts && pnpm --filter @vanessa/orchestrator exec tsx --import ../../scripts/test-env.mjs --test src/tests/sarvamChat.test.ts",
     "dev": "concurrently -n \"RELAY,ORCHESTRATOR,VOICE,DESKTOP\" -c \"blue,cyan,yellow,magenta\" \"pnpm --filter @vanessa/relay dev\" \"pnpm --filter @vanessa/orchestrator dev\" \"pnpm --filter @vanessa/voice-agent dev\" \"pnpm --filter @vanessa/desktop dev\"",
