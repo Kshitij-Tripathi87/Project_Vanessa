@@ -12,7 +12,7 @@ import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
-import { ProcessSupervisor } from "../core/processSupervisor.js";
+import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
 import { RepairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
 
 const validTestParams = {
@@ -157,6 +157,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     await fs.writeFile(path.join(repositoryRoot, "package.json"), JSON.stringify({
       name: "vanessa-trust-fixture-root",
       private: true,
+      type: "module",
     }, null, 2));
     await fs.writeFile(path.join(repositoryRoot, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
 
@@ -166,18 +167,21 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       name: "@vanessa/incident-lab",
       version: "0.1.0",
       private: true,
-      scripts: { test: "node test.js" },
+      type: "module",
     }, null, 2));
 
+    await fs.mkdir(path.join(packageRoot, "tests"), { recursive: true });
     const fixtureTestScript = [
-      'const fs = require("node:fs");',
-      'const path = require("node:path");',
-      'const checkout = fs.readFileSync(path.join(__dirname, "src", "checkout.ts"), "utf8");',
+      'import fs from "node:fs";',
+      'import path from "node:path";',
+      'import { fileURLToPath } from "node:url";',
+      'const __dirname = path.dirname(fileURLToPath(import.meta.url));',
+      'const checkout = fs.readFileSync(path.join(__dirname, "..", "src", "checkout.ts"), "utf8");',
       'if (checkout.includes("HANG_TEST_MARKER")) { setInterval(() => {}, 1000); }',
       'else { console.log("api_key=supersecret-token-value"); console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({ schema: "vanessa.regression-report", version: 1, suiteId: "incident-lab.regression", runId: process.env.VANESSA_EXECUTION_RUN_ID, passed: 2, total: 2, failed: 0 })); }',
       "",
     ].join("\n");
-    await fs.writeFile(path.join(packageRoot, "test.js"), fixtureTestScript);
+    await fs.writeFile(path.join(packageRoot, "tests", "checkout.test.ts"), fixtureTestScript);
     await fs.writeFile(
       path.join(packageRoot, "src", "checkout.ts"),
       "export const discount = (subtotal, promo) => (subtotal * promo.discountRate) / 100;\n",
@@ -214,10 +218,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     });
     const expectedDiffHash = createHash("sha256").update(diff).digest("hex");
     const supervisor = new ProcessSupervisor(workspaceService);
-    const executable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
-    const args = process.platform === "win32"
-      ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
-      : ["--filter", "@vanessa/incident-lab", "test"];
+    const { executable, args } = getIncidentLabTestInvocation(workspace.worktreePath);
 
     const processResult = await supervisor.run({
       taskId: `run-${randomUUID()}`,
