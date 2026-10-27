@@ -25,7 +25,9 @@
     "lint": "pnpm -r run lint",
     "test:desktop:microphone": "pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/renderer/hooks/microphoneDiagnostics.test.ts",
     "test:doctor": "node --test scripts/doctor.test.cjs",
-    "package:bootstrap": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-bootstrap.ps1"
+    "package:bootstrap": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-bootstrap.ps1",
+    "setup:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup_windows.ps1",
+    "package:windows-installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",
