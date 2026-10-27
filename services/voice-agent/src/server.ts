@@ -243,6 +243,10 @@ export async function createVoiceAgentServer() {
       console.warn("[VoiceAgentServer] Session start error:", err.message);
     });
 
+    // Ambient wake-word capture is only permitted for local Whisper ASR.
+    const selectedAsr = String(process.env.VOICE_ASR_PROVIDER || "fish").trim().toLowerCase();
+    const wakeWordEnabled = process.env.VOICE_WAKE_WORD_ENABLED !== "false" && ["whisper", "voice"].includes(selectedAsr);
+
     // Session ready handshake
     sendJson(socket, {
       type: "session_ready",
@@ -251,8 +255,8 @@ export async function createVoiceAgentServer() {
       chunkSamples: 320,
       chunkBytes: 640,
       bargeInEnabled: true,
-      activationMode: "push_to_talk",
-      wakeWord: null,
+      activationMode: wakeWordEnabled ? "local-wake-word-and-push-to-talk" : "push_to_talk",
+      wakeWord: wakeWordEnabled ? { enabled: true, mode: "local-whisper", phrase: "Hey Vanessa" } : { enabled: false, reason: "Wake-word standby is enabled only for local Whisper ASR." },
       providers: session.getProviderInfo(),
       timestamp: Date.now(),
     });
@@ -284,11 +288,22 @@ export async function createVoiceAgentServer() {
                 message: `Speech recognition could not start: ${safeProviderDetail(err.message)}`,
               });
             }
+          } else if (json.type === "enable_wake_word") {
+            if (!wakeWordEnabled) {
+              sendJson(socket, { type: "voice_error", message: "Always-on wake-word listening requires local Whisper ASR. Hosted ASR uses push-to-talk." });
+            } else {
+              try {
+                await session.enableWakeWordMonitor();
+                sendJson(socket, { type: "wake_word_ready", enabled: true, mode: "local-whisper" });
+              } catch (err: any) {
+                sendJson(socket, { type: "voice_error", message: `Local wake-word setup failed: ${safeProviderDetail(err.message)}` });
+              }
+            }
           } else if (json.type === "finalize") {
             session.finalizeTurn();
           } else if (json.type === "deactivate") {
             accumulator.reset();
-            session.stop();
+            await session.deactivateSession();
           } else if (json.type === "barge_in" || json.type === "interrupt") {
             session.interrupt();
             sendJson(socket, { type: "barge_in_acknowledged" });
