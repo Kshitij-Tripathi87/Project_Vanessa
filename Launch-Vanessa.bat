@@ -3,24 +3,30 @@ setlocal
 title Vanessa - Desktop Control Layer
 cd /d "%~dp0"
 
+set "ENV_FILE=%~dp0.env"
+if defined VANESSA_CONFIG_HOME (
+  if not exist "%VANESSA_CONFIG_HOME%" mkdir "%VANESSA_CONFIG_HOME%" >nul 2>nul
+  set "ENV_FILE=%VANESSA_CONFIG_HOME%\.env"
+)
+
 rem Explicit diagnostics bypass automatic repair so users can inspect the failure first.
 if /I "%~1"=="--doctor" goto doctor
 
 rem The first launch bootstraps dependencies and local models; later launches go straight to the app.
 set "NEEDS_SETUP=0"
-if not exist ".env" set "NEEDS_SETUP=1"
+if not exist "%ENV_FILE%" set "NEEDS_SETUP=1"
 if not exist "node_modules\dotenv\package.json" set "NEEDS_SETUP=1"
 if not exist "apps\desktop\node_modules\electron\package.json" set "NEEDS_SETUP=1"
 if not exist "services\orchestrator\node_modules\tsx\package.json" set "NEEDS_SETUP=1"
 
-if not exist ".venv-voice\Scripts\python.exe" if exist ".env" (
-  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*whisper" ".env" >nul
+if not exist ".venv-voice\Scripts\python.exe" if exist "%ENV_FILE%" (
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*whisper" "%ENV_FILE%" >nul
   if not errorlevel 1 set "NEEDS_SETUP=1"
-  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*voice" ".env" >nul
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*voice" "%ENV_FILE%" >nul
   if not errorlevel 1 set "NEEDS_SETUP=1"
-  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*fish" ".env" >nul
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*fish" "%ENV_FILE%" >nul
   if not errorlevel 1 (
-    findstr /I /R /C:"^[ ]*VOICE_ALLOW_FALLBACK[ ]*=[ ]*true" ".env" >nul
+    findstr /I /R /C:"^[ ]*VOICE_ALLOW_FALLBACK[ ]*=[ ]*true" "%ENV_FILE%" >nul
     if not errorlevel 1 set "NEEDS_SETUP=1"
   )
 )
