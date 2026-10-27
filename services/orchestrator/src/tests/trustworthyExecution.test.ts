@@ -12,6 +12,9 @@ import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
 import { VanessaAgent } from "../agents/openjarvis.agent.js";
 import { MemoryAgent } from "../agents/memory.agent.js";
+import { BrowserAgent } from "../agents/browser.agent.js";
+import { FileAgent } from "../agents/file.agent.js";
+import { WindowsAgent } from "../agents/windows.agent.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
@@ -220,6 +223,48 @@ test("incident memory retrieval reports the unmanaged Python bridge as disabled"
   assert.equal(result.findings.memoryProcessStarted, false);
   assert.match(String(result.findings.memoryRetrievalError), /registered process supervisor/i);
   assert.equal((result.findings.sourcesUsed as string[]).includes("local-memory"), false);
+});
+
+test("FAKE mode can never report file creation, browser navigation, or Wi-Fi restart as real success", async () => {
+  const previousFake = process.env.FAKE;
+  process.env.FAKE = "1";
+  const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-fake-mode-"));
+  try {
+    const target = path.join(tempRoot, "must-not-be-created-" + randomUUID());
+    const fileResult = await new FileAgent().execute("folder.create", { name: path.basename(target), basePath: tempRoot });
+    assert.equal(fileResult.status, "partial");
+    assert.equal(fileResult.success, false);
+    assert.equal((fileResult.data as Record<string, any>)?.outcome, "simulated");
+    assert.equal((fileResult.data as Record<string, any>)?.actualStateChanged, false);
+    await assert.rejects(fs.stat(target), { code: "ENOENT" });
+
+    const browser = new BrowserAgent();
+    const navigation = await browser.execute("browser.open_url", { url: "https://example.invalid" });
+    assert.equal(navigation.status, "partial");
+    assert.equal(navigation.success, false);
+    assert.equal((navigation.data as Record<string, any>)?.outcome, "simulated");
+    assert.equal((navigation.data as Record<string, any>)?.pageLoadVerified, false);
+
+    const wifi = await new WindowsAgent().execute("wifi.restart_adapter", {});
+    assert.equal(wifi.status, "partial");
+    assert.equal(wifi.success, false);
+    assert.equal((wifi.data as Record<string, any>)?.outcome, "simulated");
+    assert.equal((wifi.data as Record<string, any>)?.actualStateChanged, false);
+    assert.equal((wifi.verification as Record<string, any>)?.passed, false);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+    if (previousFake === undefined) delete process.env.FAKE;
+    else process.env.FAKE = previousFake;
+  }
+});
+
+test("browser active-tab read is inconclusive until a real observation provider exists", async () => {
+  const result = await new BrowserAgent().execute("browser.read_title", { url: "https://example.invalid" });
+  assert.equal(result.status, "partial");
+  assert.equal(result.success, false);
+  assert.equal((result.data as Record<string, any>)?.outcome, "inconclusive");
+  assert.equal((result.data as Record<string, any>)?.titleRead, false);
+  assert.equal(result.verification?.passed, false);
 });
 
 test("real worktree runner binds to the patch digest, redacts output, and kills timed-out process trees", async () => {
