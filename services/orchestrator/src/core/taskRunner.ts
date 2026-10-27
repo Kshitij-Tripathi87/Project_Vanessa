@@ -540,11 +540,28 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
 
     const permission = permissionGuard.check(task);
     if (permission === "blocked") {
-      task.status = "failed";
+      task.status = "blocked";
       task.lifecycleState = "blocked";
-      task.error = "Blocked by safety policy.";
+      task.error = "Blocked by the canonical execution policy. No process was started.";
       task.completedAt = Date.now();
+      task.verification = {
+        verified: false,
+        postconditions: [task.error],
+        outcome: "blocked",
+        details: task.error,
+      };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
+      eventBus.emitEvent("audit:log", {
+        id: `policy-denied-${Date.now()}`,
+        timestamp: Date.now(),
+        taskId: task.id,
+        agent: task.agent,
+        action: task.action,
+        risk: task.risk || "high",
+        permission: "blocked",
+        status: "blocked",
+        details: task.error,
+      });
       eventBus.emitEvent("task:update", task);
       return;
     }
