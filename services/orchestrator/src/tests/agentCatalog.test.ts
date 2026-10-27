@@ -6,7 +6,8 @@ import { AGENT_CATALOG, catalogAccepts, getCatalogAction, renderAgentCatalog } f
 import { resolvePlannerWorkspace } from "../core/contextBuilder.js";
 
 test("catalog exposes isolated repair and disables unsafe autonomous coding", () => {
-  assert(AGENT_CATALOG.some((agent) => agent.id === "coding"));\n  assert(!AGENT_CATALOG.some((agent) => agent.id === "incident"));
+  assert(AGENT_CATALOG.some((agent) => agent.id === "coding"));
+  assert(!AGENT_CATALOG.some((agent) => agent.id === "incident"));
   const codex = getCatalogAction("developer", "codex.open");
   assert(codex?.selectable);
   assert.equal(codex.risk, "high");
