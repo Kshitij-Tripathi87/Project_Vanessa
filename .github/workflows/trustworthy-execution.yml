@@ -63,3 +63,6 @@ jobs:
 
       - name: Run trustworthy execution acceptance tests
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/trustworthyExecution.test.ts
+
+      - name: Run deterministic incident contract gate
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/checkoutIncidentGate.test.ts
