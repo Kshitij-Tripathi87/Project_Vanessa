@@ -14,6 +14,7 @@ import {
   rejectTask as rejectTaskRunner,
   runPlan,
   triggerKillSwitch,
+  cancelTaskWithProof,
 } from "./taskRunner.js";
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
@@ -25,28 +26,29 @@ import { cancelCodexTask } from "../agents/codex-task-runner.js";
 export class VanessaOrchestrator {
   private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
 
-  cancelRequest(requestId: string): void {
-    let request = this.requests.get(requestId);
+  async cancelRequest(requestId: string): Promise<{ cancelled: number; terminationUnconfirmed: number; planningOnly: boolean }> {
+    const request = this.requests.get(requestId);
     if (!request) {
-      // A cancellation can overtake the submit HTTP request. Keep a bounded
-      // tombstone so that late delivery cannot start the cancelled work.
-      if (this.requests.size >= 1000) throw new Error("Cancellation registry is full; inspect task state.");
-      request = { controller: new AbortController(), updatedAt: Date.now() };
-      this.requests.set(requestId, request);
+      return { cancelled: 0, terminationUnconfirmed: 0, planningOnly: true };
     }
     request.controller.abort();
-    for (const plannedTask of request.plan?.tasks || []) {
+    const plannedTasks = request.plan?.tasks || [];
+    const work: Promise<"cancelled" | "termination_unconfirmed">[] = [];
+    for (const plannedTask of plannedTasks) {
       // runPlan owns cloned task records while execution is in flight.
       const task = activeTasks.get(plannedTask.id) || plannedTask;
-      if (!["pending", "running", "awaiting_approval"].includes(task.status)) continue;
-      if (task.agent === "developer" && task.action === "codex.run_task") cancelCodexTask(task.id);
-      task.status = "cancelled";
-      task.lifecycleState = "cancelled";
-      task.error = "Request cancelled. Already-started external actions may still finish; inspect their state before retrying.";
-      task.completedAt = Date.now();
-      memoryPalace.recordTaskCheckpoint(task, request.plan?.id);
-      eventBus.emitEvent("task:update", task);
+      if (!["pending", "running", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) continue;
+      work.push(cancelTaskWithProof(
+        task,
+        "Request cancellation was requested. Final state is based on process termination evidence."
+      ));
     }
+    const results = await Promise.all(work);
+    return {
+      cancelled: results.filter((result) => result === "cancelled").length,
+      terminationUnconfirmed: results.filter((result) => result === "termination_unconfirmed").length,
+      planningOnly: plannedTasks.length === 0,
+    };
   }
   constructor() {
     // Reconcile interrupted tasks from prior crashes on startup
@@ -177,14 +179,14 @@ export class VanessaOrchestrator {
 
     // 2. Execute plan through parallel DAG task runner
     request.plan = plan;
-    if (request.controller.signal.aborted) this.cancelRequest(requestId!);
+    if (request.controller.signal.aborted) await this.cancelRequest(requestId!);
     const tasks = await runPlan(plan);
     plan.tasks = tasks;
 
     // 3. Inspect results to build spoken response
     const pendingApproval = tasks.filter((t) => t.status === "awaiting_approval");
     const failedTasks = tasks.filter((t) => t.status === "failed");
-    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired" || t.status === "cancelled");
+    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired" || t.status === "cancelled" || t.status === "termination_unconfirmed");
     const successTasks = tasks.filter((t) => t.status === "success");
 
     let status: ExecuteCommandResult["status"] = "success";
@@ -251,13 +253,13 @@ export class VanessaOrchestrator {
     return rejectTaskRunner(taskId);
   }
 
-  cancelAll(): void {
-    triggerKillSwitch();
+  cancelAll(): Promise<void> {
+    return triggerKillSwitch();
   }
 
   getSystemStatus(): SystemStatus {
     const activeTasksCount = [...activeTasks.values()].filter(
-      (t) => t.status === "running" || t.status === "pending" || t.status === "awaiting_approval"
+      (t) => t.status === "running" || t.status === "pending" || t.status === "awaiting_approval" || t.status === "termination_unconfirmed"
     ).length;
 
     return {
@@ -285,10 +287,6 @@ export class VanessaOrchestrator {
         return `${prefix}Bluetooth on kar diya hai aur tasks run ho gaye hain.`;
       }
       return `${prefix}Aapka task complete ho gaya hai.`;
-    }
-
-    if ((lower.includes("investigate") || lower.includes("checkout")) && successTasks.some((task) => task.agent === "coding" || task.agent === "incident")) {
-      return `${prefix}I investigated the checkout failure. The root cause was an unhandled null promo object in calculateTotal, matching previous incident INC-842 and the runbook. I prepared a fix in an isolated branch, ran the regression tests which passed completely, and kept deployment blocked.`;
     }
 
     if (successTasks.length === 1) {
