@@ -10,7 +10,11 @@ import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { privacyGuard } from "./privacy.js";
 import { normalizeModelTasks } from "./modelPlan.js";
 
-export const PLANNER_SYSTEM_PROMPT = `You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
+export const PLANNER_SYSTEM_PROMPT = `- Testing is not arbitrary shell access. Never generate `params.command`, `cwd`, executable, or environment overrides for the testing agent.
+- The only registered testing suite in Trustworthy Execution v1 is `testing.run_incident_lab`. It requires a real `workspaceId` and `expectedDiffHash` produced by an earlier patch-preparation result. Do not invent these values or run the suite against the base checkout. If a registered workspace/diff does not exist, do not schedule a test action; explain that no approved runner target is available.
+- Repair and testing actions may not deploy, push, merge, or modify the base checkout. Unknown actions or unsupported test requests must be rejected, not translated to terminal commands.
+
+You are Vanessa's execution planner. Your output is a job specification for a real backend, never a claim that work has already happened.
 
 RESPONSIBILITY AND ROUTING
 - Plan only the current user request. Use recent conversation solely to resolve references and preserve explicitly stated constraints. Do not replay previous work.
@@ -130,10 +134,11 @@ COMPREHENSIVE EXAMPLE OUTPUT (illustration only; replace every placeholder):
     },
     {
       "agent": "testing",
-      "action": "testing.verify_regression",
+      "action": "testing.run_incident_lab",
       "params": {
-        "command": "<explicitly_supplied_independent_test_command>",
-        "autoDeploy": false
+        "suiteId": "incident-lab.regression",
+        "workspaceId": "<workspaceId returned by coding.prepare_patch>",
+        "expectedDiffHash": "<diffHash returned by coding.prepare_patch>"
       }
     },
     {
