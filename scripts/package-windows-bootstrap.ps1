@@ -94,7 +94,10 @@ try {
             'Vanessa/.env.example',
             'Vanessa/README.md',
             'Vanessa/pnpm-lock.yaml',
-            'Vanessa/WINDOWS-QUICK-START.txt'
+            'Vanessa/WINDOWS-QUICK-START.txt',
+            'Vanessa/scripts/Launch-Vanessa-Installed.vbs',
+            'Vanessa/scripts/vanessa-installer.iss',
+            'Vanessa/scripts/build-windows-installer.ps1'
         )
         foreach ($requiredPath in $required) {
             if ($entries -notcontains $requiredPath) { throw "Bootstrap archive is missing required file: $requiredPath" }
