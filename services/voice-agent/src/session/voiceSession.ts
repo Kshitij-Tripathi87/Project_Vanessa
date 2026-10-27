@@ -261,7 +261,7 @@ export class VanessaVoiceSession {
     // 3. Forward only active speech and a short acoustic tail to Sarvam.
     // Manual endpointing is owned by Vanessa, so local gating prevents long
     // PTT silence from being sent upstream. Other providers keep their contract.
-    if (this.wakeWord.isSessionActive() || (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter)) {
+    if (this.wakeWord.isSessionActive() || (this.wakeWordMonitorActive && !this.isProcessing && !this.isSpeaking && this.asr instanceof VoiceAdapter)) {
       if (this.asr instanceof SarvamAsrAdapter) {
         for (const frame of this.sarvamSpeechGate.push(chunk.pcm, vadRes.isSpeech)) {
           this.asr.sendAudioChunk(frame);
