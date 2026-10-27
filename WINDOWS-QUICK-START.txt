@@ -35,3 +35,11 @@ Vanessa-Setup-x64.exe artifact). On a fresh PC the first-run bootstrap still ins
 Node/Python/Ollama and downloads local speech/language models. The installer is not
 currently code-signed or fully offline. Never package or share a .env with provider
 credentials.
+
+7. Release/build validation: the Windows installer CI workflow now performs a silent install/uninstall test and checks the installed file set. This validates installer mechanics only; it does not prove that a physical microphone works.
+
+8. Installer signing: version-tag releases require an Authenticode signature. The repository must have the trusted publisher PFX and password configured as GitHub Actions secrets named WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD before a version tag is pushed. Ordinary branch CI may emit an unsigned test artifact.
+
+9. This Setup EXE is an online bootstrap, not a fully offline installer. First-run setup downloads dependencies and models. Hosted Sarvam still requires BYOK until a secure server-side gateway is deployed; never embed a shared key in the EXE or bootstrap ZIP.
+
+For release gates and clean-device acceptance instructions, see docs/WINDOWS-DISTRIBUTION.md.
