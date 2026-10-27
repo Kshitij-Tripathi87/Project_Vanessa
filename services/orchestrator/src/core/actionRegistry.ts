@@ -78,6 +78,33 @@ const validateAsk = (params: Record<string, any>) => {
   return undefined;
 };
 
+const validateMemoryQuery = (params: Record<string, any>) => {
+  const unknown = onlyKeys(params, ["query", "keyword"]);
+  if (unknown) return unknown;
+  const query = params.query ?? params.keyword;
+  if (typeof query !== "string" || query.length > 1000) return "Memory query must be a string of 1,000 characters or fewer.";
+  return undefined;
+};
+const validateMemoryStore = (params: Record<string, any>) => {
+  const unknown = onlyKeys(params, ["content", "text", "metadata"]);
+  if (unknown) return unknown;
+  const content = params.content ?? params.text;
+  if (typeof content !== "string" || !content.trim()) return "Memory content must be a non-empty string.";
+  if (content.length > 20000) return "Memory content must be 20,000 characters or fewer.";
+  if (params.metadata !== undefined && (!params.metadata || typeof params.metadata !== "object" || Array.isArray(params.metadata))) {
+    return "Memory metadata must be an object when supplied.";
+  }
+  return undefined;
+};
+const validateMemoryList = (params: Record<string, any>) => {
+  const unknown = onlyKeys(params, ["limit"]);
+  if (unknown) return unknown;
+  if (params.limit !== undefined && (!Number.isInteger(params.limit) || params.limit < 1 || params.limit > 50)) {
+    return "Memory list limit must be an integer from 1 to 50.";
+  }
+  return undefined;
+};
+
 const policyList: ManagedActionPolicy[] = [
   {
     canonicalId: "openjarvis.ask",
@@ -86,6 +113,10 @@ const policyList: ManagedActionPolicy[] = [
     sideEffectClass: "read_only",
     validate: validateAsk,
   },
+  { canonicalId: "memory.retrieve", aliases: ["memory.search"], approvalRequired: false, sideEffectClass: "read_only", validate: validateMemoryQuery },
+  { canonicalId: "memory.store", aliases: ["memory.save"], approvalRequired: false, sideEffectClass: "isolated_write", validate: validateMemoryStore },
+  { canonicalId: "memory.list", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: validateMemoryList },
+  { canonicalId: "memory.delete", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", blocked: true, validate: noParams },
   { canonicalId: "testing.run_incident_lab", aliases: ["testing.run_checks", "testing.verify_regression"], approvalRequired: true, sideEffectClass: "read_only", validate: validateTestRun },
   { canonicalId: "coding.inspect_changes", aliases: ["coding.analyze_repo"], approvalRequired: false, sideEffectClass: "read_only", validate: validateInspection },
   { canonicalId: "coding.prepare_patch", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", validate: taskIdOnly },
@@ -115,6 +146,7 @@ const failClosedPrefixes = [
   "testing.",
   "incident.",
   "coding.",
+  "memory.",
   "openjarvis.",
   "vanessa.",
   "tools.",
