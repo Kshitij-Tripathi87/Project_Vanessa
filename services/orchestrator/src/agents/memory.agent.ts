@@ -1,7 +1,3 @@
-import * as path from "node:path";
-import * as fs from "node:fs";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import {
   AgentEvidence,
   AgentResult,
@@ -12,44 +8,26 @@ import {
 import { privacyGuard } from "../core/privacy.js";
 import { eventBus } from "../core/eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
-
-const execAsync = promisify(exec);
+import { resolveManagedAction } from "../core/actionRegistry.js";
 
 export class MemoryAgent implements SpecialistAgent {
   id = "memory";
-  capabilities = [
-    "recall",
-    "contextualize",
-    "preserve_knowledge",
-    "incident_history",
-    "user_preferences",
-  ];
-  allowedTools = [
-    "memory_retrieve",
-    "memory_store",
-    "memory_search",
-    "memory_list",
-    "memory_delete",
-  ];
+  capabilities = ["recall", "contextualize", "preserve_knowledge", "incident_history", "user_preferences"];
+  allowedTools = ["memory_retrieve", "memory_store", "memory_search", "memory_list", "memory_delete"];
 
-  private openJarvisDir: string;
-
-  constructor() {
-    const searchDirs = [
-      path.resolve(process.cwd(), "agents and tools"),
-      path.resolve(process.cwd(), "..", "..", "agents and tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\agents and tools",
-      path.resolve(process.cwd(), "agents_and_tools"),
-      path.resolve(process.cwd(), "..", "..", "agents_and_tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\agents_and_tools",
-      path.resolve(process.cwd(), "tools"),
-      path.resolve(process.cwd(), "..", "..", "tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\tools",
-      path.resolve(process.cwd(), "OpenJarvis"),
-      path.resolve(process.cwd(), "..", "..", "OpenJarvis"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\OpenJarvis",
-    ];
-    this.openJarvisDir = searchDirs.find((d) => fs.existsSync(d)) || searchDirs[0];
+  private blocked(action: string, reason: string): AgentResult {
+    return {
+      agentId: this.id, status: "blocked", success: false, summary: reason,
+      spokenSummary: "I blocked that memory operation because it did not match the registered memory contract.",
+      error: reason,
+      evidence: [{
+        description: "The request was rejected before a process or memory mutation was started.",
+        source: "memory-agent-policy", timestamp: new Date().toISOString(), confidence: 1,
+        data: { outcome: "blocked", actionId: action, processStarted: false },
+      }],
+      artifacts: [], verification: { passed: false, details: reason },
+      data: { outcome: "blocked", actionId: action, processStarted: false },
+    };
   }
 
   async execute(
@@ -61,198 +39,159 @@ export class MemoryAgent implements SpecialistAgent {
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
     const runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
 
-    switch (action) {
+    const policy = resolveManagedAction(action, params);
+    if (!policy.managed || policy.blocked) {
+      return this.blocked(action, policy.reason || ("Unregistered memory action '" + action + "' is blocked."));
+    }
+    const canonicalAction = policy.canonicalId || action;
+
+    switch (canonicalAction) {
       case "memory.retrieve":
-      case "memory.search":
-        return this.retrieve(params.query || params.keyword || "", runCtx);
-
+        return this.retrieve(String(params.query ?? params.keyword ?? ""), runCtx);
       case "memory.store":
-      case "memory.save":
-        return this.store(params.content || params.text || "", params.metadata, runCtx);
-
+        return this.store(String(params.content ?? params.text ?? ""), params.metadata, runCtx);
       case "memory.list":
-        return this.list(params.limit || 10, runCtx);
-
-      case "memory.delete":
-        return {
-          agentId: this.id,
-          status: "failed",
-          success: false,
-          summary: "Memory Palace is immutable and cannot be manually deleted. Records are automatically retained for 30 days and pruned thereafter.",
-          spokenSummary: "Memory palace is immutable; memories are kept for 30 days automatically.",
-          evidence: [],
-          artifacts: [],
-        };
-
+        return this.list(params.limit ?? 10, runCtx);
       default:
-        return this.retrieve(params.query || action, runCtx);
+        return this.blocked(action, "No executor is registered for memory action '" + canonicalAction + "'.");
     }
   }
 
   async retrieve(query: string, _ctx?: AgentRunContext): Promise<AgentResult> {
     const startTime = new Date().toISOString();
-    let memoryResult = "INC-842: Checkout 500 error due to missing null check on promo. Fix: promo?.discountRate ?? 0";
-    let confidence = 0.96;
-
+    const normalizedQuery = query.trim();
+    let records;
     try {
-      if (fs.existsSync(this.openJarvisDir)) {
-        const cleanQuery = (query || "checkout").replace(/'/g, "");
-        const { stdout } = await execAsync(
-          `uv run python -c "from openjarvis.tools.storage_tools import MemoryRetrieveTool; tool = MemoryRetrieveTool(); res = tool.execute(query='${cleanQuery}'); print(res.content if hasattr(res, 'content') else res)"`,
-          { cwd: this.openJarvisDir, timeout: 12000 }
-        );
-        if (stdout && stdout.trim()) {
-          memoryResult = stdout.trim();
-        }
-      }
-
-      // Check Memory Palace local SQLite storage
-      const palaceHits = memoryPalace.retrieve(query, 3);
-      if (palaceHits.length > 0) {
-        memoryResult = `${palaceHits[0].title}: ${palaceHits[0].content}`;
-      }
-    } catch {
-      // Default to seeded SQLite memory record
+      records = memoryPalace.retrieve(normalizedQuery, 3);
+    } catch (error: any) {
+      const reason = "Memory Palace query failed: " + (typeof error?.message === "string" ? error.message : "unknown database error");
+      return {
+        agentId: this.id, status: "failed", success: false, summary: reason,
+        spokenSummary: "I could not read Vanessa's local memory store.", error: reason,
+        evidence: [{ description: reason, source: "memoryPalace.retrieve", timestamp: startTime, confidence: 1 }],
+        artifacts: [], verification: { passed: false, details: reason },
+        data: { outcome: "failed", query: normalizedQuery, resultCount: 0 },
+      };
     }
 
-    const evidence: AgentEvidence[] = [
-      {
-        description: `Retrieved historical record matching query: '${query}'`,
-        source: "SQLite/Rust Local Memory (127.0.0.1:8000)",
-        timestamp: startTime,
-        confidence,
-        data: { query, memoryRecord: memoryResult },
-      },
-    ];
+    if (records.length === 0) {
+      const detail = "No active Memory Palace records matched the query" +
+        (normalizedQuery ? " '" + normalizedQuery + "'" : "") +
+        ". No seeded or fallback record was substituted.";
+      const evidence: AgentEvidence[] = [{
+        description: detail, source: "memoryPalace.retrieve", timestamp: startTime, confidence: 1,
+        data: { query: normalizedQuery, resultCount: 0 },
+      }];
+      eventBus.emitEvent("audit:log", {
+        id: "audit-" + Date.now(), timestamp: Date.now(), source: "desktop_hud", agent: this.id,
+        action: "memory.retrieve", resource: "memoryPalace.retrieve", risk: "low", permission: "allowed",
+        status: "warn", result: { query: normalizedQuery, resultCount: 0 }, details: detail,
+      });
+      return {
+        agentId: this.id, status: "partial", success: false, summary: detail,
+        spokenSummary: "I found no matching records in Vanessa's local memory.",
+        evidence, artifacts: [], verification: { passed: false, details: detail },
+        data: { outcome: "inconclusive", query: normalizedQuery, records: [], resultCount: 0, source: "memoryPalace" },
+      };
+    }
 
+    const first = records[0];
+    const detail = "Retrieved " + records.length + " matching active Memory Palace record(s) from the local SQLite database.";
+    const evidence: AgentEvidence[] = records.map((record) => ({
+      description: "Retrieved memory record '" + record.title + "' (id " + record.id + ").",
+      source: "memoryPalace.retrieve", timestamp: new Date(record.createdAt).toISOString(), confidence: 1,
+      data: { id: record.id, title: record.title, type: record.type, agent: record.agent, status: record.status, expiresAt: record.expiresAt },
+    }));
     eventBus.emitEvent("audit:log", {
-      id: `audit-${Date.now()}`,
-      timestamp: Date.now(),
-      source: "desktop_hud",
-      agent: this.id,
-      action: "memory.retrieve",
-      resource: "SQLite/Rust Memory: INC-842",
-      risk: "low",
-      permission: "allowed",
-      status: "success",
-      result: { query, memoryResult },
-      details: "Retrieved incident memory record from local SQLite/Rust database",
+      id: "audit-" + Date.now(), timestamp: Date.now(), source: "desktop_hud", agent: this.id,
+      action: "memory.retrieve", resource: "memoryPalace.retrieve", risk: "low", permission: "allowed",
+      status: "success", result: { query: normalizedQuery, resultCount: records.length, recordIds: records.map((record) => record.id) },
+      details: detail,
     });
-
     return {
-      agentId: this.id,
-      status: "completed",
-      success: true,
-      summary: `Retrieved memory matching '${query}' from local SQLite/Rust memory: ${memoryResult}`,
-      spokenSummary: "Retrieved matching incident INC-842 from persistent memory.",
-      evidence,
-      artifacts: ["SQLite/Rust Memory Table (memory.db)"],
-      verification: {
-        passed: true,
-        details: "Memory backend verified on 127.0.0.1 with Rust extension loaded",
-      },
-      data: {
-        historicalIncident: "INC-842",
-        memoryRecord: memoryResult,
-        provenance: "SQLite/Rust Local Memory (127.0.0.1)",
-        freshness: "active",
-        accessScope: "authorized_local_workspace",
-      },
+      agentId: this.id, status: "completed", success: true, summary: detail,
+      spokenSummary: "I retrieved " + records.length + " matching memory record(s). The most recent match is " + first.title + ".",
+      evidence, artifacts: records.map((record) => "memory:" + record.id),
+      verification: { passed: true, details: detail },
+      data: { outcome: "succeeded", query: normalizedQuery, resultCount: records.length, records, source: "memoryPalace", freshness: "active" },
     };
   }
 
   async store(content: string, metadata?: Record<string, any>, _ctx?: AgentRunContext): Promise<AgentResult> {
     const startTime = new Date().toISOString();
-    // Enforce sensitive data redaction layer before persisting
-    const redacted = privacyGuard.redactSensitiveData(content);
-    const cleanContent = redacted.cleanText;
+    const normalizedContent = content.trim();
+    if (!normalizedContent) return this.blocked("memory.store", "Memory content must be a non-empty string.");
+    if (normalizedContent.length > 20000) return this.blocked("memory.store", "Memory content exceeds the 20,000-character limit.");
 
+    const redacted = privacyGuard.redactSensitiveData(normalizedContent);
     try {
-      if (fs.existsSync(this.openJarvisDir)) {
-        const escaped = cleanContent.replace(/'/g, "\\'");
-        await execAsync(
-          `uv run python -c "from openjarvis.tools.storage_tools import MemoryStoreTool; tool = MemoryStoreTool(); res = tool.execute(content='${escaped}'); print(res)"`,
-          { cwd: this.openJarvisDir, timeout: 12000 }
-        );
-      }
-    } catch (err: any) {
-      console.warn("[MemoryAgent] Python store tool warning:", err.message);
+      const record = memoryPalace.storeMemory({
+        type: "knowledge",
+        title: typeof metadata?.title === "string" && metadata.title.trim() ? metadata.title.trim().slice(0, 200) : "Stored Memory",
+        content: redacted.cleanText, rawData: metadata, agent: this.id, ttlDays: 30,
+      });
+      const detail = "Persisted local memory record '" + record.id + "' after privacy redaction.";
+      const evidence: AgentEvidence[] = [{
+        description: detail, source: "memoryPalace.storeMemory", timestamp: startTime, confidence: 1,
+        data: { id: record.id, title: record.title, createdAt: record.createdAt, expiresAt: record.expiresAt, redactedCount: redacted.redactedCount },
+      }];
+      eventBus.emitEvent("audit:log", {
+        id: "audit-" + Date.now(), timestamp: Date.now(), source: "desktop_hud", agent: this.id,
+        action: "memory.store", resource: "Memory Palace:" + record.id, risk: "low", permission: "allowed",
+        status: "success", result: { id: record.id, title: record.title, redactedCount: redacted.redactedCount }, details: detail,
+      });
+      return {
+        agentId: this.id, status: "completed", success: true, summary: detail,
+        spokenSummary: "Saved the redacted record to Vanessa's local memory store.",
+        evidence, artifacts: ["memory:" + record.id], verification: { passed: true, details: detail },
+        data: { outcome: "succeeded", stored: true, record, redactedCount: redacted.redactedCount },
+      };
+    } catch (error: any) {
+      const reason = "Memory Palace write failed: " + (typeof error?.message === "string" ? error.message : "unknown database error");
+      return {
+        agentId: this.id, status: "failed", success: false, summary: reason,
+        spokenSummary: "I could not save the memory record.", error: reason,
+        evidence: [{ description: reason, source: "memoryPalace.storeMemory", timestamp: startTime, confidence: 1 }],
+        artifacts: [], verification: { passed: false, details: reason },
+        data: { outcome: "failed", stored: false, redactedCount: redacted.redactedCount },
+      };
     }
-
-    // Persist into Vanessa SQLite Memory Palace (30-day retention)
-    memoryPalace.storeMemory({
-      type: "knowledge",
-      title: metadata?.title || "Stored Memory",
-      content: cleanContent,
-      rawData: metadata,
-      agent: this.id,
-      ttlDays: 30,
-    });
-
-    const evidence: AgentEvidence[] = [
-      {
-        description: `Persisted clean memory record with ${redacted.redactedCount} sensitive fields redacted`,
-        source: "SQLite/Rust Local Memory",
-        timestamp: startTime,
-        confidence: 1.0,
-      },
-    ];
-
-    eventBus.emitEvent("audit:log", {
-      id: `audit-${Date.now()}`,
-      timestamp: Date.now(),
-      source: "desktop_hud",
-      agent: this.id,
-      action: "memory.store",
-      resource: "SQLite/Rust Memory: local_store",
-      risk: "low",
-      permission: "allowed",
-      status: "success",
-      result: { content: cleanContent, redactedCount: redacted.redactedCount },
-      details: "Stored knowledge in Vanessa persistent memory with local privacy redaction",
-    });
-
-    return {
-      agentId: this.id,
-      status: "completed",
-      success: true,
-      summary: "Saved to Vanessa persistent memory.",
-      spokenSummary: "Saved to Vanessa persistent memory.",
-      evidence,
-      artifacts: ["SQLite/Rust Memory Table (memory.db)"],
-      verification: {
-        passed: true,
-        details: "Stored in local SQLite database with privacy redaction",
-      },
-      data: {
-        stored: true,
-        content: cleanContent,
-        redactedCount: redacted.redactedCount,
-        metadata: metadata || {},
-      },
-    };
   }
 
   async list(limit: number, _ctx?: AgentRunContext): Promise<AgentResult> {
-    return {
-      agentId: this.id,
-      status: "completed",
-      success: true,
-      summary: `Listed top ${limit} memories`,
-      spokenSummary: `Retrieved recent memories from local storage.`,
-      evidence: [],
-      artifacts: [],
-      verification: { passed: true, details: "Local memory verified" },
-      data: {
-        records: [
-          {
-            id: "INC-842",
-            summary: "Checkout 500 error due to missing null check on promo",
-            timestamp: Date.now() - 86400000,
-          },
-        ],
-      },
-    };
+    const startTime = new Date().toISOString();
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      return this.blocked("memory.list", "Memory list limit must be an integer from 1 to 50.");
+    }
+    try {
+      const records = memoryPalace.retrieve("", limit);
+      const detail = "Listed " + records.length + " active Memory Palace record(s) (limit " + limit + ").";
+      const evidence: AgentEvidence[] = [{
+        description: detail, source: "memoryPalace.retrieve", timestamp: startTime, confidence: 1,
+        data: { resultCount: records.length, requestedLimit: limit, recordIds: records.map((record) => record.id) },
+      }];
+      eventBus.emitEvent("audit:log", {
+        id: "audit-" + Date.now(), timestamp: Date.now(), source: "desktop_hud", agent: this.id,
+        action: "memory.list", resource: "memoryPalace.retrieve", risk: "low", permission: "allowed",
+        status: "success", result: { resultCount: records.length, requestedLimit: limit }, details: detail,
+      });
+      return {
+        agentId: this.id, status: "completed", success: true, summary: detail,
+        spokenSummary: "I listed " + records.length + " active memory record(s).",
+        evidence, artifacts: records.map((record) => "memory:" + record.id),
+        verification: { passed: true, details: detail },
+        data: { outcome: "succeeded", records, resultCount: records.length, limit, source: "memoryPalace" },
+      };
+    } catch (error: any) {
+      const reason = "Memory Palace list failed: " + (typeof error?.message === "string" ? error.message : "unknown database error");
+      return {
+        agentId: this.id, status: "failed", success: false, summary: reason,
+        spokenSummary: "I could not list Vanessa's local memory records.", error: reason,
+        evidence: [{ description: reason, source: "memoryPalace.retrieve", timestamp: startTime, confidence: 1 }],
+        artifacts: [], verification: { passed: false, details: reason },
+        data: { outcome: "failed", resultCount: 0 },
+      };
+    }
   }
 }
 
