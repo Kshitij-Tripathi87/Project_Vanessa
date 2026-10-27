@@ -9,6 +9,7 @@ import type {
   AgentResult,
   AgentRunContext,
   AgentTask,
+  Task,
   SpecialistAgent,
 } from "@vanessa/shared";
 import { eventBus } from "../core/eventBus.js";
@@ -24,15 +25,42 @@ export interface RegressionSummary {
   total: number;
 }
 
-export function parseRegressionSummary(output: string): RegressionSummary | null {
-  const match = output.match(/ALL REGRESSION TESTS PASSED\s*\((\d+)\s*\/\s*(\d+)\)/);
-  if (!match) return null;
-  const passed = Number(match[1]);
-  const total = Number(match[2]);
-  if (!Number.isSafeInteger(passed) || !Number.isSafeInteger(total) || total < 1 || passed !== total) return null;
-  return { passed, total };
-}
+export function parseRegressionSummary(output: string, expectedRunId?: string): RegressionSummary | null {
+  // Only one schema-checked report tied to this exact captured process run is usable.
+  if (!expectedRunId?.trim()) return null;
+  const prefix = "VANESSA_REGRESSION_REPORT ";
+  const reports = output.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+  if (reports.length !== 1) return null;
 
+  let report: any;
+  try {
+    report = JSON.parse(reports[0].slice(prefix.length));
+  } catch {
+    return null;
+  }
+
+  const allowedKeys = ["schema", "version", "suiteId", "runId", "passed", "total", "failed"];
+  if (
+    !report ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    Object.keys(report).length !== allowedKeys.length ||
+    Object.keys(report).some((key) => !allowedKeys.includes(key)) ||
+    report.schema !== "vanessa.regression-report" ||
+    report.version !== 1 ||
+    report.suiteId !== INCIDENT_LAB_SUITE_ID ||
+    report.runId !== expectedRunId ||
+    !Number.isSafeInteger(report.passed) ||
+    !Number.isSafeInteger(report.total) ||
+    !Number.isSafeInteger(report.failed) ||
+    report.total < 1 ||
+    report.failed !== 0 ||
+    report.passed !== report.total
+  ) {
+    return null;
+  }
+  return { passed: report.passed, total: report.total };
+}
 export function validateRegressionRequest(params: Record<string, any>):
   | { valid: true; suiteId: string; workspaceId: string; expectedDiffHash: string }
   | { valid: false; reason: string } {
@@ -51,6 +79,46 @@ export function validateRegressionRequest(params: Record<string, any>):
     return { valid: false, reason: "The expected patch digest is missing or malformed." };
   }
   return { valid: true, suiteId: INCIDENT_LAB_SUITE_ID, workspaceId: params.workspaceId, expectedDiffHash: params.expectedDiffHash };
+}
+
+export function validateTestingApproval(
+  request: { suiteId: string; workspaceId: string; expectedDiffHash: string },
+  task: Task | undefined,
+  now = Date.now(),
+): { valid: true } | { valid: false; reason: string } {
+  if (!task) return { valid: false, reason: "Testing requires a task-bound approval; direct agent invocation is not authorized." };
+  if (task.action !== "testing.run_incident_lab") {
+    return { valid: false, reason: "Testing approval is not bound to the canonical testing.run_incident_lab action." };
+  }
+  if (!task.approvalDigest || !/^[a-f0-9]{64}$/i.test(task.approvalDigest)) {
+    return { valid: false, reason: "Testing approval digest is missing or malformed." };
+  }
+  if (task.approvalPolicyVersion !== "trustworthy-execution-v1") {
+    return { valid: false, reason: "Testing approval policy version is missing or unsupported." };
+  }
+  if (
+    typeof task.approvalExpiresAt !== "number" ||
+    !Number.isFinite(task.approvalExpiresAt) ||
+    task.approvalExpiresAt <= now
+  ) {
+    return { valid: false, reason: "Testing approval is expired or has no valid expiry." };
+  }
+  if (
+    typeof task.approvalConsumedAt !== "number" ||
+    !Number.isFinite(task.approvalConsumedAt) ||
+    task.approvalConsumedAt > now ||
+    task.approvalConsumedAt > task.approvalExpiresAt
+  ) {
+    return { valid: false, reason: "Testing approval has not been consumed before execution." };
+  }
+  if (
+    task.params?.suiteId !== request.suiteId ||
+    task.params?.workspaceId !== request.workspaceId ||
+    task.params?.expectedDiffHash !== request.expectedDiffHash
+  ) {
+    return { valid: false, reason: "Testing arguments do not match the task whose operation was approved." };
+  }
+  return { valid: true };
 }
 
 function findRepositoryRoot(start: string): string {
@@ -156,6 +224,9 @@ export class TestingAgent implements SpecialistAgent {
     const request = validateRegressionRequest(params);
     if (!request.valid) return this.blocked(request.reason);
 
+    const approval = validateTestingApproval(request, ctx?.task);
+    if (!approval.valid) return this.blocked(approval.reason, "testing.run_incident_lab");
+
     const workspace: RepairWorkspace | undefined = repairWorkspaceService.getWorkspace(request.workspaceId);
     if (!workspace) {
       return this.blocked("The requested workspace is not registered in this orchestrator session.", "testing.run_incident_lab");
@@ -233,7 +304,7 @@ export class TestingAgent implements SpecialistAgent {
     }
 
     const output = diagnosticOutput(processResult);
-    const report = parseRegressionSummary(output);
+    const report = parseRegressionSummary(output, processResult.runId);
     const exitSucceeded = processResult.status === "exited" && processResult.exitCode === 0;
     let baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
     const testSuccess = exitSucceeded && report !== null && !processResult.stdoutTruncated && !processResult.stderrTruncated && baseCheckoutUnchanged;
