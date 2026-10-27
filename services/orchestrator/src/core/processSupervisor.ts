@@ -118,6 +118,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function redactOutput(value: string): string {
+  return value
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+\/-]+=*/gi, "$1 [REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g, "[REDACTED_SECRET]")
+    .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization)\s*[:=]\s*([^\s,;\"']+)/gi, "$1=[REDACTED]");
+}
+
 /**
  * Owns subprocess lifecycle for migrated execution paths. This service only
  * accepts executable + argv arrays, uses shell:false, limits inherited
@@ -282,7 +289,7 @@ export class ProcessSupervisor {
     entry.cancellationRequested = true;
     await this.terminate(entry);
     if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
-    return entry.completion;
+    return entry.result || await entry.completion;
   }
 
   private async terminate(entry: ManagedEntry): Promise<boolean> {
@@ -351,9 +358,10 @@ export class ProcessSupervisor {
     if (entry.result) return;
     const stdoutBuffer = Buffer.concat(entry.stdout);
     const stderrBuffer = Buffer.concat(entry.stderr);
-    const stdout = stdoutBuffer.toString("utf8");
-    const stderr = stderrBuffer.toString("utf8");
-    const digest = createHash("sha256").update(stdoutBuffer).update("\0").update(stderrBuffer).digest("hex");
+    // Store and hash the same redacted output; never persist raw secrets.
+    const stdout = redactOutput(stdoutBuffer.toString("utf8"));
+    const stderr = redactOutput(stderrBuffer.toString("utf8"));
+    const digest = createHash("sha256").update(stdout).update("\\0").update(stderr).digest("hex");
     const finishedMs = Date.now();
     const result: ManagedProcessResult = {
       runId: entry.runId,
