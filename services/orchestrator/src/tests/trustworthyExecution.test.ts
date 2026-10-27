@@ -6,7 +6,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import type { Task } from "@vanessa/shared";
-import { parseRegressionSummary, validateRegressionRequest, validateTestingApproval } from "../agents/testing.agent.js";
+import { parseRegressionSummary, validateRegressionRequest, validateTestingApproval, TestingAgent } from "../agents/testing.agent.js";
 import { CodingAgent } from "../agents/coding.agent.js";
 import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
@@ -132,7 +132,15 @@ test("agent-local dispatch blocks unknown actions and direct autonomous Codex ex
   assert.equal(incident.status, "blocked");
   assert.equal(incident.data?.processStarted, false);
 
+  const testing = await new TestingAgent().execute("testing.run_incident_lab", validTestParams);
+  assert.equal(testing.status, "blocked");
+  assert.equal(testing.data?.processStarted, false);
+
   const developer = new DeveloperAgent();
+  const rawTerminal = await developer.execute("terminal.run_command", { command: "echo unsafe" });
+  assert.equal(rawTerminal.status, "blocked");
+  assert.equal(rawTerminal.data?.processStarted, false);
+
   const autonomous = await developer.execute("codex.run_task", {
     projectPath: "/not-a-real-project",
     prompt: "Modify files in the active checkout",
