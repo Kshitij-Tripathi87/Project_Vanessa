@@ -56,22 +56,28 @@ export class WindowsAgent implements SpecialistAgent {
         ];
         return {
           agentId: this.id,
-          status: "completed",
-          success: res.success,
+          status: res.simulated ? "partial" : res.success ? "completed" : "failed",
+          success: res.success && !res.simulated,
           summary: res.output,
-          spokenSummary: res.success ? "Wi-Fi adapter restarted and its status is up." : "Wi-Fi restart could not be verified.",
+          spokenSummary: res.simulated
+            ? "Wi-Fi restart was simulated. No adapter state was changed or verified."
+            : res.success ? "Wi-Fi adapter restart completed and adapter status was read back as up." : "Wi-Fi restart could not be verified.",
           evidence,
           artifacts: [],
           verification: {
-            passed: res.success && res.connected === true,
+            passed: res.success && res.connected === true && !res.simulated,
             details: res.output,
           },
           data: {
-            actionsAttempted: ["Restart-NetAdapter -Name 'Wi-Fi' -Confirm:$false"],
+            outcome: res.simulated ? "simulated" : res.success ? "succeeded" : "failed",
+            simulated: res.simulated === true,
+            actualStateChanged: res.simulated ? false : undefined,
+            actualStateVerified: res.simulated ? false : res.success && res.connected,
+            actionsAttempted: res.simulated ? [] : ["Restart-NetAdapter -Name 'Wi-Fi' -Confirm:$false"],
             actualObservations: res.output,
-            failures: res.success ? [] : [res.output],
+            failures: res.success && !res.simulated ? [] : [res.output],
             adapter: res.adapter,
-            connected: res.connected,
+            connected: res.simulated ? undefined : res.connected,
           },
         };
       }
@@ -236,13 +242,14 @@ export class WindowsAgent implements SpecialistAgent {
     }
   }
 
-  private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string; connected: boolean }> {
+  private async restartWifiAdapter(): Promise<{ success: boolean; adapter: string; output: string; connected: boolean; simulated?: boolean }> {
     if (process.env.FAKE === "1") {
       return {
-        success: true,
+        success: false,
         adapter: "Wi-Fi (Fake)",
-        connected: true,
-        output: "FAKE mode: Wi-Fi restart was simulated; network connectivity verified.",
+        connected: false,
+        simulated: true,
+        output: "FAKE mode: Wi-Fi restart was simulated. No adapter state was changed or verified.",
       };
     }
     try {
@@ -304,21 +311,53 @@ export class WindowsAgent implements SpecialistAgent {
       edge: "msedge.exe",
       vscode: "code.cmd",
     };
-    const executable = appMap[appName.toLowerCase()] || appName;
+    const key = typeof appName === "string" ? appName.trim().toLowerCase() : "";
+    const executable = appMap[key];
+    if (!executable || ["cmd", "terminal"].includes(key)) {
+      return { success: false, output: "Application is not on the safe launch allow-list. Arbitrary executable and terminal launches are disabled." };
+    }
     try {
-      await runPowerShell("Start-Process -FilePath $env:VANESSA_APP", { VANESSA_APP: executable }, 5000);
-      return { success: true, output: `Launched ${executable}` };
+      const { stdout } = await runPowerShell(
+        "$process = Start-Process -FilePath $env:VANESSA_APP -PassThru -ErrorAction Stop; if (-not $process) { throw 'Start-Process did not return a process' }; [pscustomobject]@{ pid = [int]$process.Id; name = [string]$process.ProcessName } | ConvertTo-Json -Compress",
+        { VANESSA_APP: executable }, 5000
+      );
+      const observed = JSON.parse(stdout.trim());
+      if (!Number.isSafeInteger(observed?.pid) || observed.pid < 1 || typeof observed?.name !== "string" || !observed.name) {
+        return { success: false, output: "Windows did not return a valid process identity for the launch request." };
+      }
+      return { success: true, output: "Windows accepted launch for " + executable + " (PID " + observed.pid + ", process " + observed.name + ")." };
     } catch (err: any) {
-      return { success: false, output: `Could not launch ${appName}: ${err.message}` };
+      return { success: false, output: "Could not launch " + appName + ": " + err.message };
     }
   }
 
   private async closeApp(appName: string): Promise<{ success: boolean; output: string }> {
+    const processNames: Record<string, string> = {
+      notepad: "notepad", calc: "Calculator", calculator: "Calculator",
+      explorer: "explorer", chrome: "chrome", edge: "msedge", vscode: "Code",
+    };
+    const key = typeof appName === "string" ? appName.trim().toLowerCase() : "";
+    const processName = processNames[key];
+    if (!processName) {
+      return { success: false, output: "Application is not on the safe close allow-list." };
+    }
     try {
-      await runPowerShell("Stop-Process -Name $env:VANESSA_APP -Force -ErrorAction SilentlyContinue", { VANESSA_APP: appName }, 5000);
-      return { success: true, output: `Stopped process ${appName}` };
-    } catch {
-      return { success: true, output: `Process ${appName} closed` };
+      const { stdout } = await runPowerShell(
+        "$name = $env:VANESSA_APP; $before = @(Get-Process -Name $name -ErrorAction SilentlyContinue); if ($before.Count -gt 0) { $before | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 150 }; $remaining = @(Get-Process -Name $name -ErrorAction SilentlyContinue); [pscustomobject]@{ before = $before.Count; remaining = $remaining.Count } | ConvertTo-Json -Compress",
+        { VANESSA_APP: processName }, 5000
+      );
+      const observed = JSON.parse(stdout.trim());
+      if (!Number.isSafeInteger(observed?.before) || !Number.isSafeInteger(observed?.remaining) || observed.remaining < 0) {
+        return { success: false, output: "Windows returned no valid process-close verification." };
+      }
+      if (observed.remaining !== 0) {
+        return { success: false, output: "Could not verify that all " + processName + " processes stopped; remaining: " + observed.remaining + "." };
+      }
+      return { success: true, output: observed.before === 0
+        ? "Verified that no " + processName + " process was running."
+        : "Stopped " + observed.before + " " + processName + " process(es) and verified none remain." };
+    } catch (error: any) {
+      return { success: false, output: "Could not verify process termination: " + (error?.message || "unknown PowerShell error") };
     }
   }
 
