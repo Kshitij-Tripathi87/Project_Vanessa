@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { eventBus } from "../core/eventBus.js";
+import { processSupervisor } from "../core/processSupervisor.js";
+import type { AgentRunContext } from "@vanessa/shared";
 import { repairWorkspaceService, RepairWorkspaceError } from "../core/repairWorkspace.js";
 
 const execFileAsync = promisify(execFile);
@@ -31,7 +33,7 @@ export class IncidentAgent {
     }
   }
 
-  async execute(action: string, params: Record<string, any> = {}): Promise<any> {
+  async execute(action: string, params: Record<string, any> = {}, context?: AgentRunContext): Promise<any> {
     switch (action) {
       case "incident.analyze_repo":
         return this.analyzeRepository(params);
@@ -46,11 +48,11 @@ export class IncidentAgent {
         return this.correlateEvidence(params);
 
       case "incident.prepare_and_verify":
-        return this.prepareFixAndVerify(params);
+        return this.prepareFixAndVerify({ ...params, taskId: params.taskId || context?.task?.id });
 
       case "incident.investigate":
       default:
-        return this.runFullInvestigation(params);
+        return this.runFullInvestigation({ ...params, taskId: params.taskId || context?.task?.id });
     }
   }
 
@@ -337,32 +339,50 @@ export class IncidentAgent {
 
     if (patchApplied) {
       try {
-        const result = await execFileAsync("pnpm", ["--filter", "@vanessa/incident-lab", "test"], {
-          cwd: workspace.worktreePath, timeout: 25000, maxBuffer: 512 * 1024, windowsHide: true, encoding: "utf8",
+        const executable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
+        const args = process.platform === "win32"
+          ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
+          : ["--filter", "@vanessa/incident-lab", "test"];
+        const processResult = await processSupervisor.run({
+          taskId,
+          actionId: "testing.run_incident_lab",
+          executable,
+          args,
+          cwd: workspace.worktreePath,
+          timeoutMs: 25000,
+          maxOutputBytes: 256 * 1024,
         });
-        testOutput = [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-20000);
-        testExitCode = 0;
+        testOutput = [processResult.stdout, processResult.stderr].filter(Boolean).join("\n").slice(-20000);
+        testExitCode = processResult.exitCode;
         const match = testOutput.match(/ALL REGRESSION TESTS PASSED\s*\((\d+)\s*\/\s*(\d+)\)/);
         if (match) testReport = { passed: Number(match[1]), total: Number(match[2]) };
-        testsPassed = Boolean(testReport && testReport.total > 0 && testReport.passed === testReport.total);
-        outcome = testsPassed ? "success" : "inconclusive";
-        if (!testsPassed) failureReason = "Runner exited 0 but did not produce a valid non-zero-count regression summary.";
+        testsPassed = processResult.status === "exited" && testExitCode === 0 &&
+          Boolean(testReport && testReport.total > 0 && testReport.passed === testReport.total) &&
+          !processResult.stdoutTruncated && !processResult.stderrTruncated;
+        outcome = testsPassed ? "success" :
+          processResult.status === "exited" && testExitCode !== 0 ? "failed" : "inconclusive";
+        if (!testsPassed) failureReason = processResult.error ||
+          (testExitCode !== null && testExitCode !== 0
+            ? `Regression suite exited with code ${testExitCode}.`
+            : "Process supervisor did not produce a valid structured passing result.");
+        evidence.push({
+          type: "test-run", suiteId: "incident-lab.regression", runId: processResult.runId,
+          command: "pnpm --filter @vanessa/incident-lab test", processStatus: processResult.status,
+          exitCode: testExitCode, report: testReport, outputDigest: processResult.outputDigest,
+          stdoutTruncated: processResult.stdoutTruncated, stderrTruncated: processResult.stderrTruncated,
+          terminationVerified: processResult.terminationVerified,
+        });
       } catch (error: any) {
-        const stdout = typeof error?.stdout === "string" ? error.stdout : "";
-        const stderr = typeof error?.stderr === "string" ? error.stderr : "";
-        testOutput = [stdout, stderr, error?.message].filter(Boolean).join("\n").slice(-20000);
-        testExitCode = typeof error?.code === "number" ? error.code : null;
+        testOutput = typeof error?.message === "string" ? error.message : "Test process execution failed.";
+        testExitCode = null;
         testsPassed = false;
-        outcome = testExitCode !== null && testExitCode !== 0 ? "failed" : "inconclusive";
-        failureReason = testExitCode !== null
-          ? `Regression suite exited with code ${testExitCode}.`
-          : "Regression runner failed to start or timed out; test completion is not verified.";
+        outcome = "inconclusive";
+        failureReason = "Regression runner failed to produce a process-supervisor result.";
+        evidence.push({
+          type: "test-run", suiteId: "incident-lab.regression", error: testOutput,
+          outputDigest: createHash("sha256").update(testOutput).digest("hex"),
+        });
       }
-      evidence.push({
-        type: "test-run", suiteId: "incident-lab.regression",
-        command: "pnpm --filter @vanessa/incident-lab test", exitCode: testExitCode, report: testReport,
-        outputDigest: createHash("sha256").update(testOutput).digest("hex"),
-      });
     }
 
     const baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
