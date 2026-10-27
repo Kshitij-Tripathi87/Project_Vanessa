@@ -2,13 +2,16 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
 import { openCodex } from "./codex-launcher.js";
+import { runCodexTask } from "./codex-task-runner.js";
+import { eventBus } from "../core/eventBus.js";
+import type { AgentRunContext } from "@vanessa/shared";
 
 const execAsync = promisify(exec);
 
 export class DeveloperAgent {
   private vsCodePath = "C:\\Users\\21330\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd";
 
-  async execute(action: string, params: Record<string, any> = {}): Promise<any> {
+  async execute(action: string, params: Record<string, any> = {}, context?: AgentRunContext): Promise<any> {
     switch (action) {
       case "codex.open":
         console.log(`[Codex] handoff project=${params.projectPath} promptCharacters=${typeof params.prompt === "string" ? params.prompt.length : 0}`);
@@ -18,6 +21,25 @@ export class DeveloperAgent {
           if (!result.success) console.error(`[Codex] launch failed: ${result.error}`);
           return result;
         }
+
+      case "codex.run_task": {
+        const taskId = context?.task?.id || "codex-" + Date.now();
+        const requestId = context?.task?.requestId;
+        const result = await runCodexTask(params, {
+          taskId,
+          requestId,
+          onProgress: (event) => eventBus.emitEvent("codex:progress", event),
+        });
+        console.log("[Codex] managed task=" + taskId + " status=" + result.status +
+          " exitCode=" + String(result.exitCode ?? "none") + "; independent verification required");
+        return {
+          ...result,
+          taskId,
+          agentId: "developer",
+          summary: typeof result.output === "string" ? result.output : undefined,
+          spokenSummary: result.spokenSummary || "The managed coding task returned without a verified result.",
+        };
+      }
 
       case "vscode.open_project": {
         const projectPath = params.path || process.cwd();

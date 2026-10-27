@@ -20,6 +20,7 @@ import { memoryPalace } from "../memory/memoryPalace.js";
 import { narrator } from "./narrator.js";
 import { formatLlmError } from "./llmDiagnostics.js";
 import { modelRouter } from "./router.js";
+import { cancelCodexTask } from "../agents/codex-task-runner.js";
 
 export class VanessaOrchestrator {
   private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
@@ -38,6 +39,7 @@ export class VanessaOrchestrator {
       // runPlan owns cloned task records while execution is in flight.
       const task = activeTasks.get(plannedTask.id) || plannedTask;
       if (!["pending", "running", "awaiting_approval"].includes(task.status)) continue;
+      if (task.agent === "developer" && task.action === "codex.run_task") cancelCodexTask(task.id);
       task.status = "cancelled";
       task.lifecycleState = "cancelled";
       task.error = "Request cancelled. Already-started external actions may still finish; inspect their state before retrying.";

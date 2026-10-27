@@ -8,6 +8,7 @@ import { resourceLockManager } from "./resourceLocks.js";
 import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { criticEngine } from "./critic.js";
 import { recordAgentResult } from "./agentResult.js";
+import { cancelCodexTask } from "../agents/codex-task-runner.js";
 export { recordAgentResult } from "./agentResult.js";
 
 // Active in-memory map of running and paused tasks
@@ -51,6 +52,7 @@ export function triggerKillSwitch() {
   isKillSwitchEngaged = true;
   for (const task of activeTasks.values()) {
     if (task.status === "running" || task.status === "pending" || task.status === "awaiting_approval") {
+      if (task.agent === "developer" && task.action === "codex.run_task") cancelCodexTask(task.id);
       task.status = "cancelled";
       task.lifecycleState = "cancelled";
       task.error = "Operation cancelled by emergency kill-switch";

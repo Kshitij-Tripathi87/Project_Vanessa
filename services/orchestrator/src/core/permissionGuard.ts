@@ -10,6 +10,7 @@ export class PermissionGuard {
   // Actions that require explicit user confirmation before executing
   private confirmActions = new Set<string>([
     "codex.open",
+    "codex.run_task",
     "wifi.restart_adapter",
     "brightness.set",
     "windows.brightness_set",
