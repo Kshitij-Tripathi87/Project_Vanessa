@@ -148,7 +148,7 @@ function redactOutput(value: string): string {
 
 async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> {
   if (!Number.isSafeInteger(rootPid) || rootPid < 1) return null;
-  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance Win32_Process); $ids = @($root); do { $old = @($ids).Count; $children = @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | Select-Object -ExpandProperty ProcessId); $ids = @($ids + $children | Sort-Object -Unique); } while (@($ids).Count -gt $old); ConvertTo-Json -InputObject @($ids) -Compress";
+  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId -ErrorAction Stop); $ids = @($root); do { $old = @($ids).Count; $children = @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | Select-Object -ExpandProperty ProcessId); $ids = @($ids + $children | Sort-Object -Unique); } while (@($ids).Count -gt $old); ConvertTo-Json -InputObject @($ids) -Compress";
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_ROOT_PID: String(rootPid) },
@@ -164,7 +164,7 @@ async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> 
 
 async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | null> {
   if (!processIds.length || processIds.some((pid) => !Number.isSafeInteger(pid) || pid < 1)) return null;
-  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $aliveCount = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId }).Count; ConvertTo-Json -InputObject @{ aliveCount = $aliveCount } -Compress";
+  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $aliveCount = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId -ErrorAction Stop | Where-Object { $ids -contains [int]$_.ProcessId }).Count; ConvertTo-Json -InputObject @{ aliveCount = $aliveCount } -Compress";
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
