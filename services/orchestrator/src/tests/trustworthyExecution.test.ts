@@ -23,7 +23,7 @@ test("structured regression parser rejects keyword-only and partial-pass output"
   assert.equal(parseRegressionSummary("some tests pass"), null);
   assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (1/2)"), null);
   assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (0/0)"), null);
-  assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2)\nwarning: output truncated"), null === undefined ? undefined : { passed: 2, total: 2 } instanceof Object ? { passed: 2, total: 2 } : null);
+  assert.deepEqual(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2)\\nwarning: output truncated"), { passed: 2, total: 2 });
 });
 
 test("testing request schema rejects arbitrary commands and non-registered runners", () => {
@@ -32,7 +32,7 @@ test("testing request schema rejects arbitrary commands and non-registered runne
     reason: "Free-form command execution is not accepted by the testing agent. Use a registered suiteId.",
   });
   assert.equal(validateRegressionRequest({ suiteId: "arbitrary" }).valid, false);
-  assert.equal(validateRegressionRequest({ ...validTestParams, cwd: "C:\\\" }).valid, false);
+  assert.equal(validateRegressionRequest({ ...validTestParams, cwd: "C:\\\\" }).valid, false);
   assert.equal(validateRegressionRequest(validTestParams).valid, true);
 });
 
