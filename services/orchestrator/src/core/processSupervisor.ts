@@ -13,7 +13,8 @@ export type ManagedProcessStatus =
   | "spawn_failed"
   | "timed_out"
   | "cancelled"
-  | "termination_unconfirmed";
+  | "termination_unconfirmed"
+  | "orphaned_processes";
 
 export interface ManagedProcessRequest {
   taskId: string;
@@ -398,6 +399,32 @@ export class ProcessSupervisor {
     } else if (exitCode === null) {
       status = "spawn_failed";
       error = error || "The process closed without an exit code.";
+    } else {
+      // A zero exit code is not enough if descendants survived the launcher.
+      // Verify the owned process group/tree on every normal exit.
+      let hasRemaining: boolean | null;
+      if (process.platform === "win32" && entry.child.pid) {
+        const processIds = await getWindowsProcessTree(entry.child.pid);
+        hasRemaining = processIds
+          ? !(await areWindowsProcessesGone(processIds) === true)
+          : null;
+      } else if (entry.child.pid) {
+        hasRemaining = processGroupAlive(entry.child.pid);
+      } else {
+        hasRemaining = null;
+      }
+      if (hasRemaining === false) {
+        terminationVerified = true;
+      } else if (hasRemaining === true) {
+        terminationVerified = await this.terminate(entry);
+        status = terminationVerified ? "orphaned_processes" : "termination_unconfirmed";
+        error = terminationVerified
+          ? "The launcher exited with descendant processes still present; the supervisor terminated them. The run is not eligible for success."
+          : "The launcher exited with descendant processes still present, and the supervisor could not verify their termination.";
+      } else {
+        status = "termination_unconfirmed";
+        error = "The launcher exited, but the supervisor could not verify that its process tree was gone.";
+      }
     }
 
     // The close handler and timeout/cancel handler can overlap while awaiting
