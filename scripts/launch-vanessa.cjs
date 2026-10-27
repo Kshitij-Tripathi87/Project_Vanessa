@@ -130,14 +130,14 @@ async function assertOllamaReady(config) {
   }
   const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen2.5:3b').trim();
   let response;
-  try { response = await fetch(\x60\x24{parsed.origin}/api/tags\x60, { signal: AbortSignal.timeout(2500) }); }
-  catch { throw new Error(\x60Local Ollama is not reachable at \x24{parsed.origin}. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.\x60); }
-  if (!response.ok) throw new Error(\x60Local Ollama returned HTTP \x24{response.status}. Restart Ollama and retry.\x60);
+  try { response = await fetch(parsed.origin + '/api/tags', { signal: AbortSignal.timeout(2500) }); }
+  catch { throw new Error('Local Ollama is not reachable at ' + parsed.origin + '. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.'); }
+  if (!response.ok) throw new Error('Local Ollama returned HTTP ' + response.status + '. Restart Ollama and retry.');
   let body;
   try { body = await response.json(); } catch { throw new Error('Local Ollama returned an invalid model list. Restart Ollama and retry.'); }
   const installed = Array.isArray(body.models) && body.models.some(item => item && item.name === model);
-  if (!installed) throw new Error(\x60Local model "\x24{model}" is not installed. Run .\\\\scripts\\\\setup_windows.ps1 or execute ollama pull \x24{model}.\x60);
-  log('OLLAMA', \x60Local model ready: \x24{model}; no provider key required.\x60);
+  if (!installed) throw new Error('Local model "' + model + '" is not installed. Run .\\\\scripts\\\\setup_windows.ps1 or execute ollama pull ' + model + '.');
+  log('OLLAMA', 'Local model ready: ' + model + '; no provider key required.');
 }
 
 function asrReachable(url) {
