@@ -260,10 +260,22 @@ export class IncidentAgent {
       workspace = await repairWorkspaceService.create(taskId);
     } catch (error: any) {
       const code = error instanceof RepairWorkspaceError ? error.code : "WORKSPACE_CREATION_FAILED";
+      const detail = typeof error?.message === "string" ? error.message : "Repair workspace could not be created.";
+      const blocked = code === "BASE_CHECKOUT_DIRTY";
       const result = {
-        status: code === "BASE_CHECKOUT_DIRTY" ? "blocked" : "inconclusive", taskId,
+        status: blocked ? "blocked" : "inconclusive",
+        success: false,
+        taskId,
         patchApplied: false, testsPassed: false, testExitCode: null, evidence: [],
-        errorCode: code, error: typeof error?.message === "string" ? error.message : "Repair workspace could not be created.",
+        errorCode: code, error: detail,
+        summary: detail, spokenSummary: detail,
+        verification: { passed: false, details: detail },
+        data: {
+          outcome: blocked ? "blocked" : "inconclusive",
+          taskId, patchApplied: false, testsPassed: false,
+          errorCode: code, error: detail,
+          deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
+        },
         deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
       };
       eventBus.emitEvent("audit:log", {
@@ -403,12 +415,30 @@ export class IncidentAgent {
     if (!patchApplied && !failureReason) failureReason = "No verifiable patch was applied.";
     if (outcome !== "success") testsPassed = false;
 
+    const detail = outcome === "success"
+      ? `Patch and regression suite verified in isolated worktree ${workspace.branchName}; base checkout unchanged.`
+      : failureReason || "Required verification evidence was not established.";
     const verificationResult = {
-      status: outcome, taskId, branch: workspace.branchName, worktreePath: workspace.worktreePath,
+      status: outcome,
+      success: outcome === "success",
+      taskId,
+      branch: workspace.branchName, worktreePath: workspace.worktreePath,
       baseCommit: workspace.baseCommit, patchApplied, diffHash: diffHash || undefined, changedFiles,
       testsPassed, testSuiteRun: patchApplied ? "incident-lab.regression" : undefined, testExitCode,
       testReport, testOutput, baseCheckoutUnchanged, evidence,
-      error: outcome === "success" ? undefined : failureReason || "Required verification evidence was not established.",
+      error: outcome === "success" ? undefined : detail,
+      summary: detail,
+      spokenSummary: detail,
+      verification: { passed: outcome === "success", details: detail },
+      data: {
+        outcome: outcome === "success" ? "repair_verified" : outcome,
+        taskId, status: outcome, branch: workspace.branchName, worktreePath: workspace.worktreePath,
+        baseCommit: workspace.baseCommit, patchApplied, diffHash: diffHash || undefined, changedFiles,
+        testsPassed, testSuiteRun: patchApplied ? "incident-lab.regression" : undefined, testExitCode,
+        testReport, testOutput, baseCheckoutUnchanged, evidence,
+        error: outcome === "success" ? undefined : detail,
+        deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
+      },
       deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
     };
     eventBus.emitEvent("audit:log", {
@@ -433,29 +463,62 @@ export class IncidentAgent {
       this.analyzeRepository(params), this.analyzeLogs(params), this.retrieveMemoryAndRunbook(params),
     ]);
     const diagnosis = await this.correlateEvidence({ repo: repoEvidence, logs: logEvidence, memory: memoryEvidence });
+    const workers = [repoEvidence, logEvidence, memoryEvidence];
+    const workerEvidence = workers.map((worker) => ({
+      description: `${worker.worker}: ${String(worker.findings.analysis || worker.findings.runbookTitle || "Source inspected")}.`,
+      source: worker.source,
+      timestamp: worker.timestamp,
+      confidence: worker.confidence,
+      data: worker.findings,
+    }));
     if (diagnosis.status !== "diagnosed" || !diagnosis.proposedFix) {
+      const summary = "Investigation is inconclusive. The available source and log evidence did not establish the targeted defect; no patch or deployment was attempted.";
+      const verification = {
+        status: "inconclusive",
+        patchApplied: false,
+        testsPassed: false,
+        error: "Repair was not attempted because current source evidence did not establish the targeted defect.",
+        deploymentStatus: "REFUSED_PER_POLICY",
+      };
       return {
-        status: "inconclusive", investigationId, workers: [repoEvidence, logEvidence, memoryEvidence], diagnosis,
-        verification: {
-          status: "inconclusive", patchApplied: false, testsPassed: false,
-          error: "Repair was not attempted because current source evidence did not establish the targeted defect.",
-          deploymentStatus: "REFUSED_PER_POLICY",
-        },
-        summary: "Investigation is inconclusive. The available evidence did not establish the targeted defect; no patch or deployment was attempted.",
+        status: "partial",
+        success: false,
+        investigationId, workers, diagnosis, summary, spokenSummary: summary,
+        verification: { passed: false, details: summary },
+        evidence: workerEvidence,
+        artifacts: [],
+        data: { outcome: "inconclusive", investigationId, workers, diagnosis, verification, summary },
       };
     }
     const verification = await this.prepareFixAndVerify({ ...params, taskId: params.taskId || investigationId });
-    const status = verification.status === "success" ? "success"
+    const outcome = verification.status === "success" ? "success"
       : verification.status === "failed" ? "failed"
       : verification.status === "blocked" ? "blocked" : "inconclusive";
-    const summary = status === "success"
+    const summary = outcome === "success"
       ? `Investigation verified a patch in worktree ${verification.worktreePath}; ${verification.testReport.passed}/${verification.testReport.total} regression tests passed. Base checkout unchanged. Deployment was not attempted.`
-      : status === "failed"
+      : outcome === "failed"
         ? `Investigation failed a required verification gate: ${verification.error || "see evidence"}.`
-        : status === "blocked"
+        : outcome === "blocked"
           ? `Investigation was blocked before repair: ${verification.error || "a required precondition was not met"}.`
           : `Investigation is inconclusive: ${verification.error || "required verification evidence is missing"}.`;
-    return { status, investigationId, workers: [repoEvidence, logEvidence, memoryEvidence], diagnosis, verification, summary };
+    const evidence = [...workerEvidence, ...(Array.isArray(verification.evidence) ? verification.evidence : [])];
+    return {
+      status: outcome === "success" ? "completed" : outcome === "failed" ? "failed" : outcome === "blocked" ? "blocked" : "partial",
+      success: outcome === "success",
+      investigationId,
+      workers, diagnosis, verification, summary, spokenSummary: summary,
+      evidence,
+      artifacts: verification.worktreePath ? [`worktree:${verification.worktreePath}`] : [],
+      verification: { passed: outcome === "success", details: summary },
+      data: {
+        outcome: outcome === "success" ? "repair_verified" : outcome,
+        investigationId, workers, diagnosis, verification, summary,
+        worktreePath: verification.worktreePath, branch: verification.branch,
+        baseCommit: verification.baseCommit, patchApplied: verification.patchApplied,
+        testsPassed: verification.testsPassed, testReport: verification.testReport,
+        deploymentStatus: "REFUSED_PER_POLICY",
+      },
+    };
   }
 
 }
