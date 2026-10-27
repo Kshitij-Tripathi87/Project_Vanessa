@@ -406,9 +406,11 @@ export function useAudioCapture() {
       return false;
     }
 
-    // --text-only deliberately omits the voice service. Preserve a usable typed
-    // command path through the trusted Electron main process to the same orchestrator.
-    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
+    // If voice is explicitly disabled or still disconnected, keep typing independent of
+    // the voice WebSocket and route straight through the trusted desktop IPC/orchestrator.
+    const voiceSocketOpen = wsRef.current?.readyState === WebSocket.OPEN;
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false" || !voiceSocketOpen) {
+      pendingTextCommandRef.current = null;
       const requestId = `desktop-${globalThis.crypto.randomUUID()}`;
       activeTextOnlyRequestRef.current = requestId;
       setPartialTranscript(text);
@@ -422,7 +424,7 @@ export function useAudioCapture() {
         language: language.slice(0, 32) || "en",
         source: "desktop",
         requestId,
-        idempotencyKey: `text-only:${requestId}`,
+        idempotencyKey: `desktop-direct:${requestId}`,
       })
         .then((result) => {
           if (activeTextOnlyRequestRef.current !== requestId) return;
@@ -442,7 +444,25 @@ export function useAudioCapture() {
           } else {
             setTaskStage("failed", "The request failed or could not be verified.");
           }
-          setVoiceState("idle");
+          // If the voice service is unavailable, provide an OS/browser speech fallback
+          // while preserving the written result. This does not claim remote TTS was used.
+          const canSpeakFallback =
+            import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
+            Boolean(result.spokenSummary?.trim()) &&
+            "speechSynthesis" in window;
+          if (canSpeakFallback) {
+            audioQueueRef.current.push({
+              text: result.spokenSummary,
+              fallbackSpeech: true,
+              speechRate: 1.05,
+              speechPitch: 1.02,
+              isFinal: true,
+            });
+            setVoiceState("speaking");
+            playNextInQueue();
+          } else {
+            setVoiceState("idle");
+          }
         })
         .catch((error: unknown) => {
           if (activeTextOnlyRequestRef.current !== requestId) return;
@@ -465,14 +485,15 @@ export function useAudioCapture() {
     const socket = wsRef.current;
     if (socket && dispatchTextCommand(socket, command)) return true;
 
-    // Only an unsent command is buffered. An issued action is never replayed automatically.
+    // Only an unsent command is buffered during a close race. It is never replayed
+    // when the direct IPC/orchestrator path has already accepted the request.
     pendingTextCommandRef.current = command;
     setPartialTranscript(text);
-    setLastResponse("Connecting to Vanessa voice service…");
-    setTaskStage("accepted", "Waiting for the local voice service.");
+    setLastResponse("Voice connection changed while submitting. Reconnecting…");
+    setTaskStage("accepted", "The request has not been sent yet.");
     connectVoiceWs();
     return true;
-  }, [connectVoiceWs, dispatchTextCommand, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+  }, [connectVoiceWs, dispatchTextCommand, playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
 
   // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
   const testMicrophone = useCallback(async () => {
