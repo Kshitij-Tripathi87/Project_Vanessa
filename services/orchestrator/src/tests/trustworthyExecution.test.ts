@@ -95,7 +95,7 @@ test("real worktree + registered test runner is tied to the exact patch digest",
       private: true,
       scripts: { test: "node test.js" },
     }, null, 2));
-    await fs.writeFile(path.join(packageRoot, "test.js"), "console.log(\"api_key=supersecret-token-value\");\nconsole.log(\"ALL REGRESSION TESTS PASSED (2/2)\");\n");
+    await fs.writeFile(path.join(packageRoot, "test.js"), "const fs = require(\"node:fs\");\nconst path = require(\"node:path\");\nconst checkout = fs.readFileSync(path.join(__dirname, \"src\", \"checkout.ts\"), \"utf8\");\nif (checkout.includes(\"HANG_TEST_MARKER\")) { setInterval(() => {}, 1000); }\nelse { console.log(\"api_key=supersecret-token-value\"); console.log(\"ALL REGRESSION TESTS PASSED (2/2)\"); }\n");
     await fs.writeFile(
       path.join(packageRoot, "src", "checkout.ts"),
       "export const discount = (subtotal, promo) => (subtotal * promo.discountRate) / 100;\n",
@@ -110,6 +110,22 @@ test("real worktree + registered test runner is tied to the exact patch digest",
 
     const workspaceService = new RepairWorkspaceService(repositoryRoot);
     workspace = await workspaceService.create(`test-${randomUUID()}`);
+    assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
+    assert.equal(processResult.terminationVerified, true);
+
+    // Force the exact registered suite to hang based on the worktree-only source diff.
+    const hangingPatch = patched.replace("const discount", "/* HANG_TEST_MARKER */\\nconst discount");
+    await fs.writeFile(target, hangingPatch, "utf8");
+    const hangingDiff = execFileSync("git", ["diff", "--no-ext-diff", "--", relativeFile], { cwd: workspace.worktreePath, encoding: "utf8" });
+    const hangingDiffHash = createHash("sha256").update(hangingDiff).digest("hex");
+    const timeoutResult = await supervisor.run({
+      taskId: `timeout-${randomUUID()}`,
+      actionId: "testing.run_incident_lab",
+      actionParams: { suiteId: "incident-lab.regression", workspaceId: workspace.taskId, expectedDiffHash: hangingDiffHash },
+      executable, args, cwd: workspace.worktreePath, timeoutMs: 1000, maxOutputBytes: 64 * 1024,
+    });
+    assert.equal(timeoutResult.status, "timed_out");
+    assert.equal(timeoutResult.terminationVerified, true);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
 
     const relativeFile = "packages/incident-lab/src/checkout.ts";
