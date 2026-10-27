@@ -23,7 +23,7 @@ test("structured regression parser rejects keyword-only and partial-pass output"
   assert.equal(parseRegressionSummary("some tests pass"), null);
   assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (1/2)"), null);
   assert.equal(parseRegressionSummary("ALL REGRESSION TESTS PASSED (0/0)"), null);
-  assert.deepEqual(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2)\\nwarning: output truncated"), { passed: 2, total: 2 });
+  assert.deepEqual(parseRegressionSummary("ALL REGRESSION TESTS PASSED (2/2) with additional diagnostics"), { passed: 2, total: 2 });
 });
 
 test("testing request schema rejects arbitrary commands and non-registered runners", () => {
@@ -32,7 +32,7 @@ test("testing request schema rejects arbitrary commands and non-registered runne
     reason: "Free-form command execution is not accepted by the testing agent. Use a registered suiteId.",
   });
   assert.equal(validateRegressionRequest({ suiteId: "arbitrary" }).valid, false);
-  assert.equal(validateRegressionRequest({ ...validTestParams, cwd: "C:\\\\" }).valid, false);
+  assert.equal(validateRegressionRequest({ ...validTestParams, cwd: "/tmp" }).valid, false);
   assert.equal(validateRegressionRequest(validTestParams).valid, true);
 });
 
@@ -95,7 +95,7 @@ test("real worktree + registered test runner is tied to the exact patch digest",
       private: true,
       scripts: { test: "node test.js" },
     }, null, 2));
-    await fs.writeFile(path.join(packageRoot, "test.js"), 'console.log("ALL REGRESSION TESTS PASSED (2/2)");\n');
+    await fs.writeFile(path.join(packageRoot, "test.js"), "console.log(\"api_key=supersecret-token-value\");\nconsole.log(\"ALL REGRESSION TESTS PASSED (2/2)\");\n");
     await fs.writeFile(
       path.join(packageRoot, "src", "checkout.ts"),
       "export const discount = (subtotal, promo) => (subtotal * promo.discountRate) / 100;\n",
@@ -150,6 +150,8 @@ test("real worktree + registered test runner is tied to the exact patch digest",
     assert.equal(processResult.status, "exited");
     assert.equal(processResult.exitCode, 0);
     assert.match(processResult.stdout + processResult.stderr, /ALL REGRESSION TESTS PASSED \(2\/2\)/);
+    assert.doesNotMatch(processResult.stdout + processResult.stderr, /supersecret-token-value/);
+    assert.match(processResult.stdout + processResult.stderr, /api_key=\\[REDACTED\\]/);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
   } finally {
     if (workspace) {
