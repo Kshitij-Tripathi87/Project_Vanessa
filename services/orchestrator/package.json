@@ -22,6 +22,7 @@
     "test:windows-controls": "tsx --test src/tests/windowsControls.test.ts",
     "smoke:windows-controls": "tsx src/scripts/windows-controls-smoke.ts",
     "test:agent-result": "tsx --test src/tests/agentResult.test.ts",
+    "test:trustworthy-execution": "tsx --test src/tests/trustworthyExecution.test.ts",
     "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts",
     "test:ollama-client": "tsx --test src/tests/ollamaClient.test.ts",
     "test:resource-workflows": "tsx --test src/tests/agentRouting.test.ts src/tests/folderAgent.test.ts src/tests/fileAgent.test.ts src/tests/planner.resourceRouting.test.ts"
