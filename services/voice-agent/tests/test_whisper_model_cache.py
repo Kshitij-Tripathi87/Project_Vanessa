@@ -69,9 +69,10 @@ class WhisperModelCacheTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("empty", reason.lower())
 
-        ready, reason = inspect_model_cache(str(Path(tempfile.gettempdir()) / "vanessa-model-does-not-exist"))
-        self.assertFalse(ready)
-        self.assertIn("does not exist", reason)
+        with tempfile.TemporaryDirectory() as temporary:
+            ready, reason = inspect_model_cache(str(Path(temporary) / "vanessa-model-does-not-exist"))
+            self.assertFalse(ready)
+            self.assertIn("does not exist", reason)
 
 
 if __name__ == "__main__":
