@@ -67,7 +67,7 @@ interface ManagedEntry {
 }
 
 const ENV_ALLOWLIST = [
-  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP",
+  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP",
   "USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "PNPM_HOME",
   "COREPACK_HOME", "CI", "NODE_ENV",
 ] as const;
@@ -79,11 +79,6 @@ function minimalEnvironment(): NodeJS.ProcessEnv {
     if (typeof value === "string") result[key] = value;
   }
   return result;
-}
-
-function isWithinRoot(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function appendBounded(entry: ManagedEntry, stream: "stdout" | "stderr", chunk: Buffer, limit: number) {
@@ -147,8 +142,8 @@ export class ProcessSupervisor {
     if (!path.isAbsolute(request.cwd) || !fs.existsSync(request.cwd) || !fs.statSync(request.cwd).isDirectory()) {
       throw new Error("Managed execution cwd must be an existing absolute directory.");
     }
-    const cwd = path.resolve(request.cwd);
-    if (!isWithinRoot(cwd, cwd)) throw new Error("Invalid working directory.");
+    const cwd = fs.realpathSync(path.resolve(request.cwd));
+    if (!path.isAbsolute(cwd)) throw new Error("Invalid canonical working directory.");
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 10 * 60 * 1000) {
       throw new Error("Managed execution timeout must be between 1 ms and 10 minutes.");
     }
@@ -206,7 +201,13 @@ export class ProcessSupervisor {
     const timer = setTimeout(() => {
       if (!entry.result) {
         entry.timedOut = true;
-        void this.terminate(entry);
+        void this.terminate(entry).then(async () => {
+          // Return a bounded, explicit result even if the OS never emits close.
+          // The entry remains registered when termination could not be proven.
+          if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
+        }).catch(async () => {
+          if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
+        });
       }
     }, normalizedRequest.timeoutMs);
     void completion.finally(() => clearTimeout(timer));
@@ -218,6 +219,7 @@ export class ProcessSupervisor {
     if (!entry) return this.completed.get(taskId);
     entry.cancellationRequested = true;
     await this.terminate(entry);
+    if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
     return entry.completion;
   }
 
