@@ -29,6 +29,9 @@ Supported target: Windows 11.
    select a cloud provider. Never share .env, API keys, transcripts, or diagnostic
    files containing private project information.
 
-This is a reproducible Windows bootstrap ZIP, not a signed, self-contained EXE
-installer. It does not bundle Node/Python/Ollama installations, speech models, API
-credentials, or a claim that microphone and speaker hardware has been accepted.
+This ZIP is the developer/bootstrap payload. A per-user Windows Setup EXE is built
+by the "Windows installer" GitHub Actions workflow (download the
+Vanessa-Setup-x64.exe artifact). On a fresh PC the first-run bootstrap still installs
+Node/Python/Ollama and downloads local speech/language models. The installer is not
+currently code-signed or fully offline. Never package or share a .env with provider
+credentials.
