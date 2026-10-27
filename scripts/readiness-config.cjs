@@ -15,6 +15,9 @@ function buildReadinessConfig(env = process.env, root = process.cwd(), exists = 
     conversationProvider: selected.conversation,
     usesLocalAsr: Boolean(selected.localAsr),
     localAsrUrl: selected.localAsr?.url || env.VOICE_URL || env.WHISPER_URL || "ws://127.0.0.1:4505",
+    usesOllama: [selected.planner, selected.conversation].includes("ollama"),
+    ollamaBaseUrl: selected.ollamaBaseUrl,
+    ollamaModel: selected.ollamaModel,
     ttsFallback: selected.ttsFallback,
     missing: selected.missing,
   };
