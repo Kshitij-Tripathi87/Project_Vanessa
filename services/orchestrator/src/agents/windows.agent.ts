@@ -1,5 +1,3 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { runPowerShell } from "./powershell.js";
 import { executeWindowsAudio, type WindowsAudioRequest, type WindowsAudioResult } from "./windows-audio.js";
 import { executeWindowsControl, type WindowsControlRequest, type WindowsControlResult } from './windows-controls.js';
@@ -12,8 +10,6 @@ import {
   AgentTask,
   SpecialistAgent,
 } from "@vanessa/shared";
-const execAsync = promisify(exec);
-
 export class WindowsAgent implements SpecialistAgent {
   constructor(
     private readonly audioControl: (request: WindowsAudioRequest) => Promise<WindowsAudioResult> = executeWindowsAudio,
@@ -283,8 +279,8 @@ export class WindowsAgent implements SpecialistAgent {
 
   private async wifiStatus(): Promise<{ success: boolean; status: string; spokenSummary: string }> {
     try {
-      const psCommand = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -ExpandProperty Status -First 1"`;
-      const { stdout } = await execAsync(psCommand, { timeout: 4000 });
+      const psCommand = "$adapter = Get-NetAdapter | Where-Object { $_.Name -like '*Wi-Fi*' -or $_.InterfaceDescription -like '*Wireless*' } | Select-Object -First 1; if ($adapter) { [string]$adapter.Status } else { 'Unknown' }";
+      const { stdout } = await runPowerShell(psCommand, {}, 4000);
       const status = stdout.trim() || "Unknown";
       return {
         success: status !== "Unknown",
