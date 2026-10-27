@@ -3,6 +3,9 @@ param([switch]$SkipModelDownloads)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+$ConfigHome = if ($env:VANESSA_CONFIG_HOME) { [System.IO.Path]::GetFullPath($env:VANESSA_CONFIG_HOME) } else { $Root }
+New-Item -ItemType Directory -Force -Path $ConfigHome | Out-Null
+$ConfigPath = Join-Path $ConfigHome '.env'
 
 function Invoke-Checked([string]$Label, [string]$Executable, [string[]]$Arguments) {
     Write-Host "  > $Label" -ForegroundColor DarkCyan
@@ -10,9 +13,9 @@ function Invoke-Checked([string]$Label, [string]$Executable, [string[]]$Argument
     if ($LASTEXITCODE -ne 0) { throw "$Label failed with exit code $LASTEXITCODE." }
 }
 function Get-EnvSetting([string]$Name, [string]$DefaultValue) {
-    if (Test-Path (Join-Path $Root '.env')) {
+    if (Test-Path $ConfigPath) {
         $pattern = '^\s*' + [regex]::Escape($Name) + '\s*=\s*(.*)$'
-        foreach ($line in Get-Content (Join-Path $Root '.env')) {
+        foreach ($line in Get-Content $ConfigPath) {
             if ($line -match $pattern) {
                 $value = $Matches[1].Trim().Trim('"').Trim("'")
                 if ($value) { return $value }
@@ -59,11 +62,11 @@ if ($pnpm) {
     $script:PnpmPrefix = @('--yes', 'pnpm@11.24.0')
 }
 
-if (-not (Test-Path (Join-Path $Root '.env'))) {
-    Copy-Item (Join-Path $Root '.env.example') (Join-Path $Root '.env')
-    Write-Host '[OK] Created .env from .env.example; no provider API key is needed for the default local profile.' -ForegroundColor Green
+if (-not (Test-Path $ConfigPath)) {
+    Copy-Item (Join-Path $Root '.env.example') $ConfigPath
+    Write-Host "[OK] Created per-user configuration at $ConfigPath; the default local profile needs no provider API key." -ForegroundColor Green
 } else {
-    Write-Host '[OK] Preserved existing .env; explicit provider selections are not overwritten.' -ForegroundColor Green
+    Write-Host "[OK] Preserved existing per-user configuration at $ConfigPath." -ForegroundColor Green
 }
 
 $asrProvider = (Get-EnvSetting 'VOICE_ASR_PROVIDER' 'whisper').ToLowerInvariant()
@@ -172,5 +175,5 @@ if ($needsOllama) {
 
 Write-Host ''
 Write-Host '[4/4] Setup steps finished.' -ForegroundColor Green
-Write-Host 'Run Launch-Vanessa.bat to start the local stack. The default profile needs no API key.' -ForegroundColor Green
-Write-Host 'Note: Launch-Vanessa.bat remains a repository bootstrap, not a self-contained signed installer.' -ForegroundColor Yellow
+Write-Host 'Run Launch-Vanessa.bat or the Vanessa Start Menu shortcut to launch the floating orb.' -ForegroundColor Green
+Write-Host 'The default local voice/planner profile needs no provider API key. Wake-word listening needs Windows microphone permission.' -ForegroundColor Green
