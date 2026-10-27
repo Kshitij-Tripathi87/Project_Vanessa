@@ -294,6 +294,12 @@ test("FAKE mode can never report file creation, browser navigation, or Wi-Fi res
     assert.equal((navigation.data as Record<string, any>)?.outcome, "simulated");
     assert.equal((navigation.data as Record<string, any>)?.pageLoadVerified, false);
 
+    const youtube = await browser.execute("youtube.search_and_play", { query: "trust-contract-test" });
+    assert.equal(youtube.status, "partial");
+    assert.equal(youtube.success, false);
+    assert.equal((youtube.data as Record<string, any>)?.outcome, "simulated");
+    assert.equal((youtube.data as Record<string, any>)?.playbackVerified, false);
+
     const wifi = await new WindowsAgent().execute("wifi.restart_adapter", {});
     assert.equal(wifi.status, "partial");
     assert.equal(wifi.success, false);
