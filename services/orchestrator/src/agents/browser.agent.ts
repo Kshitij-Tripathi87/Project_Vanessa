@@ -38,7 +38,7 @@ export class BrowserAgent implements SpecialistAgent {
 
     switch (action) {
       case "browser.open_url": {
-        const url = params.url || "https://google.com";
+        const url = typeof params.url === "string" && params.url.trim() ? params.url.trim() : "https://google.com";
         const res = await this.openUrl(url);
         const detail = res.simulated
           ? "Simulation only: browser navigation was not attempted or verified."
@@ -129,24 +129,31 @@ export class BrowserAgent implements SpecialistAgent {
       }
 
       case "youtube.search_and_play": {
-        const query = params.query || "Bolna Buildathon";
+        const query = typeof params.query === "string" && params.query.trim() ? params.query.trim().slice(0, 1000) : "Bolna Buildathon";
         const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
         const res = await this.openUrl(url);
+        const detail = res.simulated
+          ? "Simulation only: YouTube navigation and playback were not attempted or verified."
+          : res.success
+            ? "Windows accepted a YouTube search-page launch request; video playback was not verified."
+            : "The YouTube search-page launch request failed.";
         return {
           agentId: this.id,
-          status: "completed",
-          success: res.success,
-          summary: `Playing "${query}" on YouTube`,
-          spokenSummary: `Playing ${query} on YouTube.`,
-          evidence: [],
-          artifacts: [url],
-          data: {
-            pageObservations: `YouTube query loaded: ${query}`,
-            navigationResults: { query, url },
-            completedActions: [`Launched YouTube search for ${query}`],
-            query,
-            url,
-          },
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No YouTube navigation or playback occurred."
+            : res.success
+              ? "I requested the YouTube search page, but I could not verify that a video played."
+              : "I could not launch the YouTube search page.",
+          evidence: [{
+            description: detail, source: "youtube.launch-request", timestamp: startTime, confidence: res.simulated ? 1 : 0.6,
+            data: { query, url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false, query, url },
         };
       }
 
@@ -171,6 +178,14 @@ export class BrowserAgent implements SpecialistAgent {
   }
 
   private async openUrl(url: string): Promise<{ success: boolean; url: string; simulated?: boolean }> {
+    if (typeof url !== "string" || !url.trim() || url.length > 4096) {
+      return { success: false, url: typeof url === "string" ? url.slice(0, 4096) : "" };
+    }
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return { success: false, url }; }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      return { success: false, url };
+    }
     if (process.env.FAKE === "1") {
       return { success: false, url, simulated: true };
     }
