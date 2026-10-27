@@ -125,7 +125,15 @@ try {
     }
 
     $file = Get-Item $archivePath
-    $hash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($archivePath)
+    try {
+        $hashBytes = $sha.ComputeHash($stream)
+        $hash = ([BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
     Write-Host "[OK] Windows bootstrap ZIP created: $($file.FullName)" -ForegroundColor Green
     Write-Host "Commit: $commit"
     Write-Host "Size: $([Math]::Round($file.Length / 1MB, 2)) MiB"
