@@ -8,6 +8,8 @@ function assert(condition: boolean, message: string) {
 }
 
 console.log("=== RUNNING CHECKOUT SERVICE REGRESSION TEST SUITE ===");
+let passedTests = 0;
+const totalTests = 2;
 
 // Test 1: Checkout with valid promo code
 console.log("▶ Test 1: Calculate total with valid 10% promo");
@@ -21,6 +23,7 @@ assert(res1.subtotal === 200, `Expected subtotal 200, got ${res1.subtotal}`);
 assert(res1.discount === 20, `Expected discount 20, got ${res1.discount}`);
 assert(res1.total === 194.4, `Expected total 194.4, got ${res1.total}`);
 console.log("✅ Test 1 PASSED: Discount calculated correctly");
+passedTests += 1;
 
 // Test 2: Checkout with NO promo code (Regression test for INC-842)
 console.log("▶ Test 2: Calculate total without promo code (standard checkout)");
@@ -32,6 +35,17 @@ assert(res2.subtotal === 40, `Expected subtotal 40, got ${res2.subtotal}`);
 assert(res2.discount === 0, `Expected discount 0, got ${res2.discount}`);
 assert(res2.total === 43.2, `Expected total 43.2, got ${res2.total}`);
 console.log("✅ Test 2 PASSED: Checkout without promo operates without error");
+passedTests += 1;
 
-console.log("🎉 ALL REGRESSION TESTS PASSED (2/2)");
+console.log(`🎉 ALL REGRESSION TESTS PASSED (${passedTests}/${totalTests})`);
+console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({
+  schema: "vanessa.regression-report",
+  version: 1,
+  suiteId: "incident-lab.regression",
+  // Assigned by ProcessSupervisor; not available from model-controlled params.
+  runId: process.env.VANESSA_EXECUTION_RUN_ID || "",
+  passed: passedTests,
+  total: totalTests,
+  failed: totalTests - passedTests,
+}));
 process.exit(0);
