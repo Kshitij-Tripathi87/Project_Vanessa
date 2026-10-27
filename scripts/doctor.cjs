@@ -32,7 +32,8 @@ function parseEnvFile(filePath) {
 function getEffectiveEnv(root, inherited = process.env) {
   // The committed .env.example is never loaded as credentials. A developer's
   // root .env overrides inherited values, matching the canonical launcher.
-  return { ...inherited, ...parseEnvFile(path.join(root, ".env")) };
+  const configHome = inherited.VANESSA_CONFIG_HOME || root;
+  return { ...inherited, ...parseEnvFile(path.join(configHome, ".env")) };
 }
 
 function safeMessage(value) {
@@ -172,7 +173,8 @@ async function buildReport(options = {}) {
     );
   }
 
-  const envFilePresent = exists(path.join(root, ".env"));
+  const configHome = process.env.VANESSA_CONFIG_HOME || root;
+  const envFilePresent = exists(path.join(configHome, ".env"));
   pushCheck(
     checks, "configuration-file", envFilePresent ? "pass" : "info",
     envFilePresent ? "Local .env file exists; its values are not displayed by diagnostics." : "Local .env file has not been created yet; first-run setup will create it from .env.example.",
