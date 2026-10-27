@@ -190,6 +190,7 @@ export async function runCodexTask(
     progress({ taskId, requestId, onProgress: options.onProgress }, stage, message, eventType, deps.now());
 
   let projectPath = "";
+  let activeBranch = "";
   let controller: AbortController | undefined;
   try {
     if (deps.platform() !== "win32") {
@@ -243,6 +244,7 @@ export async function runCodexTask(
       throw new Error("Select the Git repository root, not a nested folder.");
     }
     if (!workspace.branch) throw new Error("The repository is in detached-HEAD state. Check out the intended feature branch first.");
+    activeBranch = workspace.branch;
     if (expectedBranch && workspace.branch !== expectedBranch) {
       throw new Error("Expected branch " + expectedBranch + " but found " + workspace.branch + ". No files were changed.");
     }
@@ -299,6 +301,7 @@ export async function runCodexTask(
       spawnError?: string;
     }>((resolveCompletion) => {
       let finished = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       let stdoutBytes = 0;
       let stdoutBuffer = "";
       let stderr = "";
@@ -315,7 +318,7 @@ export async function runCodexTask(
       const finish = () => {
         if (finished) return;
         finished = true;
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         resolveCompletion({
           exitCode,
           signal: closeSignal,
@@ -388,7 +391,7 @@ export async function runCodexTask(
         return;
       }
 
-      const timeout = setTimeout(() => {
+      timeout = setTimeout(() => {
         timedOut = true;
         errorMessage = "Codex exceeded its " + String(timeoutMs) + "ms task deadline.";
         try { deps.terminateProcess(child); } catch { /* ignore */ }
@@ -482,7 +485,7 @@ export async function runCodexTask(
       status: "completed",
       exitCode: completion.exitCode,
       projectPath,
-      branch: "",
+      branch: activeBranch,
       output: summary,
       evidence: [{
         description: "Codex emitted turn.completed and the process exited with code 0; this is execution evidence, not independent verification.",
