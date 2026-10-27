@@ -69,8 +69,8 @@ function fixture(options: {
       calls.terminated = true;
       proc.kill();
       setTimeout(() => {
-        proc.stdout?.end();
-        proc.stderr?.end();
+        (proc.stdout as unknown as PassThrough | null)?.end();
+        (proc.stderr as unknown as PassThrough | null)?.end();
         proc.emit("close", null, "SIGTERM");
       }, 5);
     },
