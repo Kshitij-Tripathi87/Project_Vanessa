@@ -49,8 +49,41 @@ export class IncidentAgent {
         return this.prepareFixAndVerify({ ...params, taskId: params.taskId || context?.task?.id });
 
       case "incident.investigate":
-      default:
         return this.runFullInvestigation({ ...params, taskId: params.taskId || context?.task?.id });
+
+      default: {
+        const detail = `Unregistered incident action '${action}' is blocked; no investigation or process was started.`;
+        eventBus.emitEvent("audit:log", {
+          id: `incident-unknown-${randomUUID()}`,
+          timestamp: Date.now(),
+          source: "desktop_hud",
+          agent: "incident",
+          action,
+          resource: "incident-agent-dispatch",
+          risk: "high",
+          permission: "blocked",
+          status: "blocked",
+          details: detail,
+        });
+        return {
+          agentId: "incident",
+          status: "blocked",
+          success: false,
+          summary: detail,
+          spokenSummary: "I blocked an unregistered incident operation.",
+          error: detail,
+          evidence: [{
+            description: detail,
+            source: "incident-agent-dispatch",
+            timestamp: new Date().toISOString(),
+            confidence: 1,
+            data: { outcome: "blocked", actionId: action, processStarted: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: "blocked", actionId: action, processStarted: false },
+        };
+      }
     }
   }
 
