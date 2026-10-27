@@ -75,7 +75,7 @@ test("managed actions without evidence cannot turn a positive flag into success"
   assert.equal(task.verification?.outcome, "inconclusive");
 });
 
-test("real worktree + registered test runner is tied to the exact patch digest", async () => {
+test("real worktree runner binds to the patch digest, redacts output, and kills timed-out process trees", async () => {
   const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-trust-test-"));
   const repositoryRoot = path.join(tempRoot, "fixture-repo");
   await fs.mkdir(repositoryRoot, { recursive: true });
@@ -87,6 +87,7 @@ test("real worktree + registered test runner is tied to the exact patch digest",
       private: true,
     }, null, 2));
     await fs.writeFile(path.join(repositoryRoot, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+
     const packageRoot = path.join(repositoryRoot, "packages", "incident-lab");
     await fs.mkdir(path.join(packageRoot, "src"), { recursive: true });
     await fs.writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
@@ -95,13 +96,26 @@ test("real worktree + registered test runner is tied to the exact patch digest",
       private: true,
       scripts: { test: "node test.js" },
     }, null, 2));
-    await fs.writeFile(path.join(packageRoot, "test.js"), "const fs = require(\"node:fs\");\nconst path = require(\"node:path\");\nconst checkout = fs.readFileSync(path.join(__dirname, \"src\", \"checkout.ts\"), \"utf8\");\nif (checkout.includes(\"HANG_TEST_MARKER\")) { setInterval(() => {}, 1000); }\nelse { console.log(\"api_key=supersecret-token-value\"); console.log(\"ALL REGRESSION TESTS PASSED (2/2)\"); }\n");
+
+    const fixtureTestScript = [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'const checkout = fs.readFileSync(path.join(__dirname, "src", "checkout.ts"), "utf8");',
+      'if (checkout.includes("HANG_TEST_MARKER")) { setInterval(() => {}, 1000); }',
+      'else { console.log("api_key=supersecret-token-value"); console.log("ALL REGRESSION TESTS PASSED (2/2)"); }',
+      "",
+    ].join("\n");
+    await fs.writeFile(path.join(packageRoot, "test.js"), fixtureTestScript);
     await fs.writeFile(
       path.join(packageRoot, "src", "checkout.ts"),
       "export const discount = (subtotal, promo) => (subtotal * promo.discountRate) / 100;\n",
     );
 
-    const git = (args: string[]) => execFileSync("git", args, { cwd: repositoryRoot, encoding: "utf8", stdio: "ignore" });
+    const git = (args: string[]) => execFileSync("git", args, {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
     git(["init"]);
     git(["config", "user.name", "Vanessa Test"]);
     git(["config", "user.email", "vanessa-test@example.invalid"]);
@@ -110,22 +124,6 @@ test("real worktree + registered test runner is tied to the exact patch digest",
 
     const workspaceService = new RepairWorkspaceService(repositoryRoot);
     workspace = await workspaceService.create(`test-${randomUUID()}`);
-    assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
-    assert.equal(processResult.terminationVerified, true);
-
-    // Force the exact registered suite to hang based on the worktree-only source diff.
-    const hangingPatch = patched.replace("const discount", "/* HANG_TEST_MARKER */\\nconst discount");
-    await fs.writeFile(target, hangingPatch, "utf8");
-    const hangingDiff = execFileSync("git", ["diff", "--no-ext-diff", "--", relativeFile], { cwd: workspace.worktreePath, encoding: "utf8" });
-    const hangingDiffHash = createHash("sha256").update(hangingDiff).digest("hex");
-    const timeoutResult = await supervisor.run({
-      taskId: `timeout-${randomUUID()}`,
-      actionId: "testing.run_incident_lab",
-      actionParams: { suiteId: "incident-lab.regression", workspaceId: workspace.taskId, expectedDiffHash: hangingDiffHash },
-      executable, args, cwd: workspace.worktreePath, timeoutMs: 1000, maxOutputBytes: 64 * 1024,
-    });
-    assert.equal(timeoutResult.status, "timed_out");
-    assert.equal(timeoutResult.terminationVerified, true);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
 
     const relativeFile = "packages/incident-lab/src/checkout.ts";
@@ -148,6 +146,7 @@ test("real worktree + registered test runner is tied to the exact patch digest",
     const args = process.platform === "win32"
       ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
       : ["--filter", "@vanessa/incident-lab", "test"];
+
     const processResult = await supervisor.run({
       taskId: `run-${randomUUID()}`,
       actionId: "testing.run_incident_lab",
@@ -165,19 +164,49 @@ test("real worktree + registered test runner is tied to the exact patch digest",
 
     assert.equal(processResult.status, "exited");
     assert.equal(processResult.exitCode, 0);
+    assert.equal(processResult.terminationVerified, true);
     assert.match(processResult.stdout + processResult.stderr, /ALL REGRESSION TESTS PASSED \(2\/2\)/);
     assert.doesNotMatch(processResult.stdout + processResult.stderr, /supersecret-token-value/);
-    assert.match(processResult.stdout + processResult.stderr, /api_key=\\[REDACTED\\]/);
+    assert.match(processResult.stdout + processResult.stderr, /api_key=\[REDACTED\]/);
+    assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
+
+    const hangingPatch = patched.replace("const discount", "/* HANG_TEST_MARKER */\nconst discount");
+    await fs.writeFile(target, hangingPatch, "utf8");
+    const hangingDiff = execFileSync("git", ["diff", "--no-ext-diff", "--", relativeFile], {
+      cwd: workspace.worktreePath,
+      encoding: "utf8",
+    });
+    const hangingDiffHash = createHash("sha256").update(hangingDiff).digest("hex");
+    const timeoutResult = await supervisor.run({
+      taskId: `timeout-${randomUUID()}`,
+      actionId: "testing.run_incident_lab",
+      actionParams: {
+        suiteId: "incident-lab.regression",
+        workspaceId: workspace.taskId,
+        expectedDiffHash: hangingDiffHash,
+      },
+      executable,
+      args,
+      cwd: workspace.worktreePath,
+      timeoutMs: 1000,
+      maxOutputBytes: 64 * 1024,
+    });
+    assert.equal(timeoutResult.status, "timed_out");
+    assert.equal(timeoutResult.terminationVerified, true);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
   } finally {
     if (workspace) {
       try {
         execFileSync("git", ["worktree", "remove", "--force", workspace.worktreePath], {
-          cwd: repositoryRoot, stdio: "ignore",
+          cwd: repositoryRoot,
+          stdio: "ignore",
         });
       } catch { /* best-effort cleanup of the isolated fixture worktree only */ }
       try {
-        execFileSync("git", ["branch", "-D", workspace.branchName], { cwd: repositoryRoot, stdio: "ignore" });
+        execFileSync("git", ["branch", "-D", workspace.branchName], {
+          cwd: repositoryRoot,
+          stdio: "ignore",
+        });
       } catch { /* fixture repository is removed below */ }
     }
     await fs.rm(tempRoot, { recursive: true, force: true });
