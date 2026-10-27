@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -15,6 +15,15 @@ export interface RepairWorkspace {
   baseBranch: string;
   baseStatus: string;
   createdAt: string;
+}
+
+export interface RepairWorkspaceExpectation {
+  repositoryRoot: string;
+  branch: string;
+  baseCommit: string;
+  workingTreeDigest: string;
+  targetRelativePath: string;
+  patchContract: string;
 }
 
 export class RepairWorkspaceError extends Error {
@@ -87,7 +96,7 @@ export class RepairWorkspaceService {
     return this.workspaces.get(workspaceId);
   }
 
-  async create(taskId: string): Promise<RepairWorkspace> {
+  async create(taskId: string, expected?: RepairWorkspaceExpectation): Promise<RepairWorkspace> {
     if (typeof taskId !== "string" || !taskId.trim()) {
       throw new RepairWorkspaceError("A non-empty task ID is required.", "WORKTREE_VALIDATION_FAILED");
     }
@@ -123,6 +132,22 @@ export class RepairWorkspaceService {
     const baseStatus = statusResult.stdout;
     if (!baseCommit || !baseBranch) {
       throw new RepairWorkspaceError("Base HEAD or branch could not be established.", "WORKTREE_VALIDATION_FAILED");
+    }
+    if (expected) {
+      const actualDigest = createHash("sha256").update(baseStatus).digest("hex");
+      if (
+        path.resolve(expected.repositoryRoot) !== repositoryRoot ||
+        expected.branch !== baseBranch ||
+        expected.baseCommit !== baseCommit ||
+        expected.workingTreeDigest !== actualDigest ||
+        expected.targetRelativePath !== "packages/incident-lab/src/checkout.ts" ||
+        expected.patchContract !== "incident-lab.checkout-promo-null-guard.v1"
+      ) {
+        throw new RepairWorkspaceError(
+          "The repository snapshot no longer matches the exact approved repair target and base commit.",
+          "WORKTREE_VALIDATION_FAILED"
+        );
+      }
     }
     if (baseStatus.trim()) {
       throw new RepairWorkspaceError(
