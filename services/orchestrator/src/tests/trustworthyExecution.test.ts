@@ -16,6 +16,7 @@ import { MemoryPalace } from "../memory/memoryPalace.js";
 import { BrowserAgent } from "../agents/browser.agent.js";
 import { FileAgent } from "../agents/file.agent.js";
 import { WindowsAgent } from "../agents/windows.agent.js";
+import { FolderAgent } from "../agents/folder.agent.js";
 import { buildPowerShellEnvironment } from "../agents/powershell.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
@@ -308,6 +309,32 @@ test("FAKE mode can never report file creation, browser navigation, or Wi-Fi res
     assert.equal((wifi.verification as Record<string, any>)?.passed, false);
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
+    if (previousFake === undefined) delete process.env.FAKE;
+    else process.env.FAKE = previousFake;
+  }
+});
+
+test("FAKE folder open requests are simulated and never claim that a desktop window opened", async () => {
+  const previousFake = process.env.FAKE;
+  process.env.FAKE = "1";
+  try {
+    const agent = new FolderAgent();
+    const opened = await agent.execute("folder.open", { target: process.cwd() });
+    assert.equal(opened.status, "partial");
+    assert.equal(opened.success, false);
+    assert.equal((opened.data as Record<string, any>)?.outcome, "simulated");
+    assert.equal((opened.data as Record<string, any>)?.opened, false);
+    assert.equal((opened.data as Record<string, any>)?.processStarted, false);
+    assert.equal(opened.verification?.passed, false);
+
+    const resolved = await agent.execute("folder.resolve", { target: process.cwd(), openExplorer: true });
+    assert.equal(resolved.status, "partial");
+    assert.equal(resolved.success, false);
+    assert.equal((resolved.data as Record<string, any>)?.path, process.cwd());
+    assert.equal((resolved.data as Record<string, any>)?.openedExplorer, false);
+    assert.equal((resolved.data as Record<string, any>)?.simulated, true);
+    assert.equal(resolved.verification?.passed, false);
+  } finally {
     if (previousFake === undefined) delete process.env.FAKE;
     else process.env.FAKE = previousFake;
   }
