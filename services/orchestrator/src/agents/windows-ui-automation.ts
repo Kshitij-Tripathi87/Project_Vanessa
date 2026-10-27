@@ -99,7 +99,7 @@ export async function invokeForegroundControl(
     return { success: false, error: "A prior inspection's exact window title and process ID are required." };
   }
   if (!automationId.trim() && (!name.trim() || !/^ControlType\.[A-Za-z0-9]+$/.test(controlType))) {
-    return { success: false, error: "Specify an exact AutomationId or an exact name and ControlType." };
+    return { success: false, error: "Specify an exact selector: AutomationId or an exact name and ControlType." };
   }
   const { stdout } = await runner(UI_CLICK_SCRIPT, {
     VANESSA_UI_WINDOW_HANDLE: windowHandle,
