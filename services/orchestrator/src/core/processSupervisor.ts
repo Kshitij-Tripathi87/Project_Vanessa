@@ -196,21 +196,25 @@ export class ProcessSupervisor {
     child.stdout?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stdout", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
     child.stderr?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stderr", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
     child.once("error", (error) => { entry.spawnError = error; });
-    child.once("close", (exitCode, signal) => { void this.finish(entry, exitCode, signal); });
+    let timer: NodeJS.Timeout | undefined;
+    child.once("close", (exitCode, signal) => {
+      if (timer) clearTimeout(timer);
+      void this.finish(entry, exitCode, signal);
+    });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       if (!entry.result) {
         entry.timedOut = true;
         void this.terminate(entry).then(async () => {
           // Return a bounded, explicit result even if the OS never emits close.
-          // The entry remains registered when termination could not be proven.
+          // The entry remains registered when the OS cannot prove termination.
           if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
         }).catch(async () => {
           if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
         });
       }
     }, normalizedRequest.timeoutMs);
-    void completion.finally(() => clearTimeout(timer));
+    void completion.finally(() => { if (timer) clearTimeout(timer); });
     return completion;
   }
 
@@ -264,6 +268,9 @@ export class ProcessSupervisor {
     let status: ManagedProcessStatus = "exited";
     let error: string | undefined = entry.spawnError?.message;
 
+    // A timeout/cancel handler and the child's close event can race while
+    // termination is being verified. The first completed result wins.
+    if (entry.result) return;
     if (entry.spawnError) {
       status = "spawn_failed";
     } else if (entry.timedOut || entry.cancellationRequested) {
