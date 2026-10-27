@@ -322,6 +322,7 @@ export class VanessaVoiceSession {
       // Ignore room speech without a wake prefix, then re-arm local standby.
       this.isProcessing = false;
       this.turnDetector.reset();
+      this.asr.deactivateStream?.();
       await this.resumeWakeWordMonitor();
       return;
     }
