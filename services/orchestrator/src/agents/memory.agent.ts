@@ -7,10 +7,37 @@ import {
 } from "@vanessa/shared";
 import { privacyGuard } from "../core/privacy.js";
 import { eventBus } from "../core/eventBus.js";
-import { memoryPalace } from "../memory/memoryPalace.js";
+import { memoryPalace, type MemoryPalace } from "../memory/memoryPalace.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 
+function sanitizeMemoryMetadata(input: Record<string, any> | undefined): { value?: Record<string, any>; redactedCount: number } {
+  if (!input) return { value: undefined, redactedCount: 0 };
+  let redactedCount = 0;
+  const sensitiveKey = /(password|passwd|secret|token|api[-_]?key|authorization|credential|private[-_]?key)/i;
+  const clean = (value: any, key = "", depth = 0): any => {
+    if (sensitiveKey.test(key)) {
+      redactedCount++;
+      return "[REDACTED]";
+    }
+    if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+    if (typeof value === "string") {
+      const redacted = privacyGuard.redactSensitiveData(value);
+      redactedCount += redacted.redactedCount;
+      return redacted.cleanText.slice(0, 4000);
+    }
+    if (Array.isArray(value)) return value.slice(0, 50).map((item) => clean(item, "", depth + 1));
+    if (typeof value === "object" && depth < 5) {
+      const entries = Object.entries(value).slice(0, 100);
+      return Object.fromEntries(entries.map(([childKey, childValue]) => [childKey, clean(childValue, childKey, depth + 1)]));
+    }
+    return "[OMITTED]";
+  };
+  return { value: clean(input) as Record<string, any>, redactedCount };
+}
+
 export class MemoryAgent implements SpecialistAgent {
+  constructor(private readonly memory: MemoryPalace = memoryPalace) {}
+
   id = "memory";
   capabilities = ["recall", "contextualize", "preserve_knowledge", "incident_history", "user_preferences"];
   allowedTools = ["memory_retrieve", "memory_store", "memory_search", "memory_list", "memory_delete"];
@@ -62,7 +89,7 @@ export class MemoryAgent implements SpecialistAgent {
     const normalizedQuery = query.trim();
     let records;
     try {
-      records = memoryPalace.retrieve(normalizedQuery, 3);
+      records = this.memory.retrieve(normalizedQuery, 3);
     } catch (error: any) {
       const reason = "Memory Palace query failed: " + (typeof error?.message === "string" ? error.message : "unknown database error");
       return {
@@ -125,26 +152,35 @@ export class MemoryAgent implements SpecialistAgent {
 
     const redacted = privacyGuard.redactSensitiveData(normalizedContent);
     try {
-      const record = memoryPalace.storeMemory({
+      const safeMetadata = sanitizeMemoryMetadata(metadata);
+      const cleanTitle = privacyGuard.redactSensitiveData(
+        typeof safeMetadata.value?.title === "string" && safeMetadata.value.title.trim() ? safeMetadata.value.title.trim() : "Stored Memory"
+      );
+      const record = this.memory.storeMemory({
         type: "knowledge",
-        title: typeof metadata?.title === "string" && metadata.title.trim() ? metadata.title.trim().slice(0, 200) : "Stored Memory",
-        content: redacted.cleanText, rawData: metadata, agent: this.id, ttlDays: 30,
+        title: cleanTitle.cleanText.slice(0, 200),
+        content: redacted.cleanText, rawData: safeMetadata.value, agent: this.id, ttlDays: 30,
       });
+      const totalRedactedCount = redacted.redactedCount + safeMetadata.redactedCount + cleanTitle.redactedCount;
+      const safeRecord = {
+        id: record.id, type: record.type, title: record.title, content: record.content,
+        agent: record.agent, status: record.status, createdAt: record.createdAt, expiresAt: record.expiresAt,
+      };
       const detail = "Persisted local memory record '" + record.id + "' after privacy redaction.";
       const evidence: AgentEvidence[] = [{
         description: detail, source: "memoryPalace.storeMemory", timestamp: startTime, confidence: 1,
-        data: { id: record.id, title: record.title, createdAt: record.createdAt, expiresAt: record.expiresAt, redactedCount: redacted.redactedCount },
+        data: { id: record.id, title: record.title, createdAt: record.createdAt, expiresAt: record.expiresAt, redactedCount: totalRedactedCount },
       }];
       eventBus.emitEvent("audit:log", {
         id: "audit-" + Date.now(), timestamp: Date.now(), source: "desktop_hud", agent: this.id,
         action: "memory.store", resource: "Memory Palace:" + record.id, risk: "low", permission: "allowed",
-        status: "success", result: { id: record.id, title: record.title, redactedCount: redacted.redactedCount }, details: detail,
+        status: "success", result: { id: record.id, title: record.title, redactedCount: totalRedactedCount }, details: detail,
       });
       return {
         agentId: this.id, status: "completed", success: true, summary: detail,
         spokenSummary: "Saved the redacted record to Vanessa's local memory store.",
         evidence, artifacts: ["memory:" + record.id], verification: { passed: true, details: detail },
-        data: { outcome: "succeeded", stored: true, record, redactedCount: redacted.redactedCount },
+        data: { outcome: "succeeded", stored: true, record: safeRecord, redactedCount: totalRedactedCount },
       };
     } catch (error: any) {
       const reason = "Memory Palace write failed: " + (typeof error?.message === "string" ? error.message : "unknown database error");
@@ -153,7 +189,7 @@ export class MemoryAgent implements SpecialistAgent {
         spokenSummary: "I could not save the memory record.", error: reason,
         evidence: [{ description: reason, source: "memoryPalace.storeMemory", timestamp: startTime, confidence: 1 }],
         artifacts: [], verification: { passed: false, details: reason },
-        data: { outcome: "failed", stored: false, redactedCount: redacted.redactedCount },
+        data: { outcome: "failed", stored: false, redactedCount: totalRedactedCount },
       };
     }
   }
@@ -164,7 +200,7 @@ export class MemoryAgent implements SpecialistAgent {
       return this.blocked("memory.list", "Memory list limit must be an integer from 1 to 50.");
     }
     try {
-      const records = memoryPalace.retrieve("", limit);
+      const records = this.memory.retrieve("", limit);
       const detail = "Listed " + records.length + " active Memory Palace record(s) (limit " + limit + ").";
       const evidence: AgentEvidence[] = [{
         description: detail, source: "memoryPalace.retrieve", timestamp: startTime, confidence: 1,
