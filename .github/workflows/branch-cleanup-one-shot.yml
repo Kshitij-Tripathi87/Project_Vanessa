@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   prune-verified-merged-branches:
-    if: startsWith(github.event.head_commit.message, 'chore: one-time prune merged branches')
+    if: "${{ startsWith(github.event.head_commit.message, 'chore: one-time prune merged branches') }}"
     runs-on: ubuntu-latest
     steps:
       - name: Check out the exact target commit
