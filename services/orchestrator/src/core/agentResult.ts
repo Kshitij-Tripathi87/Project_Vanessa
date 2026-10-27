@@ -1,4 +1,5 @@
 import type { Task } from "@vanessa/shared";
+import { resolveManagedAction } from "./actionRegistry.js";
 
 export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" | "blocked" {
   const structured = result && typeof result === "object" ? result : undefined;
@@ -11,6 +12,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
   const resultData = structured?.data && typeof structured.data === "object" ? structured.data as Record<string, any> : {};
+  const managedAction = resolveManagedAction(task.action, task.params || {});
 
   // Explicit non-success states are handled before the generic success:false
   // branch so "blocked" and "inconclusive" are not collapsed into a test failure.
@@ -59,6 +61,18 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
   }
   if (verification?.passed === true && verificationDetails && !["failed", "blocked", "partial", "awaiting_approval"].includes(structured?.status)) {
     const successReported = structured.success !== false;
+    if (successReported && managedAction.managed && evidence.length === 0) {
+      const detail = "Managed execution returned a positive flag without source-linked execution evidence.";
+      task.verification = {
+        verified: false,
+        postconditions: [detail],
+        exitCode: undefined,
+        artifacts: task.artifacts,
+        outcome: "inconclusive",
+        details: detail,
+      };
+      return "partial";
+    }
     task.verification = {
       verified: successReported,
       postconditions: [verificationDetails],
@@ -66,7 +80,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
       artifacts: task.artifacts,
       outcome: successReported ? "succeeded" : "failed",
     };
-    if (evidence.length === 0) {
+    if (evidence.length === 0 && !managedAction.managed) {
       evidence.push({
         description: verificationDetails,
         source: "agent_verification",
