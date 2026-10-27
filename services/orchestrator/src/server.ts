@@ -66,6 +66,7 @@ eventBus.on("plan:started", forwardEvent);
 eventBus.on("plan:completed", forwardEvent);
 eventBus.on("audit:log", forwardEvent);
 eventBus.on("voice:state", forwardEvent);
+eventBus.on("codex:progress", forwardEvent);
 eventBus.on("agent.started", forwardEvent);
 eventBus.on("tool.started", forwardEvent);
 eventBus.on("tool.completed", forwardEvent);
