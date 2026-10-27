@@ -87,7 +87,7 @@ Optional diagnostics:
 - If the microphone is denied or unavailable, Vanessa shows Windows/device troubleshooting steps and typed commands remain available.
 - Optional cloud providers require your own key and an explicit provider selection in .env. Never put a shared provider key into a distributed .env, source code, installer, or renderer bundle.
 - --check requires the selected local model and local Whisper runtime to be ready. --build-only compiles without starting services or checking model availability.
-- Launch-Vanessa.bat is still a repository bootstrap that requires the developer/runtime prerequisites above, not a self-contained signed customer installer. Native packaging and managed hosted AI are separate planned phases.
+- Launch-Vanessa.bat is still a bootstrap entry point, not a self-contained signed customer installer. The Windows CI workflow can publish a sanitized `Vanessa-Windows-Bootstrap-<commit>.zip` artifact containing the tracked source needed by the setup flow; download it from the successful workflow run's **Artifacts** section. Extract it to a user-writable folder and run `Launch-Vanessa.bat`. The ZIP does not bundle Node/Python/Ollama or large speech/LLM models; first-run setup downloads/configures those prerequisites. Native signed EXE/MSI packaging remains separate work.
 
 ### 5. Run Development Services Directly
 ```bash
