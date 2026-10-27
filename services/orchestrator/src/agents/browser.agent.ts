@@ -40,49 +40,66 @@ export class BrowserAgent implements SpecialistAgent {
       case "browser.open_url": {
         const url = params.url || "https://google.com";
         const res = await this.openUrl(url);
-        const evidence: AgentEvidence[] = [
-          {
-            description: `Navigated browser to ${url}`,
-            source: "Microsoft Edge",
-            timestamp: startTime,
-            confidence: 1.0,
-            data: { url },
-          },
-        ];
+        const detail = res.simulated
+          ? "Simulation only: browser navigation was not attempted or verified."
+          : res.success
+            ? "Windows accepted a browser launch request for " + url + "; the destination page load was not verified."
+            : "Browser launch request failed for " + url + ".";
         return {
           agentId: this.id,
-          status: "completed",
-          success: res.success,
-          summary: `Opened ${url} in browser`,
-          spokenSummary: `Opened ${url}.`,
-          evidence,
-          artifacts: [url],
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No browser navigation occurred."
+            : res.success
+              ? "I requested that Windows open the destination. I could not verify that the page loaded."
+              : "I could not launch the requested browser destination.",
+          evidence: [{
+            description: detail,
+            source: "browser.launch-request",
+            timestamp: startTime,
+            confidence: res.simulated ? 1 : 0.6,
+            data: { url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, pageLoadVerified: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
           data: {
-            pageObservations: `Navigated to ${url}`,
-            navigationResults: { url, status: "loaded" },
-            completedActions: [`Opened ${url}`],
+            outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed",
+            simulated: res.simulated === true,
+            launchRequestAccepted: res.success && !res.simulated,
+            pageLoadVerified: false,
             url: res.url,
           },
         };
       }
 
       case "browser.search": {
-        const query = params.query || "";
+        const query = typeof params.query === "string" ? params.query : "";
         const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
         const res = await this.openUrl(url);
+        const detail = res.simulated
+          ? "Simulation only: web search was not attempted or verified."
+          : res.success
+            ? "Windows accepted a search-page launch request; search results were not inspected."
+            : "Search-page launch failed.";
         return {
           agentId: this.id,
-          status: "completed",
-          success: res.success,
-          summary: `Searched web for "${query}"`,
-          spokenSummary: `Searching for ${query}.`,
-          evidence: [],
-          artifacts: [url],
-          data: {
-            pageObservations: `Displaying search results for ${query}`,
-            navigationResults: { query, url },
-            completedActions: [`Search: ${query}`],
-          },
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No web search occurred."
+            : res.success
+              ? "I requested the search page, but I could not verify the results."
+              : "I could not open the search page.",
+          evidence: [{
+            description: detail, source: "browser.search-launch", timestamp: startTime, confidence: res.simulated ? 1 : 0.6,
+            data: { query, url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, resultsInspected: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, resultsInspected: false, query, url },
         };
       }
 
@@ -91,15 +108,23 @@ export class BrowserAgent implements SpecialistAgent {
         const query = params.goal || params.query || params.prompt || "web research";
         const { vanessaAgent } = await import("./openjarvis.agent.js");
         const goalRes = await vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
+        const succeeded = goalRes?.success === true && goalRes?.status !== "blocked" && goalRes?.status !== "failed";
+        const detail = succeeded
+          ? "Research returned a result, but source verification remains subject to the evidence attached to that result."
+          : (typeof goalRes?.summary === "string" ? goalRes.summary : "The research executor is unavailable; no research result was verified.");
+        const evidence = Array.isArray(goalRes?.steps)
+          ? goalRes.steps.map((step: any) => ({ description: String(step?.thought || "Research step") + ": " + String(step?.action || "No action detail"), source: "research-executor", timestamp: startTime, confidence: 0.5 }))
+          : [{ description: detail, source: "research-executor", timestamp: startTime, confidence: 1, data: { outcome: "inconclusive", processStarted: false } }];
         return {
           agentId: this.id,
-          status: "completed",
-          success: goalRes.success ?? true,
-          summary: goalRes.final_answer || `Research completed for ${query}`,
-          spokenSummary: `Finished research on ${query}.`,
-          evidence: goalRes.steps ? goalRes.steps.map((s: any) => ({ description: `${s.thought}: ${s.action}` })) : [],
+          status: succeeded ? "completed" : goalRes?.status === "blocked" ? "blocked" : "partial",
+          success: succeeded,
+          summary: detail,
+          spokenSummary: succeeded ? "Research returned a result; its sources need to be reviewed." : "I could not complete or verify the research request.",
+          evidence,
           artifacts: [],
-          data: goalRes,
+          verification: { passed: succeeded, details: detail },
+          data: { outcome: succeeded ? "succeeded" : goalRes?.status === "blocked" ? "blocked" : "inconclusive", query, research: goalRes, processStarted: goalRes?.data?.processStarted ?? false },
         };
       }
 
@@ -126,19 +151,17 @@ export class BrowserAgent implements SpecialistAgent {
       }
 
       case "browser.read_title": {
+        const detail = "Active-tab title inspection is not connected to a real browser observation provider.";
         return {
           agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: "Read browser tab",
-          spokenSummary: "Browser tab active.",
-          evidence: [],
+          status: "partial",
+          success: false,
+          summary: detail,
+          spokenSummary: "I cannot verify the active browser tab with the current integration.",
+          evidence: [{ description: detail, source: "browser.read_title", timestamp: startTime, confidence: 1, data: { outcome: "inconclusive", processStarted: false } }],
           artifacts: [],
-          data: {
-            pageObservations: "Active tab inspection",
-            navigationResults: { title: "Browser Active Tab", url: params.url || "about:blank" },
-            completedActions: ["Inspected tab title"],
-          },
+          verification: { passed: false, details: detail },
+          data: { outcome: "inconclusive", pageLoadVerified: false, titleRead: false },
         };
       }
 
@@ -149,7 +172,7 @@ export class BrowserAgent implements SpecialistAgent {
 
   private async openUrl(url: string): Promise<{ success: boolean; url: string }> {
     if (process.env.FAKE === "1") {
-      return { success: true, url };
+      return { success: false, url, simulated: true };
     }
     const psCommand = "$url = $env:VANESSA_URL; Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList $url";
     try {
