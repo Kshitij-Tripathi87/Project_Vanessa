@@ -35,6 +35,8 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
       - name: Verify local Ollama client contracts
         run: pnpm --filter @vanessa/orchestrator test:ollama-client
+      - name: Verify managed Codex runner contracts
+        run: pnpm --filter @vanessa/orchestrator test:codex
       # Full legacy scenarios require a user-selected live planner and include removed legacy actions;
       # deterministic planner/voice contracts are covered below without live API calls.
       - name: Type-check evaluation harness
