@@ -9,6 +9,9 @@ import { skillsRuntime } from "../skills/skillsRuntime.js";
 import { criticEngine } from "./critic.js";
 import { recordAgentResult } from "./agentResult.js";
 import { cancelCodexTask } from "../agents/codex-task-runner.js";
+import { processSupervisor } from "./processSupervisor.js";
+import { resolveManagedAction } from "./actionRegistry.js";
+import { createHash } from "node:crypto";
 export { recordAgentResult } from "./agentResult.js";
 
 // Active in-memory map of running and paused tasks
@@ -16,6 +19,61 @@ export const activeTasks = new Map<string, Task>();
 export const activePlanMap = new Map<string, Plan>();
 
 let isKillSwitchEngaged = false;
+
+const APPROVAL_POLICY_VERSION = "trustworthy-execution-v1";
+
+function stableJson(value: any): string {
+  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function computeApprovalDigest(task: Task, expiresAt: number): string {
+  const params = task.params || {};
+  const managed = resolveManagedAction(task.action, params);
+  const binding = {
+    policyVersion: APPROVAL_POLICY_VERSION,
+    taskId: task.id,
+    actionId: task.action,
+    normalizedArgs: params,
+    target: params.workspacePath || params.worktreePath || params.workspaceId || params.targetPath ||
+      params.path || params.deviceId || params.resource || task.agent,
+    baseCommit: params.baseCommit || params.expectedBaseCommit || null,
+    sideEffectClass: managed.sideEffectClass || "unclassified",
+    risk: task.risk || "medium",
+    expiresAt,
+  };
+  return createHash("sha256").update(stableJson(binding)).digest("hex");
+}
+
+function markTerminationUnconfirmed(task: Task, reason: string) {
+  task.status = "termination_unconfirmed";
+  task.lifecycleState = "termination_unconfirmed";
+  task.error = reason;
+  task.completedAt = Date.now();
+  task.verification = {
+    verified: false,
+    postconditions: [reason, "Execution locks remain held until termination can be verified."],
+    outcome: "termination_unconfirmed",
+    details: reason,
+  };
+  memoryPalace.recordTaskCheckpoint(task, task.parentId);
+  eventBus.emitEvent("audit:log", {
+    id: `termination-unconfirmed-${Date.now()}`,
+    timestamp: Date.now(),
+    taskId: task.id,
+    agent: task.agent,
+    action: task.action,
+    risk: "high",
+    permission: "blocked",
+    status: "warn",
+    details: reason,
+  });
+  eventBus.emitEvent("task:update", task);
+}
 
 export function getDeclaredLock(action: string): string | null {
   const lower = action.toLowerCase();
@@ -48,33 +106,104 @@ export function resolveTaskLocks(task: Task): string[] {
 }
 
 
-export function triggerKillSwitch() {
+export async function triggerKillSwitch(): Promise<void> {
   isKillSwitchEngaged = true;
+  const terminationChecks: Promise<void>[] = [];
+  let unconfirmed = 0;
+
   for (const task of activeTasks.values()) {
-    if (task.status === "running" || task.status === "pending" || task.status === "awaiting_approval") {
-      if (task.agent === "developer" && task.action === "codex.run_task") cancelCodexTask(task.id);
+    if (task.status !== "running" && task.status !== "pending" && task.status !== "awaiting_approval") continue;
+
+    const wasRunning = task.status === "running";
+    task.error = "Cancellation requested by emergency kill switch.";
+    if (!wasRunning) {
+      // Queued/approval-waiting tasks have no process to terminate.
       task.status = "cancelled";
       task.lifecycleState = "cancelled";
-      task.error = "Operation cancelled by emergency kill-switch";
       task.completedAt = Date.now();
+      task.verification = {
+        verified: true,
+        postconditions: ["Task had not started an executable process."],
+        outcome: "cancelled",
+        details: "Cancelled before execution.",
+      };
       resourceLockManager.releaseAllForTask(task.id);
       memoryPalace.recordTaskCheckpoint(task, task.parentId);
       eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
       eventBus.emitEvent("task:update", task);
+      continue;
     }
+
+    task.lifecycleState = "cancel_requested";
+    task.verification = {
+      verified: false,
+      postconditions: ["Cancellation was requested; process termination has not yet been verified."],
+      outcome: "termination_unconfirmed",
+      details: "Cancellation requested.",
+    };
+    memoryPalace.recordTaskCheckpoint(task, task.parentId);
+    eventBus.emitEvent("task:update", task);
+
+    terminationChecks.push((async () => {
+      try {
+        if (task.agent === "developer" && task.action === "codex.run_task") {
+          // Existing Codex cancellation is attempted, but it does not provide
+          // process-tree proof, so never treat it as termination evidence.
+          void cancelCodexTask(task.id);
+        }
+        const processResult = await processSupervisor.cancel(task.id);
+        const stopped = Boolean(processResult && (
+          processResult.status === "cancelled" && processResult.terminationVerified === true ||
+          processResult.status === "timed_out" && processResult.terminationVerified === true ||
+          processResult.status === "exited"
+        ));
+        if (stopped) {
+          task.status = "cancelled";
+          task.lifecycleState = "cancelled";
+          task.error = "Execution stopped after emergency cancellation.";
+          task.completedAt = Date.now();
+          task.verification = {
+            verified: true,
+            postconditions: ["Managed process stopped; termination evidence recorded by ProcessSupervisor."],
+            exitCode: processResult?.exitCode ?? undefined,
+            outcome: "cancelled",
+            details: `Process status: ${processResult?.status}; termination verified.`,
+          };
+          resourceLockManager.releaseAllForTask(task.id);
+          memoryPalace.recordTaskCheckpoint(task, task.parentId);
+          eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
+        } else {
+          unconfirmed++;
+          markTerminationUnconfirmed(
+            task,
+            "Vanessa cannot prove this task's process tree has stopped. Conflicting resource locks remain held."
+          );
+        }
+      } catch (error: any) {
+        unconfirmed++;
+        markTerminationUnconfirmed(
+          task,
+          `Termination could not be verified: ${typeof error?.message === "string" ? error.message : "unknown error"}`
+        );
+      }
+    })());
   }
+
+  await Promise.all(terminationChecks);
   eventBus.emitEvent("audit:log", {
     id: `kill-${Date.now()}`,
     timestamp: Date.now(),
     agent: "orchestrator",
     action: "kill_switch",
-    status: "warn",
-    details: "Emergency kill switch triggered. All active and pending tasks terminated.",
+    status: unconfirmed ? "warn" : "success",
+    details: unconfirmed
+      ? `Emergency kill switch completed with ${unconfirmed} unconfirmed process termination(s). Locks were retained; new work remains blocked.`
+      : "Emergency cancellation completed. Every running managed process was verified stopped; queued tasks were cancelled before execution.",
   });
-  // Reset switch for future commands
-  setTimeout(() => {
-    isKillSwitchEngaged = false;
-  }, 1000);
+
+  // Only reset when every execution is known to have stopped. An unresolved
+  // process is a global safety latch until an operator reconciles it.
+  if (unconfirmed === 0) isKillSwitchEngaged = false;
 }
 
 export function resolveParams(params: Record<string, any>, allTasks: Task[]): Record<string, any> {
@@ -128,14 +257,23 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   const dependenciesReady = (task.dependsOn || []).every((id) => activeTasks.get(id)?.status === "success");
   const permission = permissionGuard.check(task, false);
-  if (isKillSwitchEngaged || !dependenciesReady || permission === "blocked") {
+  const currentApprovalDigest = task.approvalExpiresAt
+    ? computeApprovalDigest(task, task.approvalExpiresAt)
+    : "";
+  const approvalInvalid = !task.approvalDigest ||
+    task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
+    task.approvalConsumedAt !== undefined ||
+    currentApprovalDigest !== task.approvalDigest;
+  if (isKillSwitchEngaged || !dependenciesReady || permission === "blocked" || approvalInvalid) {
     task.status = isKillSwitchEngaged ? "cancelled" : "blocked";
     task.lifecycleState = isKillSwitchEngaged ? "cancelled" : "blocked";
     task.error = isKillSwitchEngaged
       ? "Approval cancelled by emergency kill switch."
       : !dependenciesReady
       ? "Approval expired because prerequisite tasks are not verified as successful."
-      : "Approval rejected because the safety policy now blocks this task.";
+      : approvalInvalid
+        ? "Approval binding is missing, expired, reused, or no longer matches the exact operation."
+        : "Approval rejected because the safety policy now blocks this task.";
     task.completedAt = Date.now();
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
     eventBus.emitEvent("audit:log", {
@@ -153,6 +291,8 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     return task;
   }
 
+  task.approvalConsumedAt = Date.now();
+  task.approvalPolicyVersion = APPROVAL_POLICY_VERSION;
   eventBus.emitEvent("approval:granted", { taskId });
   eventBus.emitEvent("audit:log", {
     id: `approval-granted-${Date.now()}`,
@@ -222,7 +362,17 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     }
 
     // Cancellation may arrive while waiting for a slot/lock.
-    if ((task.status as string) === "cancelled") return task;
+    if (task.status === "cancelled" || task.status === "termination_unconfirmed") return task;
+    if (
+      task.approvalDigest &&
+      (task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
+        task.approvalConsumedAt === undefined ||
+        task.approvalExpiresAt === undefined ||
+        task.approvalExpiresAt <= Date.now() ||
+        computeApprovalDigest(task, task.approvalExpiresAt) !== task.approvalDigest)
+    ) {
+      throw new Error("Approval binding changed or expired before process launch.");
+    }
 
     const result = await agent.execute(task.action, resolvedParams, {
         planId: plan.id,
@@ -232,12 +382,18 @@ export async function approveTask(taskId: string): Promise<Task | null> {
         agentTask,
       });
 
+      if (task.status === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
+        // Do not overwrite an unresolved process state with a convenient terminal status.
+        memoryPalace.recordTaskCheckpoint(task, plan.id);
+        eventBus.emitEvent("task:update", task);
+        return;
+      }
       if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
         task.status = "cancelled";
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
         task.completedAt = Date.now();
-        task.verification = { verified: false, postconditions: ["Execution was cancelled before verification."], exitCode: 1, outcome: "blocked" };
+        task.verification = { verified: false, postconditions: ["Execution was cancelled before verification."], exitCode: undefined, outcome: "cancelled" };
         memoryPalace.recordTaskCheckpoint(task, task.parentId);
         eventBus.emitEvent("task:update", task);
         return task;
@@ -280,8 +436,10 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     };
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
   } finally {
-    for (const l of acquiredLocks) {
-      resourceLockManager.releaseLock(l, task.id);
+    if (task.verification?.outcome !== "termination_unconfirmed" && task.status !== "termination_unconfirmed") {
+      for (const l of acquiredLocks) {
+        resourceLockManager.releaseLock(l, task.id);
+      }
     }
     if (acquiredSlot) resourceLockManager.releaseSlot();
   }
@@ -339,7 +497,6 @@ export function composeResponse(tasks: Task[]): string {
 }
 
 export async function runPlan(plan: Plan): Promise<Task[]> {
-  isKillSwitchEngaged = false;
   activePlanMap.set(plan.id, plan);
   workingMemory.setActivePlan(plan);
   eventBus.emitEvent("plan:started", plan);
@@ -399,6 +556,9 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       task.status = "awaiting_approval";
       task.lifecycleState = "awaiting_approval";
       task.approvalExpiresAt = Date.now() + 5 * 60_000;
+      task.approvalPolicyVersion = APPROVAL_POLICY_VERSION;
+      task.approvalConsumedAt = undefined;
+      task.approvalDigest = computeApprovalDigest(task, task.approvalExpiresAt);
       memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("approval:required", task);
       eventBus.emitEvent("task:update", task);
