@@ -129,7 +129,7 @@ function redactOutput(value: string): string {
 
 async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> {
   if (!Number.isSafeInteger(rootPid) || rootPid < 1) return null;
-  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance Win32_Process); $ids = New-Object 'System.Collections.Generic.HashSet[int]'; [void]$ids.Add($root); do { $old = $ids.Count; foreach ($p in $all) { if ($ids.Contains([int]$p.ParentProcessId)) { [void]$ids.Add([int]$p.ProcessId) } } } while ($ids.Count -gt $old); $items = @($ids | ForEach-Object { $_ }); ConvertTo-Json -InputObject $items -Compress";
+  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance Win32_Process); $ids = @($root); do { $old = @($ids).Count; $children = @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | Select-Object -ExpandProperty ProcessId); $ids = @($ids + $children | Sort-Object -Unique); } while (@($ids).Count -gt $old); ConvertTo-Json -InputObject @($ids) -Compress";
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_ROOT_PID: String(rootPid) },
