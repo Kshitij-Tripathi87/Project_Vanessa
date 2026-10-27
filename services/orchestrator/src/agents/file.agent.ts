@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { runPowerShell } from "./powershell.js";
 import { privacyGuard } from "../core/privacy.js";
 import {
@@ -46,23 +46,24 @@ export class FileAgent implements SpecialistAgent {
         const targetPath = path.isAbsolute(folderName) ? folderName : path.join(basePath, folderName);
 
         if (process.env.FAKE === "1") {
+          const detail = `Simulation only: folder creation at ${targetPath} was not executed or verified because FAKE=1.`;
           return {
             agentId: this.id,
-            status: "completed",
-            success: true,
-            summary: `Created real folder at ${targetPath} and opened in Windows Explorer (FAKE=1)`,
-            spokenSummary: `Created folder ${folderName}.`,
-            evidence: [],
-            artifacts: [targetPath],
-            verification: {
-              passed: true,
-              details: `Filesystem directory confirmed at ${targetPath} (FAKE=1)`,
-            },
+            status: "partial",
+            success: false,
+            summary: detail,
+            spokenSummary: "This was a simulation. No folder or note was created.",
+            evidence: [{ description: detail, source: "file-agent.fake-mode", timestamp: startTime, confidence: 1,
+              data: { outcome: "simulated", simulated: true, actualStateChanged: false, actualStateVerified: false, processStarted: false } }],
+            artifacts: [],
+            verification: { passed: false, details: detail },
             data: {
-              fileReferences: [targetPath],
-              proposedChanges: [`Created directory ${targetPath}`],
-              verifiedFilesystemResults: { path: targetPath, exists: true },
-              path: targetPath,
+              outcome: "simulated",
+              simulated: true,
+              actualStateChanged: false,
+              actualStateVerified: false,
+              processStarted: false,
+              proposedTarget: targetPath,
             },
           };
         }
@@ -80,9 +81,11 @@ export class FileAgent implements SpecialistAgent {
           `Status: Created successfully by Vanessa File Agent.\n`
         );
 
-        try {
-          exec(`explorer.exe "${targetPath}"`);
-        } catch {}
+        // Start Explorer with an argv array. The path must never be interpolated
+        // into a shell command; folder creation success does not depend on UI launch.
+        if (process.platform === "win32") {
+          execFile("explorer.exe", [targetPath], { windowsHide: true }, () => undefined);
+        }
 
         const evidence: AgentEvidence[] = [
           {
@@ -97,7 +100,7 @@ export class FileAgent implements SpecialistAgent {
           agentId: this.id,
           status: "completed",
           success: true,
-          summary: `Created real folder at ${targetPath} and opened in Windows Explorer`,
+          summary: `Created and verified folder at ${targetPath}.`,
           spokenSummary: `Created folder ${folderName}.`,
           evidence,
           artifacts: [targetPath, demoFilePath],
