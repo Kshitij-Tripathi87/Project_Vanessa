@@ -38,6 +38,11 @@ interface CodexWorkspace {
   dirty: boolean;
 }
 
+interface CodexWorkspaceChanges {
+  files: string[];
+  diffStat: string;
+}
+
 interface CodexCli {
   file: string;
   prefix: string[];
@@ -47,6 +52,7 @@ export interface CodexTaskRunnerDependencies {
   platform: () => string;
   isDirectory: (path: string) => Promise<boolean>;
   inspectWorkspace: (path: string) => Promise<CodexWorkspace>;
+  collectWorkspaceChanges: (path: string) => Promise<CodexWorkspaceChanges>;
   resolveCli: () => Promise<CodexCli>;
   spawnProcess: (file: string, args: string[], options: SpawnOptions) => ChildProcess;
   terminateProcess: (child: ChildProcess) => void;
@@ -105,6 +111,35 @@ async function inspectGitWorkspace(projectPath: string): Promise<CodexWorkspace>
   return { root, branch, dirty: Boolean(status) };
 }
 
+async function collectGitWorkspaceChanges(projectPath: string): Promise<CodexWorkspaceChanges> {
+  const runGit = async (args: string[]) => {
+    const result = await execFileAsync("git", ["-C", projectPath, ...args], {
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return String(result.stdout || "").trim();
+  };
+  const [tracked, untracked, diffStat] = await Promise.all([
+    runGit(["diff", "--name-only", "HEAD"]),
+    runGit(["ls-files", "--others", "--exclude-standard"]),
+    runGit(["diff", "--stat", "HEAD"]),
+  ]);
+  const files = [...new Set([...tracked, ...untracked].flatMap((group) => group.split(/\\r?\\n/)).filter(Boolean))]
+    .map((file) => file.replace(/\\\\/g, "/"))
+    .sort((a, b) => a.localeCompare(b));
+  return { files, diffStat: redact(diffStat, 8_000) };
+}
+
+function findScopeViolations(files: string[], allowedPaths: string[]): string[] {
+  const roots = allowedPaths.map((item) => item.replace(/\\\\/g, "/").replace(/^\\.\\//, "").replace(/\\/$/, "").toLowerCase());
+  return files.filter((file) => {
+    const normalized = file.replace(/\\\\/g, "/").replace(/^\\.\\//, "").toLowerCase();
+    return !roots.some((root) => normalized === root || normalized.startsWith(root + "/"));
+  });
+}
+
 function safeEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   // Codex uses its own user-profile authentication. Do not leak Vanessa provider keys,
   // developer .env values, CI tokens, or cloud credentials into the coding subprocess.
@@ -147,6 +182,7 @@ export const codexTaskRunnerDependencies: CodexTaskRunnerDependencies = {
     try { return (await stat(path)).isDirectory(); } catch { return false; }
   },
   inspectWorkspace: inspectGitWorkspace,
+  collectWorkspaceChanges: collectGitWorkspaceChanges,
   resolveCli: async () => {
     const cli = await findCodexCli(codexDependencies);
     const help = await codexDependencies.run(cli.file, [...cli.prefix, "exec", "--help"]);
@@ -479,21 +515,59 @@ export async function runCodexTask(
       };
     }
 
-    emit("completed", "Codex turn completed with exit code 0. Independent verification is still required.");
+    let changes: CodexWorkspaceChanges;
+    try {
+      changes = await deps.collectWorkspaceChanges(projectPath);
+    } catch (error) {
+      const detail = redact((error as Error)?.message || "Could not inspect the resulting Git diff.", 1_500);
+      emit("failed", "Codex ended, but independent working-tree inspection failed: " + detail);
+      return {
+        success: false,
+        status: "failed",
+        exitCode: completion.exitCode,
+        projectPath,
+        branch: activeBranch,
+        error: "Codex ended but Vanessa could not inspect the resulting Git diff: " + detail,
+        spokenSummary: "Codex stopped, but I could not inspect its changes. I have not reported the task as complete.",
+      };
+    }
+
+    const scopeViolations = allowedPaths.length ? findScopeViolations(changes.files, allowedPaths as string[]) : [];
+    if (scopeViolations.length) {
+      const detail = "Changes detected outside the requested path scope: " + scopeViolations.slice(0, 20).join(", ");
+      emit("failed", detail);
+      return {
+        success: false,
+        status: "failed",
+        exitCode: completion.exitCode,
+        projectPath,
+        branch: activeBranch,
+        changedFiles: changes.files,
+        diffSummary: changes.diffStat,
+        scopeViolations,
+        error: detail + ". Changes were preserved in the working tree; Vanessa did not automatically revert them.",
+        spokenSummary: "Codex changed files outside the requested scope. I preserved the changes for review and did not report success.",
+      };
+    }
+
+    emit("completed", "Codex turn completed with exit code 0. Independent tests and postconditions still need verification.");
     return {
       success: true,
       status: "completed",
       exitCode: completion.exitCode,
       projectPath,
       branch: activeBranch,
+      changedFiles: changes.files,
+      diffSummary: changes.diffStat,
       output: summary,
       evidence: [{
-        description: "Codex emitted turn.completed and the process exited with code 0; this is execution evidence, not independent verification.",
-        source: "codex_cli",
+        description: "Codex emitted turn.completed, exited with code 0, and Vanessa collected the changed-file list. Tests and postconditions remain independently unverified.",
+        source: "codex_cli_and_git_diff",
         timestamp: new Date(deps.now()).toISOString(),
         confidence: 0.7,
+        data: { changedFiles: changes.files, diffSummary: changes.diffStat },
       }],
-      spokenSummary: "Codex finished its turn. I have not independently verified the tests or reviewed the complete diff.",
+      spokenSummary: "Codex finished its turn and I inspected the changed-file list. Tests and task postconditions still need independent verification.",
     };
   } catch (error) {
     const detail = redact((error as Error)?.message || "Managed Codex task failed.", 2_000);
