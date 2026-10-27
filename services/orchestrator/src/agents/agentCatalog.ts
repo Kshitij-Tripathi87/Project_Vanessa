@@ -28,10 +28,10 @@ const action = (
   risk: RiskLevel = "low", selectable = true, tools: string[] = [],
 ): CatalogAction => ({ name, description, parameters, returns, risk, selectable, tools });
 
-/** Reviewed against the registered handlers, not the older YAML agent cards.
- * This describes existing behavior; it does not implement or repair an agent.
- * Canonical names only. Legacy aliases and the checkout coding/incident agents
- * remain in the registry for compatibility but are not planner capabilities.
+/** Reviewed against registered handlers and the Trustworthy Execution v1 policy.
+ * Only operations with explicit schemas and a safe runtime path are selectable.
+ * Legacy aliases remain accepted only at the policy boundary and never expose
+ * arbitrary shell commands through the testing/repair workflow.
  */
 export const AGENT_CATALOG: CatalogAgent[] = [
   {
@@ -54,12 +54,12 @@ export const AGENT_CATALOG: CatalogAgent[] = [
       action("vscode.open_project", "Open an existing project in VS Code; this does not perform coding work.", {
         path: p("string", "Existing project path.", true),
       }, "{success, message? or error?}; executable path is machine-dependent."),
-      action("terminal.run_command", "Run a concrete command explicitly requested by the user. Do not substitute this for Codex coding work or invent shell scripts.", {
-        command: p("string", "Literal requested shell command; runs with the service working directory, not an arbitrary project cwd.", true),
-      }, "{success, exitCode, stdout?, stderr?, error?, verification}; 30-second subprocess timeout.", "high"),
-      action("tests.run", "Run an explicitly supplied test command in the service working directory, independently of any uncompleted Codex session.", {
-        command: p("string", "Known test command supplied by the user or trusted project context.", true),
-      }, "{success, exitCode, stdout? or error?, verification}; 20-second subprocess timeout.", "high"),
+      action("terminal.run_command", "Unavailable: arbitrary shell execution is disabled until routed through a registered supervisor operation.", {
+        command: p("string", "Not accepted by the current execution policy.", true),
+      }, "Blocked before process launch.", "high", false),
+      action("tests.run", "Unavailable: free-form test commands are disabled. Use the canonical registered incident-lab test suite in an approved worktree.", {
+        command: p("string", "Not accepted by the current execution policy.", true),
+      }, "Blocked before process launch.", "high", false),
       action("claude_code.open", "Legacy Claude workspace action. Default only returns preparation text; explicit visibleTerminal attempts terminal launch.", {
         prompt: p("string", "Initial task.", true), visibleTerminal: p("boolean", "Whether to request the legacy visible terminal path."),
       }, "{success, status: ready|started, prompt, output, verification}; not coding completion. Not selectable while Codex is the supported coding route.", "high", false),
@@ -180,16 +180,26 @@ export const AGENT_CATALOG: CatalogAgent[] = [
     ],
   },
   {
-    id: "testing",
-    purpose: "Execute a known regression command and return captured test output independently of coding-agent completion.",
-    limitations: "Runs in service cwd with a 25-second timeout. Success also depends on pass wording in stdout. A branch field is metadata; it does not switch branches. Do not schedule this after codex.open as if coding work had finished.",
+    id: "coding",
+    purpose: "Inspect the fixed incident-lab checkout target and prepare a narrowly scoped repair in a dedicated Git worktree.",
+    limitations: "The repair target and patch contract are fixed to packages/incident-lab/src/checkout.ts. A patch is only prepared after exact preimage checks, on-disk readback, diff inspection, and base-checkout preservation checks. It does not run tests or claim the repair is complete. Dirty base checkouts are blocked; no commit, push, merge, or deployment is performed.",
     actions: [
-      action("testing.verify_regression", "Execute a known test command and report captured outcome.", {
-        command: p("string", "Test command supplied by the user or trusted context.", true),
-        branch: p("string", "Optional reporting label; no branch checkout occurs."),
-        autoDeploy: p("boolean", "Must be false; this action does not deploy."),
-      }, "AgentResult with data.exitStatus/testsPassed/testOutput/deploymentStatus plus verification and evidence.", "high", true, ["test_run", "regression_check"]),
-      action("testing.run_checks", "Alias operation for the same regression subprocess.", { command: p("string", "Known check command.", true), autoDeploy: p("boolean", "Must be false.") }, "Same test result contract as testing.verify_regression.", "high", true, ["test_run"]),
+      action("coding.inspect_changes", "Inspect source evidence for the known checkout defect without modifying files.", {
+        target: p("string", "Optional allow-listed target; use packages/incident-lab/src/checkout.ts."),
+      }, "AgentResult with source line/snippet evidence when present; missing or fixed source returns inconclusive.", "low", true, ["file_read"]),
+      action("coding.prepare_patch", "Prepare the registered checkout null-guard patch in an isolated task worktree. Requires approval and returns workspaceId plus diffHash only when the actual patch and isolation checks pass.", {}, "AgentResult with workspaceId, worktreePath, baseCommit, diffHash and changedFiles. Regression tests have not run yet.", "high", true, ["file_read", "file_write", "apply_patch"]),
+    ],
+  },
+  {
+    id: "testing",
+    purpose: "Run one registered regression suite in an approved repair worktree and return structured process/test evidence.",
+    limitations: "No arbitrary command, cwd, executable, or environment input is accepted. Only incident-lab.regression is registered. The operation requires workspaceId and expectedDiffHash from a successful coding.prepare_patch result and separate approval. A non-zero exit, missing/invalid summary, zero tests, timeout, truncated output, leftover descendants, or failed base-worktree check can never produce success.",
+    actions: [
+      action("testing.run_incident_lab", "Run the registered incident-lab regression suite against the exact worktree and diff digest returned by coding.prepare_patch.", {
+        suiteId: p("string", "Must be incident-lab.regression.", true),
+        workspaceId: p("string", "Whole-string reference to the successful coding.prepare_patch workspaceId, e.g. $t2.result.workspaceId.", true),
+        expectedDiffHash: p("string", "Whole-string reference to the successful coding.prepare_patch SHA-256 diffHash, e.g. $t2.result.diffHash.", true),
+      }, "AgentResult with process status, exit code, structured test counts, output digest, truncation metadata, termination proof and base-checkout preservation. Success requires exit 0 and all tests passed.", "high", true, ["test_run", "regression_check"]),
     ],
   },
   {
