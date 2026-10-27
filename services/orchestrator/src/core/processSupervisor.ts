@@ -145,14 +145,14 @@ async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> 
 
 async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | null> {
   if (!processIds.length || processIds.some((pid) => !Number.isSafeInteger(pid) || pid < 1)) return null;
-  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $alive = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId } | Select-Object -ExpandProperty ProcessId); ConvertTo-Json -InputObject @{ alive = @($alive) } -Compress";
+  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $aliveCount = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId }).Count; ConvertTo-Json -InputObject @{ aliveCount = $aliveCount } -Compress";
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
       timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
     });
     const value = JSON.parse(result.stdout.trim());
-    return value && Array.isArray(value.alive) ? value.alive.length === 0 : null;
+    return value && Number.isSafeInteger(value.aliveCount) && value.aliveCount >= 0 ? value.aliveCount === 0 : null;
   } catch {
     return null;
   }
@@ -405,9 +405,12 @@ export class ProcessSupervisor {
       let hasRemaining: boolean | null;
       if (process.platform === "win32" && entry.child.pid) {
         const processIds = await getWindowsProcessTree(entry.child.pid);
-        hasRemaining = processIds
-          ? !(await areWindowsProcessesGone(processIds) === true)
-          : null;
+        if (!processIds) {
+          hasRemaining = null;
+        } else {
+          const gone = await areWindowsProcessesGone(processIds);
+          hasRemaining = gone === null ? null : !gone;
+        }
       } else if (entry.child.pid) {
         hasRemaining = processGroupAlive(entry.child.pid);
       } else {
