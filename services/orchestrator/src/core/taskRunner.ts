@@ -106,90 +106,90 @@ export function resolveTaskLocks(task: Task): string[] {
 }
 
 
-export async function triggerKillSwitch(): Promise<void> {
-  isKillSwitchEngaged = true;
-  const terminationChecks: Promise<void>[] = [];
-  let unconfirmed = 0;
-
-  for (const task of activeTasks.values()) {
-    if (task.status !== "running" && task.status !== "pending" && task.status !== "awaiting_approval") continue;
-
-    const wasRunning = task.status === "running";
-    task.error = "Cancellation requested by emergency kill switch.";
-    if (!wasRunning) {
-      // Queued/approval-waiting tasks have no process to terminate.
-      task.status = "cancelled";
-      task.lifecycleState = "cancelled";
-      task.completedAt = Date.now();
-      task.verification = {
-        verified: true,
-        postconditions: ["Task had not started an executable process."],
-        outcome: "cancelled",
-        details: "Cancelled before execution.",
-      };
-      resourceLockManager.releaseAllForTask(task.id);
-      memoryPalace.recordTaskCheckpoint(task, task.parentId);
-      eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
-      eventBus.emitEvent("task:update", task);
-      continue;
-    }
-
-    task.lifecycleState = "cancel_requested";
+export async function cancelTaskWithProof(task: Task, reason: string): Promise<"cancelled" | "termination_unconfirmed"> {
+  const hasStarted = task.startedAt !== undefined && task.status !== "pending" && task.status !== "awaiting_approval";
+  if (!hasStarted) {
+    task.status = "cancelled";
+    task.lifecycleState = "cancelled";
+    task.error = reason;
+    task.completedAt = Date.now();
     task.verification = {
-      verified: false,
-      postconditions: ["Cancellation was requested; process termination has not yet been verified."],
-      outcome: "termination_unconfirmed",
-      details: "Cancellation requested.",
+      verified: true,
+      postconditions: ["Task was cancelled before executable work started."],
+      outcome: "cancelled",
+      details: "No process needed termination.",
     };
+    resourceLockManager.releaseAllForTask(task.id);
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
+    eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason });
     eventBus.emitEvent("task:update", task);
-
-    terminationChecks.push((async () => {
-      try {
-        if (task.agent === "developer" && task.action === "codex.run_task") {
-          // Existing Codex cancellation is attempted, but it does not provide
-          // process-tree proof, so never treat it as termination evidence.
-          void cancelCodexTask(task.id);
-        }
-        const processResult = await processSupervisor.cancel(task.id);
-        const stopped = Boolean(processResult && (
-          processResult.status === "cancelled" && processResult.terminationVerified === true ||
-          processResult.status === "timed_out" && processResult.terminationVerified === true ||
-          processResult.status === "exited"
-        ));
-        if (stopped) {
-          task.status = "cancelled";
-          task.lifecycleState = "cancelled";
-          task.error = "Execution stopped after emergency cancellation.";
-          task.completedAt = Date.now();
-          task.verification = {
-            verified: true,
-            postconditions: ["Managed process stopped; termination evidence recorded by ProcessSupervisor."],
-            exitCode: processResult?.exitCode ?? undefined,
-            outcome: "cancelled",
-            details: `Process status: ${processResult?.status}; termination verified.`,
-          };
-          resourceLockManager.releaseAllForTask(task.id);
-          memoryPalace.recordTaskCheckpoint(task, task.parentId);
-          eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
-        } else {
-          unconfirmed++;
-          markTerminationUnconfirmed(
-            task,
-            "Vanessa cannot prove this task's process tree has stopped. Conflicting resource locks remain held."
-          );
-        }
-      } catch (error: any) {
-        unconfirmed++;
-        markTerminationUnconfirmed(
-          task,
-          `Termination could not be verified: ${typeof error?.message === "string" ? error.message : "unknown error"}`
-        );
-      }
-    })());
+    return "cancelled";
   }
 
-  await Promise.all(terminationChecks);
+  task.lifecycleState = "cancel_requested";
+  task.error = reason;
+  task.verification = {
+    verified: false,
+    postconditions: ["Cancellation was requested; process termination has not been verified."],
+    outcome: "termination_unconfirmed",
+    details: reason,
+  };
+  eventBus.emitEvent("task:update", task);
+
+  try {
+    if (task.agent === "developer" && task.action === "codex.run_task") {
+      // Codex has a separate cancellation channel, but it does not provide process-tree proof.
+      void cancelCodexTask(task.id);
+    }
+    const result = await processSupervisor.cancel(task.id);
+    const stopped = Boolean(result && (
+      (result.status === "cancelled" && result.terminationVerified === true) ||
+      (result.status === "timed_out" && result.terminationVerified === true) ||
+      result.status === "exited"
+    ));
+    if (!stopped) {
+      markTerminationUnconfirmed(
+        task,
+        result?.error || "Vanessa cannot prove this task's process tree has stopped. Conflicting resource locks remain held."
+      );
+      return "termination_unconfirmed";
+    }
+
+    task.status = "cancelled";
+    task.lifecycleState = "cancelled";
+    task.error = reason;
+    task.completedAt = Date.now();
+    task.verification = {
+      verified: true,
+      postconditions: ["Process supervisor confirmed the managed process stopped."],
+      exitCode: result?.exitCode ?? undefined,
+      outcome: "cancelled",
+      details: `Process status: ${result?.status}; cancellation verified.`,
+    };
+    resourceLockManager.releaseAllForTask(task.id);
+    memoryPalace.recordTaskCheckpoint(task, task.parentId);
+    eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason });
+    eventBus.emitEvent("task:update", task);
+    return "cancelled";
+  } catch (error: any) {
+    markTerminationUnconfirmed(
+      task,
+      `Termination could not be verified: ${typeof error?.message === "string" ? error.message : "unknown error"}`
+    );
+    return "termination_unconfirmed";
+  }
+}
+
+export async function triggerKillSwitch(): Promise<void> {
+  isKillSwitchEngaged = true;
+  const checks: Promise<"cancelled" | "termination_unconfirmed">[] = [];
+  for (const task of activeTasks.values()) {
+    if (["running", "pending", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) {
+      checks.push(cancelTaskWithProof(task, "Cancellation requested by emergency kill switch."));
+    }
+  }
+  const results = await Promise.all(checks);
+  const unconfirmed = results.filter((result) => result === "termination_unconfirmed").length;
   eventBus.emitEvent("audit:log", {
     id: `kill-${Date.now()}`,
     timestamp: Date.now(),
@@ -200,9 +200,6 @@ export async function triggerKillSwitch(): Promise<void> {
       ? `Emergency kill switch completed with ${unconfirmed} unconfirmed process termination(s). Locks were retained; new work remains blocked.`
       : "Emergency cancellation completed. Every running managed process was verified stopped; queued tasks were cancelled before execution.",
   });
-
-  // Only reset when every execution is known to have stopped. An unresolved
-  // process is a global safety latch until an operator reconciles it.
   if (unconfirmed === 0) isKillSwitchEngaged = false;
 }
 
