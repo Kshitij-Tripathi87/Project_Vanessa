@@ -48,6 +48,7 @@ export class VanessaVoiceSession {
   private readonly sarvamSpeechGate = new SpeechAudioGate();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
+  private wakeWordMonitorActive = false;
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
 
@@ -149,7 +150,8 @@ export class VanessaVoiceSession {
   }
 
   async start(): Promise<void> {
-    // Keep the ASR provider disconnected until an explicit push-to-talk action.
+    // Startup is passive. The desktop explicitly enables local Whisper wake-word
+    // standby or opens push-to-talk; hosted ASR never receives ambient audio.
     this.setState("idle");
   }
 
@@ -160,12 +162,16 @@ export class VanessaVoiceSession {
     this.asrConnectPromise = Promise.resolve().then(() => this.asr.connect({
       onPartial: (result) => {
         this.partialTranscript = result.text;
-        this.handlers.onPartialTranscript?.(result.text);
+        const startsWithWakePhrase = /^\s*(?:hey\s+vanessa|ok(?:ay)?\s+vanessa|vanessa)(?=$|[\s,!.?;:-])/i.test(result.text);
+        if (this.captureAuthorized || (this.wakeWordMonitorActive && startsWithWakePhrase)) {
+          this.handlers.onPartialTranscript?.(result.text);
+        }
       },
       onFinal: async (result) => {
-        // Endpoint finalization may arrive after the capture window expires.
-        // Authorization belongs to the activated turn, not provider latency.
         if (this.captureAuthorized) await this.handleFinalUtterance(result.text, result.language, result.turnId, true);
+        else if (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter) {
+          await this.handleFinalUtterance(result.text, result.language, result.turnId, false);
+        }
       },
     })).then(() => {
       this.isAsrConnected = true;
@@ -174,6 +180,43 @@ export class VanessaVoiceSession {
       throw err;
     });
     return this.asrConnectPromise;
+  }
+
+  async enableWakeWordMonitor(): Promise<void> {
+    if (!(this.asr instanceof VoiceAdapter)) {
+      throw new Error("Always-on wake-word listening requires the local Whisper speech runtime.");
+    }
+    if (this.wakeWordMonitorActive) return;
+    this.wakeWordMonitorActive = true;
+    this.captureAuthorized = false;
+    this.wakeWord.resetSession();
+    try {
+      await this.ensureAsrConnected();
+      await this.asr.activateStream?.();
+      this.setState("idle");
+      console.log("[VanessaVoiceSession] Local wake-word monitor enabled; ambient audio stays on this device.");
+    } catch (error) {
+      this.wakeWordMonitorActive = false;
+      this.asr.deactivateStream?.();
+      throw error;
+    }
+  }
+
+  isWakeWordMonitorActive(): boolean {
+    return this.wakeWordMonitorActive;
+  }
+
+  async deactivateSession(): Promise<void> {
+    this.cancelCurrentTurn();
+    this.captureAuthorized = false;
+    this.asr.deactivateStream?.();
+    this.wakeWord.resetSession();
+    this.turnDetector.reset();
+    if (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter) {
+      await this.resumeWakeWordMonitor();
+      return;
+    }
+    this.setState("idle");
   }
 
   async activateSession(durationMs = 25000): Promise<void> {
@@ -218,7 +261,7 @@ export class VanessaVoiceSession {
     // 3. Forward only active speech and a short acoustic tail to Sarvam.
     // Manual endpointing is owned by Vanessa, so local gating prevents long
     // PTT silence from being sent upstream. Other providers keep their contract.
-    if (this.wakeWord.isSessionActive()) {
+    if (this.wakeWord.isSessionActive() || (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter)) {
       if (this.asr instanceof SarvamAsrAdapter) {
         for (const frame of this.sarvamSpeechGate.push(chunk.pcm, vadRes.isSpeech)) {
           this.asr.sendAudioChunk(frame);
@@ -276,9 +319,10 @@ export class VanessaVoiceSession {
     // Filter wake word prefix
     const wakeCheck = alreadyAccepted ? { detected: true, cleanedText: rawText } : this.wakeWord.processTranscript(rawText);
     if (!wakeCheck.detected) {
-      // Ignore transcripts unless an explicit push-to-talk activation is active.
+      // Ignore room speech without a wake prefix, then re-arm local standby.
       this.isProcessing = false;
       this.turnDetector.reset();
+      await this.resumeWakeWordMonitor();
       return;
     }
     const command = wakeCheck.cleanedText;
@@ -302,6 +346,7 @@ export class VanessaVoiceSession {
       }
       this.isProcessing = false;
       this.turnDetector.reset();
+      await this.resumeWakeWordMonitor();
       return;
     }
 
@@ -388,6 +433,7 @@ export class VanessaVoiceSession {
         this.bargeIn.reset();
         this.wakeWord.resetSession();
         this.asr.deactivateStream?.();
+        await this.resumeWakeWordMonitor();
       }
       if (this.state !== "listening") {
         this.setState("idle");
@@ -452,6 +498,7 @@ export class VanessaVoiceSession {
   }
 
   stop(): void {
+    this.wakeWordMonitorActive = false;
     this.cancelCurrentTurn();
     this.asr.close();
     this.isAsrConnected = false;
@@ -460,6 +507,21 @@ export class VanessaVoiceSession {
     this.turnDetector.reset();
     this.bargeIn.reset();
     this.setState("idle");
+  }
+
+  private async resumeWakeWordMonitor(): Promise<void> {
+    if (!this.wakeWordMonitorActive || !(this.asr instanceof VoiceAdapter)) return;
+    this.captureAuthorized = false;
+    this.wakeWord.resetSession();
+    try {
+      await this.ensureAsrConnected();
+      await this.asr.activateStream?.();
+      this.setState("idle");
+    } catch (error) {
+      this.wakeWordMonitorActive = false;
+      this.asr.deactivateStream?.();
+      this.handlers.onError?.(safeProviderDetail(error instanceof Error ? error.message : "Local wake-word monitor could not resume."));
+    }
   }
 
   private cancelCurrentTurn(): void {
