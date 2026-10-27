@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import * as fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { repairWorkspaceService } from "./repairWorkspace.js";
 
@@ -72,6 +73,24 @@ interface ManagedEntry {
   resolveCompletion: (result: ManagedProcessResult) => void;
   terminatePromise?: Promise<boolean>;
   result?: ManagedProcessResult;
+}
+
+const requireFromOrchestrator = createRequire(import.meta.url);
+
+/**
+ * The registered incident-lab runner uses this application's known Node runtime
+ * and installed TSX loader, while test source is resolved inside the task
+ * worktree. This avoids shell/pnpm wrapper processes and avoids installation
+ * scripts or network access in a repair workspace.
+ */
+export function getIncidentLabTestInvocation(worktreePath: string): { executable: string; args: string[] } {
+  if (!path.isAbsolute(worktreePath)) throw new Error("Incident-lab test workspace must be an absolute path.");
+  const loaderPath = requireFromOrchestrator.resolve("tsx");
+  const testPath = path.resolve(worktreePath, "packages", "incident-lab", "tests", "checkout.test.ts");
+  if (!path.isAbsolute(loaderPath) || !path.isAbsolute(testPath)) {
+    throw new Error("The registered incident-lab runner paths could not be resolved safely.");
+  }
+  return { executable: process.execPath, args: ["--import", loaderPath, testPath] };
 }
 
 const ENV_ALLOWLIST = [
@@ -230,11 +249,8 @@ export class ProcessSupervisor {
     ) {
       throw new Error("The target worktree, base commit, changed-file scope, patch digest, or base-checkout invariant failed revalidation.");
     }
-    const expectedExecutable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
-    const expectedArgs = process.platform === "win32"
-      ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
-      : ["--filter", "@vanessa/incident-lab", "test"];
-    if (request.executable !== expectedExecutable || JSON.stringify(request.args) !== JSON.stringify(expectedArgs)) {
+    const expectedInvocation = getIncidentLabTestInvocation(workspace.worktreePath);
+    if (request.executable !== expectedInvocation.executable || JSON.stringify(request.args) !== JSON.stringify(expectedInvocation.args)) {
       throw new Error("Executable and argv do not match the registered incident-lab test runner.");
     }
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 10 * 60 * 1000) {
