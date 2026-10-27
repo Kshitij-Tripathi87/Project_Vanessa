@@ -12,6 +12,7 @@ import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
 import { VanessaAgent } from "../agents/openjarvis.agent.js";
 import { MemoryAgent } from "../agents/memory.agent.js";
+import { MemoryPalace } from "../memory/memoryPalace.js";
 import { BrowserAgent } from "../agents/browser.agent.js";
 import { FileAgent } from "../agents/file.agent.js";
 import { WindowsAgent } from "../agents/windows.agent.js";
@@ -215,6 +216,37 @@ test("memory agent returns real matches or inconclusive and never fabricates a h
   const invalidLimit = await agent.execute("memory.list", { limit: 0 });
   assert.equal(invalidLimit.status, "blocked");
   assert.equal((invalidLimit.data as Record<string, any>)?.processStarted, false);
+});
+
+test("memory storage redacts sensitive metadata and never returns raw metadata", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-memory-isolation-"));
+  const palace = new MemoryPalace(path.join(tempRoot, "memory.db"));
+  try {
+    const agent = new MemoryAgent(palace);
+    const marker = "memory-privacy-" + randomUUID();
+    const secretToken = "sk-" + "A".repeat(32);
+    const passwordValue = "nested-password-value-" + randomUUID();
+    const stored = await agent.execute("memory.store", {
+      content: marker + " api_key=" + secretToken,
+      metadata: { title: marker, api_key: secretToken, nested: { password: passwordValue } },
+    });
+    assert.equal(stored.success, true);
+    assert.equal((stored.data as Record<string, any>)?.outcome, "succeeded");
+    assert.ok((stored.data as Record<string, any>)?.redactedCount >= 2);
+    const storedJson = JSON.stringify(stored.data);
+    assert.equal(storedJson.includes(secretToken), false);
+    assert.equal(storedJson.includes(passwordValue), false);
+    assert.equal(Object.prototype.hasOwnProperty.call((stored.data as Record<string, any>)?.record, "rawData"), false);
+
+    const recalled = await agent.execute("memory.retrieve", { query: marker });
+    assert.equal(recalled.success, true);
+    assert.equal((recalled.data as Record<string, any>)?.resultCount, 1);
+    assert.equal(JSON.stringify(recalled.data).includes(secretToken), false);
+    assert.equal(JSON.stringify(recalled.data).includes(passwordValue), false);
+  } finally {
+    palace.close();
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("incident memory retrieval reports the unmanaged Python bridge as disabled", async () => {
