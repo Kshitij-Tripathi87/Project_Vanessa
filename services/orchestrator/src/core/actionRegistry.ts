@@ -69,7 +69,23 @@ const validateDiff = (params: Record<string, any>) => {
   return undefined;
 };
 
+const validateAsk = (params: Record<string, any>) => {
+  const unknown = onlyKeys(params, ["query", "prompt"]);
+  if (unknown) return unknown;
+  const query = params.query ?? params.prompt;
+  if (typeof query !== "string" || !query.trim()) return "A non-empty query or prompt is required.";
+  if (query.length > 4000) return "Query/prompt must be 4,000 characters or fewer.";
+  return undefined;
+};
+
 const policyList: ManagedActionPolicy[] = [
+  {
+    canonicalId: "openjarvis.ask",
+    aliases: ["vanessa.ask", "tools.ask", "connector.ask", "jarvis.ask"],
+    approvalRequired: false,
+    sideEffectClass: "read_only",
+    validate: validateAsk,
+  },
   { canonicalId: "testing.run_incident_lab", aliases: ["testing.run_checks", "testing.verify_regression"], approvalRequired: true, sideEffectClass: "read_only", validate: validateTestRun },
   { canonicalId: "coding.inspect_changes", aliases: ["coding.analyze_repo"], approvalRequired: false, sideEffectClass: "read_only", validate: validateInspection },
   { canonicalId: "coding.prepare_patch", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", validate: taskIdOnly },
@@ -92,7 +108,19 @@ for (const policy of policyList) {
   for (const alias of policy.aliases) byId.set(alias, policy);
 }
 
-const failClosedPrefixes = ["testing.", "incident.", "coding."];
+// Unmigrated agent namespaces fail closed. Only actions explicitly registered above
+// are callable; legacy tool/shell/scheduling routes remain unavailable until they
+// are moved behind the same policy and managed execution contracts.
+const failClosedPrefixes = [
+  "testing.",
+  "incident.",
+  "coding.",
+  "openjarvis.",
+  "vanessa.",
+  "tools.",
+  "connector.",
+  "jarvis.",
+];
 const explicitlyBlockedActions = new Set(["terminal.run_command", "tests.run", "claude_code.open", "developer.claude_code.open_autonomous", "incident.prepare_and_verify", "codex.run_task"]);
 
 /**
