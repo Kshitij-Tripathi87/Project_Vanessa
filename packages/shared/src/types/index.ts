@@ -86,6 +86,7 @@ export type EventType =
   | "system:status"
   | "voice:state"
   | "agent:message"
+  | "codex:progress"
   | "agent.started"
   | "tool.started"
   | "tool.completed"
