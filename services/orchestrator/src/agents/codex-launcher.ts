@@ -14,14 +14,14 @@ $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -WorkingDirect
 Write-Output $p.Id
 `;
 
-interface Dependencies {
+export interface CodexDependencies {
   platform: () => string;
   stat: (path: string) => Promise<{ isFile(): boolean; isDirectory(): boolean }>;
   run: (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
   terminal: (script: string, values: Record<string, string>) => Promise<{ stdout: string; stderr: string }>;
 }
 
-export const codexDependencies: Dependencies = {
+export const codexDependencies: CodexDependencies = {
   platform: () => process.platform as string,
   stat,
   run: async (file: string, args: string[]) => execFileAsync(file, args, {
@@ -30,13 +30,13 @@ export const codexDependencies: Dependencies = {
   terminal: runPowerShell,
 };
 
-async function isFile(path: string, deps: Dependencies) {
+async function isFile(path: string, deps: CodexDependencies) {
   try { return (await deps.stat(path)).isFile(); } catch { return false; }
 }
 
 // Prefer the npm .cmd installation, but never send prompt data through cmd.exe.
 // Its adjacent JS entry point invokes the same installed Codex CLI with argv intact.
-async function findCodex(deps: Dependencies) {
+export async function findCodexCli(deps: CodexDependencies) {
   for (const entry of (process.env.PATH || "").split(delimiter)) {
     if (!entry) continue;
     const directory = entry.replace(/^"|"$/g, "");
@@ -66,7 +66,7 @@ export async function openCodex(params: Record<string, unknown>, deps = codexDep
       throw new Error(`Invalid or inaccessible project directory: ${projectPath}`);
     }
     if (deps.platform() !== "win32") throw new Error("codex.open currently supports Windows only.");
-    const cli = await findCodex(deps);
+    const cli = await findCodexCli(deps);
     let help: string;
     try {
       const result = await deps.run(cli.file, [...cli.prefix, "--help"]);
