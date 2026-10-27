@@ -1,12 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { eventBus } from "../core/eventBus.js";
 import type { AgentRunContext } from "@vanessa/shared";
-
-const execFileAsync = promisify(execFile);
 
 export interface InvestigationEvidence {
   worker: string;
@@ -183,42 +179,27 @@ export class IncidentAgent {
     const runbookExists = fs.existsSync(runbookPath);
     const runbookContent = runbookExists ? fs.readFileSync(runbookPath, "utf-8") : "";
     const runbookTitle = runbookContent.split(/\r?\n/).find((line) => /^#\s+/.test(line))?.replace(/^#\s+/, "") || "";
-    let memoryResult = "";
-    let memorySource = "";
-    let memoryError = "";
-    const candidates = [
-      path.resolve(this.workspaceRoot, "Agents and tools"),
-      path.resolve(this.workspaceRoot, "agents and tools"),
-      path.resolve(this.workspaceRoot, "agents_and_tools"),
-      path.resolve(this.workspaceRoot, "tools"),
-      path.resolve(this.workspaceRoot, "OpenJarvis"),
-    ];
-    const openJarvisDir = candidates.find((directory) => fs.existsSync(directory));
-    if (openJarvisDir) {
-      try {
-        const script = "from openjarvis.tools.storage_tools import MemoryRetrieveTool; tool = MemoryRetrieveTool(); res = tool.execute(query='checkout'); print(res.content if hasattr(res, 'content') else res)";
-        const result = await execFileAsync("uv", ["run", "python", "-c", script], {
-          cwd: openJarvisDir, timeout: 15000, maxBuffer: 256 * 1024, windowsHide: true, encoding: "utf8",
-        });
-        if (result.stdout.trim()) {
-          memoryResult = result.stdout.trim().slice(0, 12000);
-          memorySource = openJarvisDir;
-        }
-      } catch (error: any) {
-        memoryError = typeof error?.message === "string" ? error.message : "Memory retrieval failed.";
-      }
-    } else {
-      memoryError = "No supported local memory-tool directory was found.";
-    }
-    const sourceAvailable = Boolean(memoryResult || runbookContent);
+    // The legacy OpenJarvis memory lookup used an unmanaged `uv run python`
+    // child process with the orchestrator's inherited environment. Keep this
+    // source unavailable until a registered, supervised executor owns its
+    // executable, arguments, environment, output, timeout, and cancellation.
+    // The local runbook remains available as a separately identified source.
+    const memoryResult = "";
+    const memorySource = "";
+    const memoryError = "Local Python memory retrieval is disabled until it is routed through the registered process supervisor; no subprocess was launched.";
+    const sourceAvailable = Boolean(runbookContent);
     const finding: InvestigationEvidence = {
       worker: "Worker 3: Memory & Runbook Retrieval",
       source: memoryResult ? memorySource : runbookRelative, timestamp: new Date().toISOString(),
       findings: {
-        memoryRetrieved: Boolean(memoryResult), memoryRecord: memoryResult || undefined,
-        memoryRetrievalError: memoryError || undefined, runbookExists, runbookTitle: runbookTitle || undefined,
+        memoryRetrieved: false,
+        memoryRetrievalStatus: "disabled",
+        memoryProcessStarted: false,
+        memoryRecord: undefined,
+        memoryRetrievalError: memoryError,
+        runbookExists, runbookTitle: runbookTitle || undefined,
         runbookExcerpt: runbookContent ? runbookContent.slice(0, 6000) : undefined,
-        sourcesUsed: [...(memoryResult ? ["local-memory"] : []), ...(runbookContent ? ["runbook"] : [])],
+        sourcesUsed: [...(runbookContent ? ["runbook"] : [])],
       },
       confidence: sourceAvailable ? 0.8 : 0,
       verificationStatus: sourceAvailable ? "verified" : "inconclusive",
