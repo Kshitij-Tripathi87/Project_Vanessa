@@ -120,19 +120,21 @@ if ($needsOllama) {
     Write-Host ''
     Write-Host '[3/4] Checking the local Ollama runtime...' -ForegroundColor Cyan
     $ollama = Get-Command ollama.exe -ErrorAction SilentlyContinue
-    if (-not $ollama) {
+    $ollamaExePath = if ($ollama) { $ollama.Source } else { $null }
+    if (-not $ollamaExePath) {
         if (-not $winget) { throw 'Ollama is required by the zero-key default and winget is unavailable. Install it from https://ollama.com/download/windows, then rerun setup.' }
         Invoke-Checked 'Install Ollama local model runtime' $winget.Source @('install', '--id', 'Ollama.Ollama', '--exact', '--silent', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
         $machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
         $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
         $env:PATH = "$machinePath;$userPath"
         $ollama = Get-Command ollama.exe -ErrorAction SilentlyContinue
-        if (-not $ollama) {
+        if ($ollama) { $ollamaExePath = $ollama.Source }
+        if (-not $ollamaExePath) {
             $knownOllama = Join-Path $env:LOCALAPPDATA 'Programs/Ollama/ollama.exe'
-            if (Test-Path $knownOllama) { $ollama = Get-Item $knownOllama }
+            if (Test-Path $knownOllama) { $ollamaExePath = $knownOllama }
         }
     }
-    if (-not $ollama) { throw 'Ollama install finished but its executable could not be found. Reopen PowerShell and rerun setup.' }
+    if (-not $ollamaExePath) { throw 'Ollama install finished but its executable could not be found. Reopen PowerShell and rerun setup.' }
     $parsedBase = $null
     try { $parsedBase = [uri]$ollamaBase } catch { throw 'OLLAMA_BASE_URL is invalid; use http://127.0.0.1:11434.' }
     if ($parsedBase.Scheme -ne 'http' -or $parsedBase.Host -notin @('127.0.0.1', 'localhost', '::1') -or $parsedBase.AbsolutePath -ne '/') {
@@ -142,7 +144,7 @@ if ($needsOllama) {
         $tagResponse = Invoke-RestMethod -Method Get -Uri "$ollamaBase/api/tags" -TimeoutSec 3
     } catch {
         Write-Host 'Ollama is installed but its local service is not responding; starting ollama serve...' -ForegroundColor Yellow
-        Start-Process -FilePath $ollama.Source -ArgumentList @('serve') -WindowStyle Minimized | Out-Null
+        Start-Process -FilePath $ollamaExePath -ArgumentList @('serve') -WindowStyle Minimized | Out-Null
         $deadline = (Get-Date).AddSeconds(30)
         $tagResponse = $null
         while ((Get-Date) -lt $deadline -and -not $tagResponse) {
@@ -154,7 +156,7 @@ if ($needsOllama) {
     foreach ($item in $tagResponse.models) { if ($item.name -eq $ollamaModel) { $hasModel = $true; break } }
     if (-not $hasModel -and -not $SkipModelDownloads) {
         Write-Host "Pulling local model '$ollamaModel' (the default qwen2.5:3b is about 2 GB)..." -ForegroundColor Yellow
-        Invoke-Checked "ollama pull $ollamaModel" $ollama.Source @('pull', $ollamaModel)
+        Invoke-Checked "ollama pull $ollamaModel" $ollamaExePath @('pull', $ollamaModel)
     } elseif (-not $hasModel) {
         Write-Host "[SKIP] Model '$ollamaModel' not installed because -SkipModelDownloads was provided." -ForegroundColor Yellow
     } else {
