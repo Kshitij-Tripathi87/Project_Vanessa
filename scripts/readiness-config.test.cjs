@@ -13,6 +13,9 @@ test("readiness uses the same no-key local defaults as the launcher", () => {
   assert.equal(config.conversationProvider, "ollama");
   assert.equal(config.usesLocalAsr, true);
   assert.equal(config.localAsrUrl, "ws://127.0.0.1:4505/");
+  assert.equal(config.usesOllama, true);
+  assert.equal(config.ollamaBaseUrl, "http://127.0.0.1:11434");
+  assert.equal(config.ollamaModel, "qwen2.5:3b");
   assert.equal(config.ttsFallback, true);
   assert.deepEqual(config.missing, []);
 });
@@ -49,6 +52,7 @@ test("readiness keeps planner and conversation provider selection independent", 
   assert.equal(config.plannerProvider, "nvidia");
   assert.equal(config.conversationProvider, "ollama");
   assert.equal(config.usesLocalAsr, true);
+  assert.equal(config.usesOllama, true);
   assert.deepEqual(config.missing, []);
 });
 
