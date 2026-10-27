@@ -24,7 +24,8 @@
     "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm test:drills:process && pnpm --filter @vanessa/voice-agent test",
     "lint": "pnpm -r run lint",
     "test:desktop:microphone": "pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/renderer/hooks/microphoneDiagnostics.test.ts",
-    "test:doctor": "node --test scripts/doctor.test.cjs"
+    "test:doctor": "node --test scripts/doctor.test.cjs",
+    "package:bootstrap": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-bootstrap.ps1"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",
