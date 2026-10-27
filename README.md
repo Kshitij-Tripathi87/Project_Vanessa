@@ -70,7 +70,7 @@ Run:
 
     .\scripts\setup_windows.ps1
 
-The script preserves an existing .env; on a clean checkout it creates one from .env.example with the local profile selected. It installs workspace packages, builds the code, installs local speech dependencies, warms the selected Whisper model, and pulls the configured Ollama model if missing. The default qwen2.5:3b model is about 2 GB; additional disk/network use occurs only for first-time model downloads. The setup script does not silently install the Ollama or Python executables; those runtimes must be installed first if absent.
+The first launch of Launch-Vanessa.bat detects missing configuration/dependencies and starts setup automatically. The setup script preserves an existing .env; on a clean checkout it creates one from .env.example with the local profile selected. It installs workspace packages, builds the code, installs local speech dependencies, warms the selected Whisper model, and pulls the configured Ollama model if missing. On later launches a local preflight checks that the configured runtime and model are present; when one is missing, the setup/repair path runs again. The default qwen2.5:3b model is about 2 GB; additional disk/network use occurs only for first-time model downloads. When Windows Package Manager (winget) is available, setup can install Node.js LTS, Python 3.11, and Ollama when they are missing. If winget is unavailable or an installation is blocked by device policy, setup stops with a manual recovery instruction.
 
 ### 3. Launch Vanessa
 Use the canonical launcher to start the orchestrator, local Whisper WebSocket, voice service and desktop together:

@@ -22,6 +22,11 @@ if not exist ".venv-voice\Scripts\python.exe" if exist ".env" (
   )
 )
 
+if "%NEEDS_SETUP%"=="0" (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify-local-setup.ps1" >nul
+  if errorlevel 1 set "NEEDS_SETUP=1"
+)
+
 if "%NEEDS_SETUP%"=="1" (
   echo.
   echo [Vanessa Setup] First-run dependencies or local voice runtime are missing.
