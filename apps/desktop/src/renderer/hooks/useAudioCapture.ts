@@ -29,6 +29,7 @@ export interface VoiceProviderStatus {
 }
 
 export type MicrophoneTestState = "idle" | "testing" | "passed" | "silent" | "error";
+export type SpeechOutputTestState = "idle" | "testing" | "finished" | "error";
 
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
@@ -55,6 +56,8 @@ export function useAudioCapture() {
   const [micError, setMicError] = useState<string | null>(null);
   const [microphoneTestState, setMicrophoneTestState] = useState<MicrophoneTestState>("idle");
   const [microphoneTestMessage, setMicrophoneTestMessage] = useState("");
+  const [speechOutputTestState, setSpeechOutputTestState] = useState<SpeechOutputTestState>("idle");
+  const [speechOutputTestMessage, setSpeechOutputTestMessage] = useState("");
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
   const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
 
@@ -567,6 +570,39 @@ export function useAudioCapture() {
     }
   }, [microphoneTestState]);
 
+  // Test the no-key browser/OS speech fallback. "Finished" means the browser
+  // completed its utterance callback; the user still confirms they heard audio.
+  const testSpeechOutput = useCallback(() => {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("This runtime does not expose local speech synthesis. Typed responses remain available; check the Vanessa runtime.");
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      setSpeechOutputTestState("testing");
+      setSpeechOutputTestMessage("Playing a short local test phrase. No speech provider API key is used.");
+      const utterance = new SpeechSynthesisUtterance(
+        "This is Vanessa's local speech output test. If you hear this, local speech playback is working."
+      );
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => {
+        setSpeechOutputTestState("finished");
+        setSpeechOutputTestMessage("The speech engine finished playback. Confirm you heard it; if not, check Windows volume and the selected output device.");
+      };
+      utterance.onerror = () => {
+        setSpeechOutputTestState("error");
+        setSpeechOutputTestMessage("Local speech playback reported an error. Check Windows volume and the selected output device. Written responses remain available.");
+      };
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("Local speech playback could not start. Check Windows volume/output settings; written responses remain available.");
+    }
+  }, []);
+
   // Start live microphone capture
   const startRecording = useCallback(async () => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
@@ -820,6 +856,9 @@ export function useAudioCapture() {
     microphoneTestState,
     microphoneTestMessage,
     testMicrophone,
+    speechOutputTestState,
+    speechOutputTestMessage,
+    testSpeechOutput,
     voiceConnectionState,
     submitTextCommand,
     cancelVoice,

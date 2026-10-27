@@ -148,7 +148,7 @@ Implement a pure error classifier with deterministic tests for browser/Electron 
 
 Resource cleanup is mandatory on every failure path: stop acquired media tracks, disconnect worklet/source/analyser nodes, cancel animation frames, close an unneeded AudioContext, reset active flags, and retain typed-command usability. Permission checks must never bypass Windows OS privacy policy.
 
-The expanded HUD menu also provides an explicit local-only microphone self-test: it samples the input for 1.6 seconds, reports signal versus silence, never opens the ASR WebSocket or transmits test audio, and always releases tracks/audio nodes. A passing test proves capture signal only; users still need one real command to verify STT and downstream orchestration. Input-device selection, output loopback testing, and a direct Windows Settings shortcut remain follow-up work.
+The expanded HUD menu also provides an explicit local-only microphone self-test: it samples the input for 1.6 seconds, reports signal versus silence, never opens the ASR WebSocket or transmits test audio, and always releases tracks/audio nodes. A passing test proves capture signal only; users still need one real command to verify STT and downstream orchestration. The menu also tests the browser/OS speech-synthesis fallback without provider credentials. The completion callback cannot prove the user physically heard the sound, so the UI asks them to confirm it. Input-device selection and a direct Windows Settings shortcut remain follow-up work.
 
 ## 8. Model and hardware policy
 
@@ -182,7 +182,7 @@ The expanded HUD menu also provides an explicit local-only microphone self-test:
 
 ### Phase 1 — First-run readiness UX
 - Add a desktop diagnostics view for each capability, including last failure and repair action.
-- Add output test, input-device name/selection, and open-Windows-settings action; the local-only input-signal test is now present in the expanded HUD.
+- Add input-device name/selection and open-Windows-settings action; local microphone-signal and OS/browser speech-output self-tests are now present in the expanded HUD.
 - Add /ready contracts with structured reason codes, provider/model identity, and redacted guidance.
 - Add service supervision: startup timeout, readiness polling, process ownership, reconnect backoff, and no duplicate service processes.
 - Keep text entry usable while voice checks or model downloads fail.

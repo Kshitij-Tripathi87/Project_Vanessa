@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
-import type { MicrophoneTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
+import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
 
@@ -24,6 +24,9 @@ interface CompactAssistantProps {
   microphoneTestState: MicrophoneTestState;
   microphoneTestMessage: string;
   onTestMicrophone: () => void;
+  speechOutputTestState: SpeechOutputTestState;
+  speechOutputTestMessage: string;
+  onTestSpeechOutput: () => void;
   isMicActive: boolean;
   audioLevel: number;
   currentRequestId: string | null;
@@ -75,6 +78,9 @@ export function CompactAssistant({
   microphoneTestState,
   microphoneTestMessage,
   onTestMicrophone,
+  speechOutputTestState,
+  speechOutputTestMessage,
+  onTestSpeechOutput,
   isMicActive,
   audioLevel,
   currentRequestId,
@@ -173,6 +179,18 @@ export function CompactAssistant({
               {microphoneTestState === "testing" ? "Testing microphone…" : "Test microphone"}
             </button>
             {microphoneTestMessage && <p className={`mic-test-message mic-test-${microphoneTestState}`}>{microphoneTestMessage}</p>}
+            <div className="menu-divider" />
+            <div className="menu-title">Local speech fallback</div>
+            <div className="mic-test-row">
+              <span>Speech playback</span>
+              <span className={`mic-test-badge mic-test-${speechOutputTestState}`}>
+                {speechOutputTestState === "testing" ? "Playing…" : speechOutputTestState === "finished" ? "Playback ended" : speechOutputTestState === "error" ? "Needs attention" : "Not tested"}
+              </span>
+            </div>
+            <button className="menu-action" onClick={onTestSpeechOutput}>
+              {speechOutputTestState === "testing" ? "Restart speech test" : "Test local speech"}
+            </button>
+            {speechOutputTestMessage && <p className={`mic-test-message mic-test-${speechOutputTestState}`}>{speechOutputTestMessage}</p>}
             <div className="menu-divider" />
             <div className="menu-title">Dock position</div>
             <div className="dock-options" role="group" aria-label="Dock Vanessa to a screen corner">

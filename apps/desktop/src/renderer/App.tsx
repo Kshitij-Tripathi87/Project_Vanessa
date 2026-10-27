@@ -35,6 +35,9 @@ export function App() {
     microphoneTestState,
     microphoneTestMessage,
     testMicrophone,
+    speechOutputTestState,
+    speechOutputTestMessage,
+    testSpeechOutput,
     cancelVoice,
     submitTextCommand,
     voiceConnectionState,
@@ -172,6 +175,9 @@ export function App() {
       microphoneTestState={microphoneTestState}
       microphoneTestMessage={microphoneTestMessage}
       onTestMicrophone={() => void testMicrophone()}
+      speechOutputTestState={speechOutputTestState}
+      speechOutputTestMessage={speechOutputTestMessage}
+      onTestSpeechOutput={testSpeechOutput}
       isMicActive={isMicActive}
       audioLevel={audioLevel}
       currentRequestId={currentRequestId}
