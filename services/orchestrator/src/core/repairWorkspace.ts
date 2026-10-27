@@ -71,8 +71,9 @@ function isContained(parent: string, target: string): boolean {
  * branch, index, tracked files, or untracked files. Dirty base checkouts are
  * rejected rather than silently incorporating user work into a repair.
  *
- * Worktrees live under the repository's common Git metadata directory so the
- * worktree container itself does not make the base checkout appear dirty.
+ * Worktrees live in a dedicated sibling directory outside the base checkout.
+ * This avoids polluting the project tree and keeps worktree files out of user
+ * source paths. The base checkout must be clean before a repair is created.
  */
 export class RepairWorkspaceService {
   private readonly workspaces = new Map<string, RepairWorkspace>();
@@ -135,7 +136,6 @@ export class RepairWorkspaceService {
     // clean and worktree metadata/files remain outside user project files.
     const commonDirText = commonDirResult.stdout.trim();
     const commonDir = path.resolve(repositoryRoot, commonDirText);
-    await fs.mkdir(commonDir, { recursive: true });
     const parentDirectory = path.dirname(repositoryRoot);
     const repositoryName = safeToken(path.basename(repositoryRoot));
     const worktreesRoot = path.resolve(parentDirectory, `.vanessa-${repositoryName}-repair-worktrees`);
@@ -152,7 +152,7 @@ export class RepairWorkspaceService {
     const taskToken = safeToken(taskId);
     const nonce = randomUUID().slice(0, 12);
     const branchName = `vanessa/repair/${taskToken}-${nonce}`;
-    const worktreePath = path.resolve(worktreesRoot, `task-${taskToken}-${nonce}`);
+    const worktreePath = path.resolve(realWorktreesRoot, `task-${taskToken}-${nonce}`);
     if (!isContained(realWorktreesRoot, worktreePath)) {
       throw new RepairWorkspaceError("Resolved worktree path escapes the managed root.", "WORKTREE_VALIDATION_FAILED");
     }
