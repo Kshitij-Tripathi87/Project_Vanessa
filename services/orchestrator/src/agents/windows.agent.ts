@@ -2,6 +2,7 @@ import { runPowerShell } from "./powershell.js";
 import { executeWindowsAudio, type WindowsAudioRequest, type WindowsAudioResult } from "./windows-audio.js";
 import { executeWindowsControl, type WindowsControlRequest, type WindowsControlResult } from './windows-controls.js';
 import * as os from "node:os";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   AgentEvidence,
@@ -366,6 +367,8 @@ export class WindowsAgent implements SpecialistAgent {
     const psCommand = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height); $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); $bitmap.Save($env:VANESSA_SCREENSHOT); $graphics.Dispose(); $bitmap.Dispose()";
     try {
       await runPowerShell(psCommand, { VANESSA_SCREENSHOT: screenshotPath }, 10000);
+      const observed = fs.statSync(screenshotPath);
+      if (!observed.isFile() || observed.size <= 0) return { success: false, path: "" };
       return { success: true, path: screenshotPath };
     } catch {
       return { success: false, path: "" };
