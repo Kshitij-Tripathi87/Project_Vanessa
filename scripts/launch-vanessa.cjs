@@ -186,6 +186,12 @@ async function ensureLocalAsr(asr, reuse, reservedPorts) {
 }
 
 async function main() {
+  if (process.argv.includes('--doctor')) {
+    const { runCli } = require(path.join(root, 'scripts', 'doctor.cjs'));
+    const args = process.argv.slice(2).filter((arg) => arg !== '--doctor');
+    process.exitCode = await runCli(args);
+    return;
+  }
   if (process.argv.includes('--help')) {
     console.log(`Vanessa Windows launcher
 Usage: Launch-Vanessa.bat [options]
@@ -195,6 +201,7 @@ Usage: Launch-Vanessa.bat [options]
   --reuse-existing  Reuse healthy orchestrator/voice services; leave them running on exit.
                     Their environment/code may differ. Restart them to pick up changes.
   --codex-test      Require selected LLM/voice credentials and Codex CLI; reject FAKE=1.
+  --doctor          Run read-only setup diagnostics; add --live while Vanessa is running.
   --check           Check configuration/dependencies without building or starting services.
   --build-only      Build without starting services or requiring unused ports.
   --help            Show this help.

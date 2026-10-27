@@ -79,9 +79,14 @@ Use the canonical launcher to start the orchestrator, local Whisper WebSocket, v
 
 Optional diagnostics:
 
+    Launch-Vanessa.bat --doctor
+    Launch-Vanessa.bat --doctor --live
+    node scripts/doctor.cjs --json
     node scripts/launch-vanessa.cjs --check
     node scripts/launch-vanessa.cjs --build-only
     node scripts/launch-vanessa.cjs --text-only
+
+The read-only doctor checks the Windows/Node prerequisites, workspace packages, selected provider configuration, local speech runtime, and the configured local LLM/model. Use `--live` while Vanessa is running to check the orchestrator and voice gateway. It never prints `.env` values or claims microphone capture works; test the microphone by speaking into the running HUD.
 
 - Default local profile: PLANNER_PROVIDER=ollama, CONVERSATION_PROVIDER=ollama, VOICE_ASR_PROVIDER=whisper, and browser speech fallback. No provider API key is required.
 - If the microphone is denied or unavailable, Vanessa shows Windows/device troubleshooting steps and typed commands remain available.
