@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { Task, PermissionStatus } from "@vanessa/shared";
 import { eventBus } from "./eventBus.js";
 import { privacyGuard } from "./privacy.js";
+import { resolveManagedAction } from "./actionRegistry.js";
 
 export class PermissionGuard {
   // High-risk actions require confirmation unless autonomy is explicitly enabled.
@@ -46,6 +47,25 @@ export class PermissionGuard {
   ];
 
   check(task: Task, emitAudit = true): PermissionStatus {
+    const managed = resolveManagedAction(task.action, task.params || {});
+    if (managed.managed) {
+      if (managed.blocked) {
+        if (emitAudit) eventBus.emitEvent("audit:log", {
+          id: `policy-block-${Date.now()}`,
+          timestamp: Date.now(),
+          taskId: task.id,
+          agent: task.agent,
+          action: task.action,
+          resource: task.params?.path || task.params?.resource || "managed-execution",
+          risk: task.risk || "high",
+          permission: "blocked",
+          status: "blocked",
+          details: managed.reason || "Managed execution policy rejected the request.",
+        });
+        return "blocked";
+      }
+      if (managed.canonicalId) task.action = managed.canonicalId;
+    }
     const actionKey = task.action;
 
     // Match dangerous command text in both the action and parameters.
@@ -121,7 +141,7 @@ export class PermissionGuard {
 
     // Explicitly sensitive actions and any high-risk task always require a
     // fresh, per-task human approval. Global autonomy never overrides this.
-    if (this.confirmActions.has(actionKey) || task.risk === "high") {
+    if (managed.approvalRequired || this.confirmActions.has(actionKey) || task.risk === "high") {
       if (emitAudit) eventBus.emitEvent("audit:log", {
         id: `audit-${Date.now()}`,
         timestamp: Date.now(),
