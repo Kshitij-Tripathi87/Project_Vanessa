@@ -217,7 +217,7 @@ export class ProcessSupervisor {
       execFileAsync("git", ["diff", "--name-only"], { cwd, timeout: 5000, encoding: "utf8" }),
     ]);
     const actualDiffHash = createHash("sha256").update(diffResult.stdout).digest("hex");
-    const changedFiles = namesResult.stdout.split(/\\r?\\n/).map((value) => value.trim()).filter(Boolean);
+    const changedFiles = namesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     if (
       path.resolve(rootResult.stdout.trim()) !== cwd ||
       headResult.stdout.trim() !== workspace.baseCommit ||
