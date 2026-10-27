@@ -90,6 +90,9 @@ export class RepairWorkspaceService {
     if (typeof taskId !== "string" || !taskId.trim()) {
       throw new RepairWorkspaceError("A non-empty task ID is required.", "WORKTREE_VALIDATION_FAILED");
     }
+    if (this.workspaces.has(taskId)) {
+      throw new RepairWorkspaceError("This task already owns a repair workspace; a new task ID is required.", "WORKTREE_COLLISION");
+    }
 
     let repositoryRoot: string;
     try {
