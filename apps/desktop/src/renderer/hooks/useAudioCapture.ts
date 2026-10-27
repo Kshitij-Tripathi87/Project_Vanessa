@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { explainMicrophoneFailure } from "./microphoneDiagnostics.js";
+import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 
 export interface SentimentData {
@@ -28,6 +28,8 @@ export interface VoiceProviderStatus {
   tts: ProviderStatus;
 }
 
+export type MicrophoneTestState = "idle" | "testing" | "passed" | "silent" | "error";
+
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
   const ratio = inputSampleRate / 16000;
@@ -51,6 +53,8 @@ export function useAudioCapture() {
   const [liveSentiment, setLiveSentiment] = useState<SentimentData | null>(null);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [microphoneTestState, setMicrophoneTestState] = useState<MicrophoneTestState>("idle");
+  const [microphoneTestMessage, setMicrophoneTestMessage] = useState("");
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
   const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
 
@@ -470,6 +474,78 @@ export function useAudioCapture() {
     return true;
   }, [connectVoiceWs, dispatchTextCommand, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
 
+  // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
+  const testMicrophone = useCallback(async () => {
+    if (microphoneTestState === "testing") return;
+    if (mediaStreamRef.current || pttActiveRef.current) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage("Finish the current voice turn before testing the microphone.");
+      return;
+    }
+
+    setMicrophoneTestState("testing");
+    setMicrophoneTestMessage("Speak normally for about two seconds. Test audio stays on this device and is not sent to Vanessa or a speech provider.");
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let silentGain: GainNode | null = null;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        const error = new Error("Microphone capture API is unavailable.");
+        error.name = "NotSupportedError";
+        throw error;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        const error = new Error("Web Audio is unavailable.");
+        error.name = "AudioContextUnavailableError";
+        throw error;
+      }
+      context = new AudioCtx();
+      if (context.state === "suspended") await context.resume();
+
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      silentGain = context.createGain();
+      silentGain.gain.value = 0; // Keep the graph active without monitoring mic audio through speakers.
+      source.connect(analyser);
+      analyser.connect(silentGain);
+      silentGain.connect(context.destination);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      const deadline = Date.now() + 1600;
+      let signalDetected = false;
+      let peak = 0;
+      while (Date.now() < deadline) {
+        analyser.getByteTimeDomainData(samples);
+        const measurement = measureMicrophoneSignal(samples);
+        peak = Math.max(peak, measurement.peak);
+        if (hasMicrophoneSignal(measurement)) signalDetected = true;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+      }
+
+      if (signalDetected) {
+        setMicrophoneTestState("passed");
+        setMicrophoneTestMessage(`Microphone input signal detected (peak ${Math.round(peak * 100)}%). This verifies capture only; speech recognition is checked by a real voice command.`);
+      } else {
+        setMicrophoneTestState("silent");
+        setMicrophoneTestMessage("The microphone opened, but no input signal was detected. Unmute it and check Windows Settings → System → Sound → Input while speaking, then retry.");
+      }
+    } catch (error) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage(explainMicrophoneFailure(error));
+    } finally {
+      try { source?.disconnect(); } catch {}
+      try { analyser?.disconnect(); } catch {}
+      try { silentGain?.disconnect(); } catch {}
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context && context.state !== "closed") await context.close().catch(() => {});
+    }
+  }, [microphoneTestState]);
+
   // Start live microphone capture
   const startRecording = useCallback(async () => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
@@ -720,6 +796,9 @@ export function useAudioCapture() {
     partialTranscript,
     providerStatus,
     micError,
+    microphoneTestState,
+    microphoneTestMessage,
+    testMicrophone,
     voiceConnectionState,
     submitTextCommand,
     cancelVoice,

@@ -27,3 +27,25 @@ export function explainMicrophoneFailure(error: unknown): string {
       return "Vanessa could not start microphone capture. Check Windows microphone privacy settings and the selected input device, then retry. Typed commands remain available.";
   }
 }
+
+
+/** RMS and peak for Web Audio's unsigned 8-bit time-domain samples (silence is near 128). */
+export function measureMicrophoneSignal(samples: ArrayLike<number>): { rms: number; peak: number } {
+  if (!samples || !Number.isFinite(samples.length) || samples.length <= 0) return { rms: 0, peak: 0 };
+  let squaredSum = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const raw = Number(samples[i]);
+    if (!Number.isFinite(raw)) continue;
+    const sample = Math.max(-1, Math.min(1, (raw - 128) / 128));
+    squaredSum += sample * sample;
+    peak = Math.max(peak, Math.abs(sample));
+  }
+  return { rms: Math.sqrt(squaredSum / samples.length), peak };
+}
+
+/** Conservative thresholds reject digital silence but work for ordinary speech near a laptop mic. */
+export function hasMicrophoneSignal(measurement: { rms: number; peak: number }): boolean {
+  return Number.isFinite(measurement.rms) && Number.isFinite(measurement.peak) &&
+    (measurement.rms >= 0.012 || measurement.peak >= 0.06);
+}
