@@ -61,6 +61,8 @@ export function useAudioCapture() {
   const [speechOutputTestMessage, setSpeechOutputTestMessage] = useState("");
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
   const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
+  const [wakeWordModeAvailable, setWakeWordModeAvailable] = useState(false);
+  const [wakeWordActive, setWakeWordActive] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -73,6 +75,8 @@ export function useAudioCapture() {
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
   const pttActiveRef = useRef(false);
+  const wakeWordModeRef = useRef(false);
+  const wakeWordStartupAttemptedRef = useRef(false);
   const activatedSocketRef = useRef<WebSocket | null>(null);
   const preRollRef = useRef<ArrayBuffer[]>([]);
   const pendingBargeAudioRef = useRef<ArrayBuffer[]>([]);
@@ -141,7 +145,7 @@ export function useAudioCapture() {
           activeSourceNodeRef.current = null;
           if (item.isFinal) {
             setVoiceState("idle");
-            if (!pttActiveRef.current) stopCaptureRef.current?.(true);
+            if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
           }
           playNextInQueue();
         };
@@ -164,7 +168,7 @@ export function useAudioCapture() {
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
-          if (!pttActiveRef.current) stopCaptureRef.current?.(true);
+          if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
@@ -173,7 +177,7 @@ export function useAudioCapture() {
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
-          if (!pttActiveRef.current) stopCaptureRef.current?.(true);
+          if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
@@ -183,7 +187,7 @@ export function useAudioCapture() {
       isPlayingQueueRef.current = false;
       if (item.isFinal) {
         setVoiceState("idle");
-        if (!pttActiveRef.current) stopCaptureRef.current?.(true);
+        if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
       }
       playNextInQueue();
     }
@@ -268,6 +272,9 @@ export function useAudioCapture() {
     };
 
     ws.onerror = () => {
+      wakeWordModeRef.current = false;
+      wakeWordStartupAttemptedRef.current = false;
+      setWakeWordActive(false);
       setVoiceConnectionState("disconnected");
       setMicError("Vanessa voice service is unavailable. Start the voice agent and try again.");
       pttActiveRef.current = false;
@@ -280,6 +287,17 @@ export function useAudioCapture() {
 
           if (msg.type === "session_ready" && msg.providers) {
             setProviderStatus(msg.providers);
+            setWakeWordModeAvailable(msg.wakeWord?.enabled === true && msg.wakeWord?.mode === "local-whisper");
+            if (msg.wakeWord?.enabled !== true || msg.wakeWord?.mode !== "local-whisper") {
+              wakeWordModeRef.current = false;
+              setWakeWordActive(false);
+            }
+            return;
+          }
+
+          if (msg.type === "wake_word_ready" && msg.enabled === true && msg.mode === "local-whisper") {
+            setWakeWordActive(true);
+            setMicError(null);
             return;
           }
 
@@ -315,6 +333,8 @@ export function useAudioCapture() {
           if (msg.type === "voice_error") {
             pttActiveRef.current = false;
             activatedSocketRef.current = null;
+            wakeWordModeRef.current = false;
+            setWakeWordActive(false);
             stopCaptureRef.current?.();
             setMicError(msg.message || "Speech recognition could not start.");
             setVoiceState("error");
@@ -393,6 +413,9 @@ export function useAudioCapture() {
 
     ws.onclose = () => {
       if (wsRef.current === ws) {
+        wakeWordModeRef.current = false;
+        wakeWordStartupAttemptedRef.current = false;
+        setWakeWordActive(false);
         stopCaptureRef.current?.();
         setVoiceConnectionState("disconnected");
         setMicError("Voice connection closed. Reconnecting; press push-to-talk to start a new turn.");
@@ -502,7 +525,7 @@ export function useAudioCapture() {
   // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
   const testMicrophone = useCallback(async () => {
     if (microphoneTestState === "testing") return;
-    if (mediaStreamRef.current || pttActiveRef.current) {
+    if (pttActiveRef.current) {
       setMicrophoneTestState("error");
       setMicrophoneTestMessage("Finish the current voice turn before testing the microphone.");
       return;
@@ -684,7 +707,8 @@ export function useAudioCapture() {
           pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
         }
         const audioFrame = pcmBuffer.buffer.slice(pcmBuffer.byteOffset, pcmBuffer.byteOffset + pcmBuffer.byteLength);
-        if (pttActiveRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+        const ambientWakeListening = wakeWordModeRef.current && !["thinking", "executing", "responding", "speaking"].includes(voiceStateRef.current);
+        if ((pttActiveRef.current || ambientWakeListening) && wsRef.current?.readyState === WebSocket.OPEN) {
           if (bargeResumePendingRef.current) {
             pendingBargeAudioRef.current.push(audioFrame);
             if (pendingBargeAudioRef.current.length > 80) pendingBargeAudioRef.current.shift();
@@ -741,6 +765,23 @@ export function useAudioCapture() {
     }
   }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
 
+  useEffect(() => {
+    if (!wakeWordModeAvailable || voiceConnectionState !== "connected" || wakeWordStartupAttemptedRef.current) return;
+    wakeWordStartupAttemptedRef.current = true;
+    wakeWordModeRef.current = true;
+    void startRecording().then(() => {
+      const socket = wsRef.current;
+      if (mediaStreamRef.current && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "enable_wake_word" }));
+      } else {
+        wakeWordModeRef.current = false;
+        setWakeWordActive(false);
+        setMicError("Wake-word listening could not start. Allow microphone access in Windows Settings, then click the orb to retry voice input.");
+        wakeWordStartupAttemptedRef.current = false;
+      }
+    });
+  }, [wakeWordModeAvailable, voiceConnectionState, startRecording]);
+
   // Stop microphone capture
   const stopRecording = useCallback((preservePlaybackContext = false) => {
     pttActiveRef.current = false;
@@ -788,7 +829,7 @@ export function useAudioCapture() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "deactivate" }));
     }
-    stopRecording();
+    if (!wakeWordModeRef.current) stopRecording();
     setVoiceState("idle");
   }, [setVoiceState, stopRecording]);
 
@@ -863,6 +904,7 @@ export function useAudioCapture() {
     speechOutputTestMessage,
     testSpeechOutput,
     voiceConnectionState,
+    wakeWordActive,
     submitTextCommand,
     cancelVoice,
     startRecording,
