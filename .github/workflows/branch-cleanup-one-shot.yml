@@ -1,0 +1,68 @@
+name: One-time cleanup of already-merged branches
+
+on:
+  push:
+    branches:
+      - Vanessa-Prototype-1-MAIN
+
+permissions:
+  contents: write
+
+jobs:
+  prune-verified-merged-branches:
+    if: startsWith(github.event.head_commit.message, 'chore: one-time prune merged branches')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact target commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete only fully merged branches with no open PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          open_heads="$(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" --jq '.[].head.ref')"
+          branches=(
+            "feature/anshika-codingAgent"
+            "feature/anshika-windows-agent"
+            "feature/renish/Protorype-1/Shift-to-NVIDIA-Deepseek"
+            "feature/renish/main/test-codex-agent-with-main"
+            "feature/renish/orchestration-pipeline-init-coding"
+            "fix/desktop-orb-task-panel"
+            "fix/desktop-orb-task-panel-atomic"
+            "feat/managed-codex-task-runner"
+            "feat/windows-bootstrap-release"
+            "feat/windows-first-run-doctor"
+            "fix/local-readiness-provider-defaults"
+            "fix/whisper-model-cache-preflight"
+            "renish-proto-backup"
+          )
+
+          for branch in "${branches[@]}"; do
+            if grep -Fxq "$branch" <<<"$open_heads"; then
+              echo "SKIP $branch: it is the head of an open PR"
+              continue
+            fi
+
+            if ! git fetch --no-tags origin "refs/heads/${branch}"; then
+              echo "SKIP $branch: branch no longer exists or could not be fetched"
+              continue
+            fi
+            branch_sha="$(git rev-parse FETCH_HEAD)"
+
+            if ! git merge-base --is-ancestor "$branch_sha" "$TARGET_SHA"; then
+              echo "SKIP $branch: tip is not an ancestor of the target commit"
+              continue
+            fi
+
+            if gh api --silent --method DELETE "repos/${REPO}/git/refs/heads/${branch}"; then
+              echo "DELETED $branch (tip ${branch_sha} is contained in target)"
+            else
+              echo "::warning::Could not delete $branch; check repository permissions or branch protection."
+            fi
+          done
