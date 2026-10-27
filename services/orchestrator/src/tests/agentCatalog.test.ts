@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { AGENT_CATALOG, catalogAccepts, getCatalogAction, renderAgentCatalog } from "../agents/agentCatalog.js";
 import { resolvePlannerWorkspace } from "../core/contextBuilder.js";
 
-test("canonical catalog excludes legacy coding/incident routing and documents Codex's launch boundary", () => {
-  assert(!AGENT_CATALOG.some((agent) => ["coding", "incident"].includes(agent.id)));
+test("catalog exposes isolated repair and disables unsafe autonomous coding", () => {
+  assert(AGENT_CATALOG.some((agent) => agent.id === "coding"));\n  assert(!AGENT_CATALOG.some((agent) => agent.id === "incident"));
   const codex = getCatalogAction("developer", "codex.open");
   assert(codex?.selectable);
   assert.equal(codex.risk, "high");
@@ -18,10 +18,10 @@ test("canonical catalog excludes legacy coding/incident routing and documents Co
   assert.match(prompt, /prompt \(string, required\)/);
   assert.match(prompt, /completed CLI turn is execution evidence only/i);
   const managed = getCatalogAction("developer", "codex.run_task");
-  assert(managed?.selectable);
+  assert.equal(managed?.selectable, false);
   assert.equal(managed?.risk, "high");
-  assert.match(managed?.returns || "", /not independent verification/i);
-  assert(catalogAccepts("developer", "codex.run_task", {
+  assert.match(managed?.returns || "", /Blocked before autonomous coding begins/i);
+  assert(!catalogAccepts("developer", "codex.run_task", {
     projectPath: "C:/repo",
     prompt: "Add regression coverage",
     expectedBranch: "feature/work",
