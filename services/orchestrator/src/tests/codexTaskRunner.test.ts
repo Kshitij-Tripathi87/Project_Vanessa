@@ -33,7 +33,7 @@ function fixture(options: {
       calls.file = file;
       calls.args = args;
       calls.spawnOptions = spawnOptions;
-      const proc = new EventEmitter() as ChildProcess;
+      const proc = new EventEmitter() as unknown as ChildProcess;
       const stdout = new PassThrough();
       const stderr = new PassThrough();
       let terminated = false;
