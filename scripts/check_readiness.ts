@@ -4,7 +4,8 @@ import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
-const { launcherConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./launcher-config.cjs");
+const { buildReadinessConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./readiness-config.cjs");
+const { probeOllama } = createRequire(path.join(__dirname, "check_readiness.ts"))("./ollama-readiness.cjs");
 
 // Load .env
 let envDir = process.cwd();
@@ -20,7 +21,7 @@ for (let i = 0; i < 4; i++) {
 interface ServiceCheck {
   name: string;
   port: number;
-  protocol: "http" | "ws";
+  protocol: "http" | "ws" | "ollama";
   url: string;
   status: "ONLINE" | "OFFLINE" | "DEGRADED";
   latencyMs: number;
@@ -58,20 +59,22 @@ async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; st
   const start = Date.now();
   return new Promise((resolve) => {
     let finished = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const socket = new WebSocket(url, { handshakeTimeout: timeoutMs });
 
     const finish = (ok: boolean, statusText: string) => {
       if (finished) return;
       finished = true;
+      if (timer) clearTimeout(timer);
       try {
         socket.close();
       } catch {}
       resolve({ ok, statusText, latencyMs: Date.now() - start });
     };
 
-    socket.on("open", () => finish(true, "CONNECTED"));
-    socket.on("error", (err: Error) => finish(false, err.message));
-    setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
+    socket.once("open", () => finish(true, "CONNECTED"));
+    socket.once("error", (err: Error) => finish(false, err.message));
+    timer = setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
   });
 }
 
@@ -80,15 +83,18 @@ async function main() {
   console.log("     VANESSA SERVICE STACK READINESS PROBE       ");
   console.log("==================================================\n");
 
+  // Use the same normalized provider defaults as launch-vanessa.cjs. The readiness
+  // probe must not silently report Fish/Gemini when a clean install uses local Whisper/Ollama.
+  const config = buildReadinessConfig(process.env, process.cwd(), fs.existsSync);
   const orchestratorPort = Number(process.env.VANESSA_PORT || 4319);
   const voiceAgentPort = Number(process.env.VOICE_AGENT_PORT || 4500);
-  const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
+  const localAsrUrl = config.localAsrUrl;
   const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
   const relayPort = Number(process.env.RELAY_PORT || process.env.PORT || 4400);
-  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
-  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
+  const asrProvider = config.asrProvider;
+  const ttsProvider = config.ttsProvider;
   const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
-  const usesLocalAsr = ["voice", "whisper"].includes(asrProvider) || (asrProvider === "fish" && fallbackEnabled);
+  const usesLocalAsr = config.usesLocalAsr;
 
   const services: ServiceCheck[] = [
     {
@@ -120,6 +126,20 @@ async function main() {
     },
   ];
 
+  if (config.usesOllama) {
+    let ollamaPort = 11434;
+    try { ollamaPort = Number(new URL(config.ollamaBaseUrl).port || 11434); } catch { /* probe reports invalid endpoint */ }
+    services.splice(0, 0, {
+      name: "Local Ollama",
+      port: ollamaPort,
+      protocol: "ollama",
+      url: config.ollamaBaseUrl,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    });
+  }
+
   if (usesLocalAsr) {
     services.splice(2, 0, {
       name: "Local Whisper ASR",
@@ -134,7 +154,12 @@ async function main() {
 
   const selectedServices = services.filter(s => s.name !== "Mobile Relay WSS" || process.env.VANESSA_REQUIRE_RELAY === "true");
   for (const s of selectedServices) {
-    if (s.protocol === "http") {
+    if (s.protocol === "ollama") {
+      const res = await probeOllama(config.ollamaBaseUrl, config.ollamaModel);
+      s.status = res.status;
+      s.latencyMs = res.latencyMs;
+      s.details = res.message;
+    } else if (s.protocol === "http") {
       const res = await checkHttp(s.url);
       s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
       s.latencyMs = res.latencyMs;
@@ -160,7 +185,7 @@ async function main() {
   console.log("--------------------------------------------------------------------------------");
 
   for (const s of selectedServices) {
-    const statusIcon = s.status === "ONLINE" ? "🟢" : "🔴";
+    const statusIcon = s.status === "ONLINE" ? "🟢" : s.status === "DEGRADED" ? "🟡" : "🔴";
     console.log(
       `${statusIcon} ${s.name.padEnd(21)}` +
       `${s.port}`.padEnd(8) +
@@ -199,8 +224,8 @@ async function main() {
   }
   console.log(`- Local ASR: ${usesLocalAsr ? `${localAsrUrl} (selected)` : "not selected for the active ASR provider"}`);
 
-  const config = launcherConfig(process.env, [], process.cwd(), fs.existsSync);
-  console.log(`- Planner: ${process.env.SARVAM_CHAT_PROVIDER || process.env.PLANNER_PROVIDER || "gemini"}`);
+  console.log(`- Planner: ${config.plannerProvider}`);
+  console.log(`- Conversation: ${config.conversationProvider}`);
   console.log(`- Selected-provider configuration: ${config.missing.length ? "INCOMPLETE" : "configured (not live-provider verification)"}`);
   for (const missing of config.missing) console.log(`  Missing: ${missing}`);
   const onlineCount = selectedServices.filter((s) => s.status === "ONLINE").length;
