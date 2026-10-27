@@ -209,8 +209,21 @@ export class CodingAgent implements SpecialistAgent {
   async gitStatus(_ctx?: AgentRunContext): Promise<AgentResult> {
     const result = await execFileAsync("git", ["status", "--short"], {
       cwd: this.workspaceRoot, timeout: 5000, windowsHide: true, encoding: "utf8" });
-    return { agentId: this.id, status: "completed", success: true, summary: "Git status retrieved",
-      spokenSummary: "Git status checked.", evidence: [], artifacts: [], data: { status: result.stdout.trim() } };
+    const status = result.stdout.trim();
+    const detail = "Git status was captured from the current repository; this is read-only evidence.";
+    return {
+      agentId: this.id, status: "completed", success: true, summary: detail, spokenSummary: detail,
+      evidence: [{
+        description: detail,
+        source: "git status --short",
+        timestamp: new Date().toISOString(),
+        confidence: 1,
+        data: { repositoryRoot: this.workspaceRoot, status },
+      }],
+      artifacts: [],
+      verification: { passed: true, details: detail },
+      data: { outcome: "status_observed", repositoryRoot: this.workspaceRoot, status },
+    };
   }
 
   async gitDiff(target: string, _ctx?: AgentRunContext): Promise<AgentResult> {
@@ -221,8 +234,20 @@ export class CodingAgent implements SpecialistAgent {
     }
     const result = await execFileAsync("git", ["diff", "--no-ext-diff", "--", target], {
       cwd: this.workspaceRoot, timeout: 5000, maxBuffer: 512 * 1024, windowsHide: true, encoding: "utf8" });
-    return { agentId: this.id, status: "completed", success: true, summary: "Git diff retrieved",
-      spokenSummary: "Git diff checked.", evidence: [], artifacts: [], data: { diff: result.stdout } };
+    const detail = "A scoped Git diff was captured. A diff being present does not prove the change is correct.";
+    return {
+      agentId: this.id, status: "completed", success: true, summary: detail, spokenSummary: detail,
+      evidence: [{
+        description: detail,
+        source: `git diff --no-ext-diff -- ${target}`,
+        timestamp: new Date().toISOString(),
+        confidence: 1,
+        data: { repositoryRoot: this.workspaceRoot, target, diff: result.stdout },
+      }],
+      artifacts: [],
+      verification: { passed: true, details: detail },
+      data: { outcome: "diff_observed", repositoryRoot: this.workspaceRoot, target, diff: result.stdout },
+    };
   }
 
 
