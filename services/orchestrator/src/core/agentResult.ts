@@ -1,6 +1,6 @@
 import type { Task } from "@vanessa/shared";
 
-export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" {
+export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" | "blocked" {
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
@@ -10,6 +10,37 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
 
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
+  const resultData = structured?.data && typeof structured.data === "object" ? structured.data as Record<string, any> : {};
+
+  // Explicit non-success states are handled before the generic success:false
+  // branch so "blocked" and "inconclusive" are not collapsed into a test failure.
+  if (structured?.status === "blocked" || resultData.outcome === "blocked") {
+    const detail = verificationDetails || structured?.error || structured?.summary || "Execution was blocked by policy.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: 1,
+      artifacts: task.artifacts,
+      outcome: "blocked",
+      details: detail,
+    };
+    task.error = typeof structured?.error === "string" ? structured.error : detail;
+    return "blocked";
+  }
+
+  if (resultData.outcome === "inconclusive" || resultData.outcome === "simulated") {
+    const detail = verificationDetails || structured?.error || structured?.summary ||
+      (resultData.outcome === "simulated" ? "Simulated output is not evidence of a real execution." : "Required verification evidence was not established.");
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: undefined,
+      artifacts: task.artifacts,
+      outcome: resultData.outcome === "simulated" ? "simulated" : "inconclusive",
+      details: detail,
+    };
+    return "partial";
+  }
 
   // Opening an interactive coding terminal is a handoff, not proof that code was
   // written or tested. Keep that distinction even if the launcher itself worked.
