@@ -348,10 +348,19 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   const dependenciesReady = (task.dependsOn || []).every((id) => activeTasks.get(id)?.status === "success");
   const permission = permissionGuard.check(task, false);
-  const currentApprovalDigest = task.approvalExpiresAt
-    ? computeApprovalDigest(task, task.approvalExpiresAt)
-    : "";
-  const approvalInvalid = !task.approvalDigest ||
+  let currentApprovalDigest = "";
+  let approvalDigestError = "";
+  try {
+    currentApprovalDigest = task.approvalExpiresAt
+      ? computeApprovalDigest(task, task.approvalExpiresAt)
+      : "";
+  } catch (error: any) {
+    approvalDigestError = typeof error?.message === "string"
+      ? error.message
+      : "The approved operation could not be revalidated against the current repository state.";
+  }
+  const approvalInvalid = Boolean(approvalDigestError) ||
+    !task.approvalDigest ||
     task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
     task.approvalConsumedAt !== undefined ||
     currentApprovalDigest !== task.approvalDigest;
@@ -361,10 +370,12 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     task.error = isKillSwitchEngaged
       ? "Approval cancelled by emergency kill switch."
       : !dependenciesReady
-      ? "Approval expired because prerequisite tasks are not verified as successful."
-      : approvalInvalid
-        ? "Approval binding is missing, expired, reused, or no longer matches the exact operation."
-        : "Approval rejected because the safety policy now blocks this task.";
+      ? "Approval rejected because prerequisite tasks are not verified as successful."
+      : approvalDigestError
+        ? `Approval rejected because the target could not be safely revalidated: ${approvalDigestError}`
+        : approvalInvalid
+          ? "Approval binding is missing, expired, reused, or no longer matches the exact operation."
+          : "Approval rejected because the safety policy now blocks this task.";
     task.completedAt = Date.now();
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
     eventBus.emitEvent("audit:log", {
@@ -666,7 +677,36 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       task.approvalExpiresAt = Date.now() + 5 * 60_000;
       task.approvalPolicyVersion = APPROVAL_POLICY_VERSION;
       task.approvalConsumedAt = undefined;
-      task.approvalDigest = computeApprovalDigest(task, task.approvalExpiresAt);
+      try {
+        task.approvalDigest = computeApprovalDigest(task, task.approvalExpiresAt);
+      } catch (error: any) {
+        task.status = "blocked";
+        task.lifecycleState = "blocked";
+        task.error = typeof error?.message === "string"
+          ? `Approval request was blocked: ${error.message}`
+          : "Approval request was blocked because the target could not be safely validated.";
+        task.completedAt = Date.now();
+        task.verification = {
+          verified: false,
+          postconditions: [task.error, "No approval was requested and no process was started."],
+          outcome: "blocked",
+          details: task.error,
+        };
+        memoryPalace.recordTaskCheckpoint(task, plan.id);
+        eventBus.emitEvent("audit:log", {
+          id: `approval-create-blocked-${Date.now()}`,
+          timestamp: Date.now(),
+          taskId: task.id,
+          agent: task.agent,
+          action: task.action,
+          risk: task.risk || "high",
+          permission: "blocked",
+          status: "blocked",
+          details: task.error,
+        });
+        eventBus.emitEvent("task:update", task);
+        return;
+      }
       memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("approval:required", task);
       eventBus.emitEvent("task:update", task);
