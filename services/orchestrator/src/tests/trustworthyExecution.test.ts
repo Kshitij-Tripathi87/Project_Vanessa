@@ -10,6 +10,7 @@ import { parseRegressionSummary, validateRegressionRequest, validateTestingAppro
 import { CodingAgent } from "../agents/coding.agent.js";
 import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
+import { VanessaAgent } from "../agents/openjarvis.agent.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
@@ -155,6 +156,46 @@ test("agent-local dispatch blocks unknown actions and direct autonomous Codex ex
   assert.equal(directLaunch.status, "blocked");
   assert.equal(directLaunch.data?.processStarted, false);
 });
+test("legacy OpenJarvis/Vanessa shell, tool, status, schedule and goal aliases fail closed", async () => {
+  const agent = new VanessaAgent();
+  const requests: Array<{ action: string; params: Record<string, unknown> }> = [
+    { action: "openjarvis.shell", params: { command: "echo should-not-run" } },
+    { action: "vanessa.shell", params: { command: "echo should-not-run" } },
+    { action: "tools.run_tool", params: { tool: "shell_exec", params: { command: "echo should-not-run" } } },
+    { action: "connector.run_goal", params: { goal: "run a shell command", tools: ["shell_exec"] } },
+    { action: "jarvis.schedule_create", params: { prompt: "execute a shell command", tools: "shell_exec" } },
+    { action: "vanessa.tool.shell_exec", params: { command: "echo should-not-run" } },
+    { action: "openjarvis.status", params: {} },
+  ];
+
+  for (const request of requests) {
+    const result = await agent.execute(request.action, request.params);
+    assert.equal(result.status, "blocked", request.action);
+    assert.equal(result.success, false, request.action);
+    assert.equal(result.data?.processStarted, false, request.action);
+  }
+
+  // Public compatibility methods must also be inert if called directly.
+  const directTool = await agent.runTool("shell_exec", { command: "echo should-not-run" });
+  assert.equal(directTool.status, "blocked");
+  assert.equal(directTool.data?.processStarted, false);
+  const directBridge = await agent.runBridge("run_tool", { tool: "shell_exec", params: { command: "echo should-not-run" } });
+  assert.equal(directBridge.status, "blocked");
+  assert.equal(directBridge.data?.processStarted, false);
+
+  assert.equal(resolveManagedAction("vanessa.ask", { query: "Explain the current task." }).blocked, undefined);
+  assert.equal(resolveManagedAction("vanessa.ask", { query: "Explain the current task.", command: "echo unsafe" }).blocked, true);
+});
+
+test("incident memory retrieval reports the unmanaged Python bridge as disabled", async () => {
+  const result = await new IncidentAgent().retrieveMemoryAndRunbook({});
+  assert.equal(result.findings.memoryRetrieved, false);
+  assert.equal(result.findings.memoryRetrievalStatus, "disabled");
+  assert.equal(result.findings.memoryProcessStarted, false);
+  assert.match(String(result.findings.memoryRetrievalError), /registered process supervisor/i);
+  assert.equal((result.findings.sourcesUsed as string[]).includes("local-memory"), false);
+});
+
 test("real worktree runner binds to the patch digest, redacts output, and kills timed-out process trees", async () => {
   const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-trust-test-"));
   const repositoryRoot = path.join(tempRoot, "fixture-repo");
