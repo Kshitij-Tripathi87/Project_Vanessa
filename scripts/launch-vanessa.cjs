@@ -53,7 +53,7 @@ function run(stage, executable, args, cwd = root) {
 function startService(stage, entry, args = [], executable = process.execPath, options = {}) {
   const fatalOnExit = options.fatalOnExit !== false;
   log(stage, 'Starting managed process');
-  const child = spawn(executable, [entry, ...args], { cwd: root, env: process.env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(executable, [entry, ...args], { cwd: options.cwd || root, env: process.env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(child);
   attachOutput(child, stage);
   child.once('error', (error) => {
@@ -219,20 +219,24 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   if (process.platform !== 'win32') throw new Error('Use this launcher on Windows.');
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required.');
   process.chdir(root);
-  const envPath = path.join(root, '.env');
+  const configHome = path.resolve(process.env.VANESSA_CONFIG_HOME || root);
+  fs.mkdirSync(configHome, { recursive: true });
+  const envPath = path.join(configHome, '.env');
   const dotenv = require('dotenv');
   const hasEnv = fs.existsSync(envPath);
   const parsed = hasEnv ? dotenv.parse(fs.readFileSync(envPath)) : {};
-  // Root .env is authoritative for this launch, including all child processes.
   Object.assign(process.env, parsed);
   secrets = Object.entries(process.env).filter(([key, value]) => /KEY|TOKEN|SECRET|PASSWORD/i.test(key) && value?.length >= 6).map(([, value]) => value);
-  const logDir = path.join(root, 'logs', 'launcher');
+  const logDir = path.join(configHome, 'logs', 'launcher');
   fs.mkdirSync(logDir, { recursive: true });
   logFile = path.join(logDir, `vanessa-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
-  log('1/5 ENV', hasEnv ? 'Loaded root .env; credentials are not printed.' : 'No root .env; using inherited environment. See .env.example for configuration.');
-  if (hasEnv) log('1/5 ENV', `File last changed=${fs.statSync(envPath).mtime.toISOString()}; restart required after .env edits.`);
+  log('1/5 ENV', hasEnv ? 'Loaded per-user .env; credentials are not printed.' : 'No per-user .env; first-run setup creates a local profile.');
+  if (hasEnv) log('1/5 ENV', `Configuration last changed=${fs.statSync(envPath).mtime.toISOString()}; restart required after edits.`);
   log('Launcher', `Log file: ${logFile}`);
   const config = launcherConfig(process.env, process.argv.slice(2), root, fs.existsSync);
+  const workspaceRoot = path.resolve(process.env.VANESSA_WORKSPACE_ROOT || root);
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  process.chdir(workspaceRoot);
   // Apply no-key defaults to every managed child process. Explicit settings in
   // the user's .env remain authoritative.
   process.env.VOICE_ASR_PROVIDER ||= config.asr;
@@ -269,7 +273,8 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   const codex = spawnSync('where.exe', ['codex'], { encoding: 'utf8', windowsHide: true });
   if (codex.status !== 0 && config.strict) throw new Error('Codex CLI not found on PATH. Add the installed Codex CLI directory to PATH and reopen the terminal.');
   log('1/5 ENV', codex.status === 0 ? 'Codex CLI found; authentication is checked on handoff.' : 'Codex CLI not found; other agents can still run. Coding handoffs require Codex on PATH.');
-  const tsc = require.resolve('typescript/bin/tsc');
+  const installedMode = process.env.VANESSA_INSTALLED_MODE === '1';
+  const tsc = installedMode ? undefined : require.resolve('typescript/bin/tsc');
   const vite = path.join(path.dirname(require.resolve('vite/package.json', { paths: [path.join(root, 'apps/desktop')] })), 'bin', 'vite.js');
   const electron = require(require.resolve('electron', { paths: [path.join(root, 'apps/desktop')] }));
   if (!fs.existsSync(electron)) throw new Error('Electron executable is missing. Restore workspace dependencies.');
@@ -287,16 +292,22 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
     }
     await assertPortFree(5173);
   }
-  log('2/5 BUILD', 'Building shared contracts, orchestrator, voice service, and desktop. pnpm is not needed at launch when dependencies are installed.');
-  for (const project of ['packages/shared', 'services/orchestrator', 'services/voice-agent']) {
-    await run(`Build ${project}`, process.execPath, [tsc, '-p', path.join(project, 'tsconfig.json')]);
+  if (installedMode) {
+    const requiredOutputs = ['packages/shared/dist/index.js','services/orchestrator/dist/server.js','services/voice-agent/dist/server.js','apps/desktop/dist/main/index.js','apps/desktop/dist/renderer/index.html'];
+    const missingOutputs = requiredOutputs.filter((file) => !fs.existsSync(path.join(root, file)));
+    if (missingOutputs.length) throw new Error(`Installed build output is missing (${missingOutputs.join(', ')}). Run Vanessa Setup/Repair from the install directory.`);
+    log('2/5 BUILD', 'Installed application build is ready; using prebuilt assets.');
+  } else {
+    log('2/5 BUILD', 'Building shared contracts, orchestrator, voice service, and desktop.');
+    for (const project of ['packages/shared', 'services/orchestrator', 'services/voice-agent']) {
+      await run(`Build ${project}`, process.execPath, [tsc, '-p', path.join(project, 'tsconfig.json')]);
+    }
+    fs.copyFileSync(path.join(root, 'services/orchestrator/src/agents/codex-terminal.cjs'), path.join(root, 'services/orchestrator/dist/agents/codex-terminal.cjs'));
+    log('2/5 BUILD', 'Codex terminal helper copied to build output.');
+    await run('Build desktop types', process.execPath, [tsc, '-p', 'apps/desktop/tsconfig.json']);
+    await run('Build desktop main', process.execPath, [tsc, '-p', 'apps/desktop/tsconfig.node.json']);
+    await run('Build renderer', process.execPath, [vite, 'build', '--config', 'apps/desktop/vite.config.ts']);
   }
-  // TypeScript does not copy the fixed native-terminal helper into dist.
-  fs.copyFileSync(path.join(root, 'services/orchestrator/src/agents/codex-terminal.cjs'), path.join(root, 'services/orchestrator/dist/agents/codex-terminal.cjs'));
-  log('2/5 BUILD', 'Codex terminal helper copied to build output.');
-  await run('Build desktop types', process.execPath, [tsc, '-p', 'apps/desktop/tsconfig.json']);
-  await run('Build desktop main', process.execPath, [tsc, '-p', 'apps/desktop/tsconfig.node.json']);
-  await run('Build renderer', process.execPath, [vite, 'build', '--config', 'apps/desktop/vite.config.ts']);
   if (process.argv.includes('--build-only')) {
     log('Launcher', 'Build validation passed. No services started.');
     return;
@@ -310,14 +321,18 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
       log('LOCAL ASR DEGRADED', `${detail} Speech input may be unavailable; the desktop and typed commands will continue. Run scripts\\setup_windows.ps1 to repair local speech.`);
     }
   }
+  const orchestratorEntry = config.dev ? tsx : path.join(root, 'services/orchestrator/dist/server.js');
+  const orchestratorArgs = config.dev ? ['watch', path.join(root, 'services/orchestrator/src/server.ts')] : [];
   await ensureService('3/5 ORCHESTRATOR', `${orchestratorUrl}/health`, 'vanessa-orchestrator', port, config.reuse, () => {
-    startService('3/5 ORCHESTRATOR', tsx || 'services/orchestrator/dist/server.js', config.dev ? ['watch', 'services/orchestrator/src/server.ts'] : []);
+    startService('3/5 ORCHESTRATOR', orchestratorEntry, orchestratorArgs, process.execPath, { cwd: workspaceRoot });
   });
   if (stopping) return;
   if (config.voice) {
     try {
+      const voiceEntry = config.dev ? tsx : path.join(root, 'services/voice-agent/dist/server.js');
+      const voiceArgs = config.dev ? ['watch', path.join(root, 'services/voice-agent/src/server.ts')] : [];
       await ensureService('4/5 VOICE', 'http://127.0.0.1:4500/health', 'vanessa-voice-agent', 4500, config.reuse, () => {
-        startService('4/5 VOICE', tsx || 'services/voice-agent/dist/server.js', config.dev ? ['watch', 'services/voice-agent/src/server.ts'] : [], process.execPath, { fatalOnExit: false });
+        startService('4/5 VOICE', voiceEntry, voiceArgs, process.execPath, { fatalOnExit: false, cwd: workspaceRoot });
       }, config.strict);
     } catch (error) {
       if (config.strict) throw error;
