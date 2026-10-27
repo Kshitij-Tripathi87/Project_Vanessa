@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useVanessaStore } from "../stores/vanessaStore.js";
+import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
 import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
+import { useVanessaStore } from "../stores/vanessaStore.js";
 
 export interface SentimentData {
   valence: number;
@@ -28,6 +29,9 @@ export interface VoiceProviderStatus {
   tts: ProviderStatus;
 }
 
+export type MicrophoneTestState = "idle" | "testing" | "passed" | "silent" | "error";
+export type SpeechOutputTestState = "idle" | "testing" | "finished" | "error";
+
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
   const ratio = inputSampleRate / 16000;
@@ -51,6 +55,10 @@ export function useAudioCapture() {
   const [liveSentiment, setLiveSentiment] = useState<SentimentData | null>(null);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [microphoneTestState, setMicrophoneTestState] = useState<MicrophoneTestState>("idle");
+  const [microphoneTestMessage, setMicrophoneTestMessage] = useState("");
+  const [speechOutputTestState, setSpeechOutputTestState] = useState<SpeechOutputTestState>("idle");
+  const [speechOutputTestMessage, setSpeechOutputTestMessage] = useState("");
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
   const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
 
@@ -402,9 +410,11 @@ export function useAudioCapture() {
       return false;
     }
 
-    // --text-only deliberately omits the voice service. Preserve a usable typed
-    // command path through the trusted Electron main process to the same orchestrator.
-    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") {
+    // If voice is explicitly disabled or still disconnected, keep typing independent of
+    // the voice WebSocket and route straight through the trusted desktop IPC/orchestrator.
+    const voiceSocketOpen = wsRef.current?.readyState === WebSocket.OPEN;
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false" || !voiceSocketOpen) {
+      pendingTextCommandRef.current = null;
       const requestId = `desktop-${globalThis.crypto.randomUUID()}`;
       activeTextOnlyRequestRef.current = requestId;
       setPartialTranscript(text);
@@ -418,7 +428,7 @@ export function useAudioCapture() {
         language: language.slice(0, 32) || "en",
         source: "desktop",
         requestId,
-        idempotencyKey: `text-only:${requestId}`,
+        idempotencyKey: `desktop-direct:${requestId}`,
       })
         .then((result) => {
           if (activeTextOnlyRequestRef.current !== requestId) return;
@@ -438,7 +448,25 @@ export function useAudioCapture() {
           } else {
             setTaskStage("failed", "The request failed or could not be verified.");
           }
-          setVoiceState("idle");
+          // If the voice service is unavailable, provide an OS/browser speech fallback
+          // while preserving the written result. This does not claim remote TTS was used.
+          const canSpeakFallback =
+            import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
+            Boolean(result.spokenSummary?.trim()) &&
+            "speechSynthesis" in window;
+          if (canSpeakFallback) {
+            audioQueueRef.current.push({
+              text: result.spokenSummary,
+              fallbackSpeech: true,
+              speechRate: 1.05,
+              speechPitch: 1.02,
+              isFinal: true,
+            });
+            setVoiceState("speaking");
+            playNextInQueue();
+          } else {
+            setVoiceState("idle");
+          }
         })
         .catch((error: unknown) => {
           if (activeTextOnlyRequestRef.current !== requestId) return;
@@ -461,14 +489,120 @@ export function useAudioCapture() {
     const socket = wsRef.current;
     if (socket && dispatchTextCommand(socket, command)) return true;
 
-    // Only an unsent command is buffered. An issued action is never replayed automatically.
+    // Only an unsent command is buffered during a close race. It is never replayed
+    // when the direct IPC/orchestrator path has already accepted the request.
     pendingTextCommandRef.current = command;
     setPartialTranscript(text);
-    setLastResponse("Connecting to Vanessa voice service…");
-    setTaskStage("accepted", "Waiting for the local voice service.");
+    setLastResponse("Voice connection changed while submitting. Reconnecting…");
+    setTaskStage("accepted", "The request has not been sent yet.");
     connectVoiceWs();
     return true;
-  }, [connectVoiceWs, dispatchTextCommand, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+  }, [connectVoiceWs, dispatchTextCommand, playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+
+  // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
+  const testMicrophone = useCallback(async () => {
+    if (microphoneTestState === "testing") return;
+    if (mediaStreamRef.current || pttActiveRef.current) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage("Finish the current voice turn before testing the microphone.");
+      return;
+    }
+
+    setMicrophoneTestState("testing");
+    setMicrophoneTestMessage("Speak normally for about two seconds. Test audio stays on this device and is not sent to Vanessa or a speech provider.");
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let silentGain: GainNode | null = null;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        const error = new Error("Microphone capture API is unavailable.");
+        error.name = "NotSupportedError";
+        throw error;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        const error = new Error("Web Audio is unavailable.");
+        error.name = "AudioContextUnavailableError";
+        throw error;
+      }
+      context = new AudioCtx();
+      if (context.state === "suspended") await context.resume();
+
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      silentGain = context.createGain();
+      silentGain.gain.value = 0; // Keep the graph active without monitoring mic audio through speakers.
+      source.connect(analyser);
+      analyser.connect(silentGain);
+      silentGain.connect(context.destination);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      const deadline = Date.now() + 1600;
+      let signalDetected = false;
+      let peak = 0;
+      while (Date.now() < deadline) {
+        analyser.getByteTimeDomainData(samples);
+        const measurement = measureMicrophoneSignal(samples);
+        peak = Math.max(peak, measurement.peak);
+        if (hasMicrophoneSignal(measurement)) signalDetected = true;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+      }
+
+      if (signalDetected) {
+        setMicrophoneTestState("passed");
+        setMicrophoneTestMessage(`Microphone input signal detected (peak ${Math.round(peak * 100)}%). This verifies capture only; speech recognition is checked by a real voice command.`);
+      } else {
+        setMicrophoneTestState("silent");
+        setMicrophoneTestMessage("The microphone opened, but no input signal was detected. Unmute it and check Windows Settings → System → Sound → Input while speaking, then retry.");
+      }
+    } catch (error) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage(explainMicrophoneFailure(error));
+    } finally {
+      try { source?.disconnect(); } catch {}
+      try { analyser?.disconnect(); } catch {}
+      try { silentGain?.disconnect(); } catch {}
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context && context.state !== "closed") await context.close().catch(() => {});
+    }
+  }, [microphoneTestState]);
+
+  // Test the no-key browser/OS speech fallback. "Finished" means the browser
+  // completed its utterance callback; the user still confirms they heard audio.
+  const testSpeechOutput = useCallback(() => {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("This runtime does not expose local speech synthesis. Typed responses remain available; check the Vanessa runtime.");
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      setSpeechOutputTestState("testing");
+      setSpeechOutputTestMessage("Playing a short local test phrase. No speech provider API key is used.");
+      const utterance = new SpeechSynthesisUtterance(
+        "This is Vanessa's local speech output test. If you hear this, local speech playback is working."
+      );
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => {
+        setSpeechOutputTestState("finished");
+        setSpeechOutputTestMessage("The speech engine finished playback. Confirm you heard it; if not, check Windows volume and the selected output device.");
+      };
+      utterance.onerror = () => {
+        setSpeechOutputTestState("error");
+        setSpeechOutputTestMessage("Local speech playback reported an error. Check Windows volume and the selected output device. Written responses remain available.");
+      };
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("Local speech playback could not start. Check Windows volume/output settings; written responses remain available.");
+    }
+  }, []);
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
@@ -476,72 +610,80 @@ export function useAudioCapture() {
       setMicError("Voice is disabled for this session. Restart Vanessa without --text-only to use the microphone.");
       return;
     }
+
+    let acquiredStream: MediaStream | null = null;
+    let openedContext: AudioContext | null = null;
+    let sourceNode: MediaStreamAudioSourceNode | null = null;
+    let analyserNode: AnalyserNode | null = null;
+    let workletNode: AudioWorkletNode | null = null;
     try {
       if (mediaStreamRef.current) return;
       setMicError(null);
       connectVoiceWs();
 
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices?.getUserMedia) {
+        const error = new Error("Microphone capture API is unavailable.");
+        error.name = "NotSupportedError";
+        throw error;
+      }
+
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+        stream = await mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
-      } catch (err) {
-        console.warn("[useAudioCapture] Advanced media constraints failed, using basic audio:", err);
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (error) {
+        const name = (error as { name?: string } | null)?.name || "";
+        // Only retry without optional processing constraints. Permission/device
+        // failures should be reported directly rather than prompting twice.
+        if (!["OverconstrainedError", "ConstraintNotSatisfiedError", "TypeError"].includes(name)) throw error;
+        stream = await mediaDevices.getUserMedia({ audio: true });
       }
+      acquiredStream = stream;
       mediaStreamRef.current = stream;
 
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        const error = new Error("Web Audio is unavailable.");
+        error.name = "AudioContextUnavailableError";
+        throw error;
+      }
       if (audioContextRef.current) {
         await audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
       }
-      const audioCtx = new AudioCtx();
-      if (audioCtx.state === "suspended") {
-        await audioCtx.resume();
-      }
-      audioContextRef.current = audioCtx;
+      openedContext = new AudioCtx();
+      audioContextRef.current = openedContext;
+      if (openedContext.state === "suspended") await openedContext.resume();
 
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyserRef.current = analyser;
-      source.connect(analyser);
+      sourceNode = openedContext.createMediaStreamSource(stream);
+      analyserNode = openedContext.createAnalyser();
+      analyserNode.fftSize = 256;
+      analyserRef.current = analyserNode;
+      sourceNode.connect(analyserNode);
 
-      // AudioWorklet replaces the deprecated ScriptProcessorNode while keeping
-      // microphone processing off the renderer's main UI thread.
-      // Compile TypeScript as a separate same-origin JS module, never an inlined asset.
-      await audioCtx.audioWorklet.addModule(pcmCaptureWorkletUrl);
-      const processor = new AudioWorkletNode(audioCtx, "vanessa-pcm-capture", {
+      // AudioWorklet keeps PCM conversion away from the renderer's main UI thread.
+      // Compile TypeScript as a separate same-origin JavaScript module, never an inlined asset.
+      await openedContext.audioWorklet.addModule(pcmCaptureWorkletUrl);
+      workletNode = new AudioWorkletNode(openedContext, "vanessa-pcm-capture", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
       });
-      processorRef.current = processor;
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
+      processorRef.current = workletNode;
+      sourceNode.connect(workletNode);
+      workletNode.connect(openedContext.destination);
 
-      processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
         const inputData = event.data;
-        // Resample from hardware rate (e.g. 48kHz or 44.1kHz) to exact 16kHz
-        const resampled = resampleTo16k(inputData, audioCtx.sampleRate);
-
-        // Convert to 16-bit linear PCM
+        const resampled = resampleTo16k(inputData, openedContext!.sampleRate);
         const pcmBuffer = new Int16Array(resampled.length);
         for (let i = 0; i < resampled.length; i++) {
-          const s = Math.max(-1, Math.min(1, resampled[i]));
-          pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          const sample = Math.max(-1, Math.min(1, resampled[i]));
+          pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
         }
-
         const audioFrame = pcmBuffer.buffer.slice(pcmBuffer.byteOffset, pcmBuffer.byteOffset + pcmBuffer.byteLength);
-        // Keep a short local-only lead-in during playback so barge-in does not
-        // clip the user's first word. It is sent only after ASR resumes.
         if (pttActiveRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
           if (bargeResumePendingRef.current) {
             pendingBargeAudioRef.current.push(audioFrame);
@@ -558,38 +700,43 @@ export function useAudioCapture() {
         }
       };
 
-      // Real-time Audio Level visualizer loop for VoiceOrb
       const updateAudioMeter = () => {
         if (!analyserRef.current) return;
         const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(dataArray);
-
         let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / dataArray.length;
-        const normalized = Math.min(1.0, avg / 128.0);
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const normalized = Math.min(1.0, (sum / dataArray.length) / 128.0);
         setAudioLevel(normalized);
-
-        // Barge-In: if user starts speaking (level > 0.35) while Vanessa is speaking, interrupt!
-        if (normalized > 0.35 && voiceStateRef.current === "speaking") {
-          triggerBargeIn();
-        }
-
+        if (normalized > 0.35 && voiceStateRef.current === "speaking") triggerBargeIn();
         animationFrameRef.current = requestAnimationFrame(updateAudioMeter);
       };
       updateAudioMeter();
 
       setIsMicActive(true);
       setVoiceState("idle");
-    } catch (err: any) {
-      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      console.error(`[useAudioCapture] Microphone capture failed: ${detail}`);
-      // A failed worklet must not leave an open stream that looks ready on retry.
-      stopCaptureRef.current?.();
-      setMicError(`Could not start microphone capture: ${detail}`);
+    } catch (error: unknown) {
+      const name = (error as { name?: string } | null)?.name || "UnknownError";
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error(`[useAudioCapture] Microphone initialization failed (${name}): ${detail}`);
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      try { if (workletNode) { workletNode.port.onmessage = null; workletNode.disconnect(); } } catch { /* best-effort cleanup */ }
+      try { sourceNode?.disconnect(); } catch { /* best-effort cleanup */ }
+      try { analyserNode?.disconnect(); } catch { /* best-effort cleanup */ }
+      acquiredStream?.getTracks().forEach(track => track.stop());
+      if (processorRef.current === workletNode) processorRef.current = null;
+      if (analyserRef.current === analyserNode) analyserRef.current = null;
+      if (mediaStreamRef.current === acquiredStream) mediaStreamRef.current = null;
+      if (audioContextRef.current === openedContext) audioContextRef.current = null;
+      if (openedContext) await openedContext.close().catch(() => {});
+      pttActiveRef.current = false;
+      activatedSocketRef.current = null;
+      setMicError(explainMicrophoneFailure(error));
       setIsMicActive(false);
+      setAudioLevel(0);
       setVoiceState("idle");
     }
   }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
@@ -709,6 +856,12 @@ export function useAudioCapture() {
     partialTranscript,
     providerStatus,
     micError,
+    microphoneTestState,
+    microphoneTestMessage,
+    testMicrophone,
+    speechOutputTestState,
+    speechOutputTestMessage,
+    testSpeechOutput,
     voiceConnectionState,
     submitTextCommand,
     cancelVoice,

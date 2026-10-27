@@ -6,7 +6,7 @@
   "main": "./dist/server.js",
   "scripts": {
     "smoke:codex": "tsx src/scripts/codex-smoke.ts",
-    "test:codex": "tsx --test src/tests/codexLauncher.test.ts",
+    "test:codex": "tsx --test src/tests/codexLauncher.test.ts src/tests/codexTaskRunner.test.ts",
     "build": "tsc && node scripts/copy-windows-audio.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
@@ -22,7 +22,8 @@
     "test:windows-controls": "tsx --test src/tests/windowsControls.test.ts",
     "smoke:windows-controls": "tsx src/scripts/windows-controls-smoke.ts",
     "test:agent-result": "tsx --test src/tests/agentResult.test.ts",
-    "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts"
+    "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts",
+    "test:ollama-client": "tsx --test src/tests/ollamaClient.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

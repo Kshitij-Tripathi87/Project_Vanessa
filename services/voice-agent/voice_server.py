@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import websockets  # type: ignore
 from faster_whisper import WhisperModel  # type: ignore
+from transcript_logging import format_transcript_log
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,7 +17,9 @@ logger = logging.getLogger("VoiceServer")
 
 HOST = os.getenv("VOICE_HOST", os.getenv("WHISPER_HOST", "127.0.0.1"))
 PORT = int(os.getenv("VOICE_PORT", os.getenv("WHISPER_PORT", "4505")))
-MODEL_SIZE = os.getenv("VOICE_MODEL", os.getenv("WHISPER_MODEL", "tiny.en"))
+MODEL_SIZE = os.getenv("VOICE_MODEL", os.getenv("WHISPER_MODEL", "base"))
+LANGUAGE = os.getenv("VOICE_LANGUAGE", "auto").strip().lower()
+TRANSCRIBE_LANGUAGE = None if LANGUAGE in ("", "auto") else LANGUAGE
 DEVICE = os.getenv("VOICE_DEVICE", os.getenv("WHISPER_DEVICE", "cpu"))
 COMPUTE_TYPE = os.getenv("VOICE_COMPUTE_TYPE", os.getenv("WHISPER_COMPUTE_TYPE", "int8"))
 
@@ -69,14 +72,14 @@ async def handle_client(websocket):
                             segments, info = model.transcribe(
                                 audio_buffer,
                                 beam_size=1,
-                                language="en",
+                                language=TRANSCRIBE_LANGUAGE,
                                 condition_on_previous_text=False,
                                 vad_filter=False,
                             )
                             text = " ".join([seg.text.strip() for seg in segments]).strip()
                             if text and text != last_emitted_text:
                                 last_emitted_text = text
-                                logger.info(f"Partial Transcript: '{text}'")
+                                logger.info(format_transcript_log("Partial transcript", text, getattr(info, "language", None)))
                                 await websocket.send(json.dumps({
                                     "text": text,
                                     "is_final": False,
@@ -91,22 +94,24 @@ async def handle_client(websocket):
                 # Auto-finalize turn if user spoke and then paused for > 850ms
                 if last_emitted_text and (now - last_speech_time) > 0.85 and not transcribe_lock.locked():
                     async with transcribe_lock:
+                        detected_language = TRANSCRIBE_LANGUAGE or "en"
                         try:
                             # Final pass over full buffer for completeness
                             segments, info = model.transcribe(
                                 audio_buffer,
                                 beam_size=2,
-                                language="en",
+                                language=TRANSCRIBE_LANGUAGE,
                                 condition_on_previous_text=False,
                                 vad_filter=False,
                             )
+                            detected_language = info.language or detected_language
                             full_text = " ".join([seg.text.strip() for seg in segments]).strip()
                             out_text = full_text or last_emitted_text
-                            logger.info(f"Silence detected. Auto-finalizing turn: '{out_text}'")
+                            logger.info(format_transcript_log("Silence detected; auto-finalizing", out_text, detected_language))
                             await websocket.send(json.dumps({
                                 "text": out_text,
                                 "is_final": True,
-                                "language": "en",
+                                "language": detected_language,
                                 "confidence": 0.95,
                             }))
                         except Exception as err:
@@ -134,16 +139,18 @@ async def handle_client(websocket):
                             continue
 
                         final_text = ""
+                        detected_language = TRANSCRIBE_LANGUAGE or "en"
                         async with transcribe_lock:
                             try:
                                 if len(audio_buffer) >= int(0.25 * SAMPLE_RATE):
                                     segments, info = model.transcribe(
                                         audio_buffer,
                                         beam_size=2,
-                                        language="en",
+                                        language=TRANSCRIBE_LANGUAGE,
                                         condition_on_previous_text=False,
                                         vad_filter=False,
                                     )
+                                    detected_language = info.language or detected_language
                                     final_text = " ".join([seg.text.strip() for seg in segments]).strip()
                                 else:
                                     final_text = last_emitted_text
@@ -152,12 +159,12 @@ async def handle_client(websocket):
                                 final_text = last_emitted_text
 
                             out_text = final_text or last_emitted_text
-                            logger.info(f"Final Transcript Result: '{out_text}'")
+                            logger.info(format_transcript_log("Final transcript", out_text, detected_language))
                             if out_text:
                                 await websocket.send(json.dumps({
                                     "text": out_text,
                                     "is_final": True,
-                                    "language": "en",
+                                    "language": detected_language,
                                     "confidence": 0.95,
                                 }))
                         audio_buffer = np.zeros(0, dtype=np.float32)

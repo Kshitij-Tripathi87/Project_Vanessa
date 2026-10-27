@@ -4,7 +4,7 @@ const path = require('node:path');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
 const { launcherConfig } = require('./launcher-config.cjs');
-const { ensureService } = require('./launch-vanessa.cjs');
+const { ensureService, startService } = require('./launch-vanessa.cjs');
 const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
@@ -24,12 +24,26 @@ test('Sarvam is switchable and validates its key independently of Fish TTS', () 
   assert.equal(config({ ...env, VOICE_ASR_PROVIDER: 'fish', FISH_API_KEY: 'test' }).asr, 'fish');
 });
 
-test('ordinary launch and text-only do not require Fish or Codex-specific credentials', () => {
-  assert(config().missing.length > 0);
+test('default install uses local Whisper, Ollama and browser TTS with no provider credentials', () => {
+  const defaults = config();
+  assert.deepEqual(defaults.missing, []);
+  assert.equal(defaults.asr, 'whisper');
+  assert.equal(defaults.tts, 'fish');
+  assert.equal(defaults.ttsFallback, true);
+  assert.equal(defaults.planner, 'ollama');
+  assert.equal(defaults.conversation, 'ollama');
+  assert.equal(defaults.ollamaModel, 'qwen2.5:3b');
+  assert(defaults.localAsr);
+  const text = config({}, ['--text-only']);
+  assert.equal(text.voice, false);
+  assert.equal(text.localAsr, undefined);
+});
+
+test('text-only local mode also avoids provider and Codex-test credential requirements', () => {
   const text = config({ NVIDIA_API_KEY: 'test' }, ['--text-only', '--codex-test']);
   assert.equal(text.voice, false);
   assert.deepEqual(text.missing, []);
-  assert.throws(() => config({}, ['--codex-test']), /configuration missing/);
+  assert.deepEqual(config({}, ['--codex-test']).missing, []);
 });
 
 test('planner and conversation providers are independent and require only their selected credentials', () => {
@@ -56,7 +70,7 @@ test('provider selection rejects unsupported values and placeholders before star
     assert.throws(() => config({ PLANNER_PROVIDER: provider }, ['--text-only']), /Unsupported planning provider/);
     assert.throws(() => config({ PLANNER_PROVIDER: 'nvidia', SARVAM_CHAT_PROVIDER: provider }, ['--text-only']), /Unsupported conversation provider/);
   }
-  assert.throws(() => config({ NVIDIA_API_KEY: 'nvapi-placeholder-key' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
+  assert.throws(() => config({ PLANNER_PROVIDER: 'nvidia', NVIDIA_API_KEY: 'nvapi-placeholder-key' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
 });
 test('selects existing providers without Fish requirements for ElevenLabs', () => {
   const result = config({ NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
@@ -126,4 +140,28 @@ test('Sarvam launcher rejects missing TTS persona/model instead of starting a si
   };
   assert(config(base).missing.some(key => key.includes('SARVAM_TTS_MODEL')));
   assert(config(base).missing.some(key => key.includes('SARVAM_TTS_SPEAKER')));
+});
+
+
+test('optional speech service failure keeps the launcher in degraded mode', async () => {
+  const captured = [];
+  const originalLog = console.log;
+  console.log = (...args) => captured.push(args.join(' '));
+  try {
+    const child = startService(
+      'Optional speech service fixture',
+      '-e',
+      ['process.exit(7)'],
+      process.execPath,
+      { fatalOnExit: false },
+    );
+    const [code] = await once(child, 'close');
+    assert.equal(code, 7);
+    assert(captured.some((line) =>
+      line.includes('Optional speech service fixture DEGRADED') &&
+      line.includes('typed commands remain available')
+    ));
+  } finally {
+    console.log = originalLog;
+  }
 });

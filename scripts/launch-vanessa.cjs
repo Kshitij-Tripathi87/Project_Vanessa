@@ -4,7 +4,6 @@ const path = require('node:path');
 const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
-const { createHash } = require('node:crypto');
 const { launcherConfig } = require('./launcher-config.cjs');
 
 const root = path.resolve(__dirname, '..');
@@ -51,15 +50,21 @@ function run(stage, executable, args, cwd = root) {
   });
 }
 
-function startService(stage, entry, args = [], executable = process.execPath) {
+function startService(stage, entry, args = [], executable = process.execPath, options = {}) {
+  const fatalOnExit = options.fatalOnExit !== false;
   log(stage, 'Starting managed process');
   const child = spawn(executable, [entry, ...args], { cwd: root, env: process.env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(child);
   attachOutput(child, stage);
-  child.once('error', () => shutdown(1, `${stage} failed to start.`));
+  child.once('error', (error) => {
+    if (fatalOnExit) shutdown(1, `${stage} failed to start.`);
+    else log(`${stage} DEGRADED`, `Optional service failed to start (${error.code || "process error"}); desktop and typed commands remain available.`);
+  });
   child.once('close', (code) => {
     children.delete(child);
-    if (!stopping) shutdown(1, `${stage} stopped unexpectedly (exit ${code}).`);
+    if (stopping) return;
+    if (fatalOnExit) shutdown(1, `${stage} stopped unexpectedly (exit ${code}).`);
+    else log(`${stage} DEGRADED`, `Optional service stopped (exit ${code}); desktop and typed commands remain available. Voice can be repaired by restarting Vanessa.`);
   });
   return child;
 }
@@ -120,6 +125,27 @@ async function ensureService(stage, url, identity, port, reuse, start, strict = 
   await waitForHealth(stage, url, identity, strict);
 }
 
+async function assertOllamaReady(config) {
+  if (![config.planner, config.conversation].includes('ollama')) return;
+  let parsed;
+  try { parsed = new URL(process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl); }
+  catch { throw new Error('OLLAMA_BASE_URL is invalid. Use http://127.0.0.1:11434 for local Ollama.'); }
+  const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+  if (parsed.protocol !== 'http:' || !localHosts.has(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('OLLAMA_BASE_URL must be a local loopback HTTP origin, for example http://127.0.0.1:11434. Vanessa will not send local prompts to remote hosts.');
+  }
+  const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen2.5:3b').trim();
+  let response;
+  try { response = await fetch(parsed.origin + '/api/tags', { signal: AbortSignal.timeout(2500) }); }
+  catch { throw new Error('Local Ollama is not reachable at ' + parsed.origin + '. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.'); }
+  if (!response.ok) throw new Error('Local Ollama returned HTTP ' + response.status + '. Restart Ollama and retry.');
+  let body;
+  try { body = await response.json(); } catch { throw new Error('Local Ollama returned an invalid model list. Restart Ollama and retry.'); }
+  const installed = Array.isArray(body.models) && body.models.some(item => item && item.name === model);
+  if (!installed) throw new Error('Local model "' + model + '" is not installed. Run .\\\\scripts\\\\setup_windows.ps1 or execute ollama pull ' + model + '.');
+  log('OLLAMA', 'Local model ready: ' + model + '; no provider key required.');
+}
+
 function asrReachable(url) {
   return new Promise((resolve) => {
     const WebSocket = require('ws');
@@ -144,9 +170,15 @@ async function ensureLocalAsr(asr, reuse, reservedPorts) {
   // Keep legacy and consolidated Python servers aligned with the client's URL.
   Object.assign(process.env, { VOICE_HOST: '127.0.0.1', WHISPER_HOST: '127.0.0.1', VOICE_PORT: String(asr.port), WHISPER_PORT: String(asr.port), PYTHONUNBUFFERED: '1' });
   log('LOCAL ASR', `Starting ${path.basename(asr.script)} on port ${asr.port}; first model load/download may take time.`);
-  startService('LOCAL ASR', asr.script, [], asr.python);
+  const child = startService('LOCAL ASR', asr.script, [], asr.python, { fatalOnExit: false });
+  let processStartError = null;
+  child.once('error', (error) => { processStartError = error; });
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline && !stopping) {
+    if (processStartError) throw new Error(`Local ASR process could not start: ${processStartError.message}`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Local ASR process exited before readiness (exit ${child.exitCode ?? 'signal ' + child.signalCode}).`);
+    }
     if (await asrReachable(asr.url)) { log('LOCAL ASR', 'WebSocket ready.'); return; }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -154,6 +186,12 @@ async function ensureLocalAsr(asr, reuse, reservedPorts) {
 }
 
 async function main() {
+  if (process.argv.includes('--doctor')) {
+    const { runCli } = require(path.join(root, 'scripts', 'doctor.cjs'));
+    const args = process.argv.slice(2).filter((arg) => arg !== '--doctor');
+    process.exitCode = await runCli(args);
+    return;
+  }
   if (process.argv.includes('--help')) {
     console.log(`Vanessa Windows launcher
 Usage: Launch-Vanessa.bat [options]
@@ -163,16 +201,16 @@ Usage: Launch-Vanessa.bat [options]
   --reuse-existing  Reuse healthy orchestrator/voice services; leave them running on exit.
                     Their environment/code may differ. Restart them to pick up changes.
   --codex-test      Require selected LLM/voice credentials and Codex CLI; reject FAKE=1.
+  --doctor          Run read-only setup diagnostics; add --live while Vanessa is running.
   --check           Check configuration/dependencies without building or starting services.
   --build-only      Build without starting services or requiring unused ports.
   --help            Show this help.
 
 Root .env is loaded for all managed processes. Existing .env files are never rewritten.
 Sarvam, Fish, ElevenLabs, and local voice/whisper providers follow VOICE_ASR_PROVIDER / VOICE_TTS_PROVIDER.
-Planning uses PLANNER_PROVIDER; conversational replies use SARVAM_CHAT_PROVIDER (sarvam or nvidia).
-Local Whisper uses VOICE_URL (or WHISPER_URL), voice_server.py (legacy whisper_server.py fallback),
-and VOICE_PYTHON or .venv-voice / .venv-whisper. Install its Python dependencies beforehand.
-Missing cloud keys warn during ordinary startup; unavailable providers cannot serve requests.
+Planning uses PLANNER_PROVIDER; replies use CONVERSATION_PROVIDER (ollama, sarvam, or nvidia). Local Ollama is the default and needs no API key.
+Local Whisper uses VOICE_URL and .venv-voice. Run scripts\\setup_windows.ps1 once to provision local models and dependencies. Browser speech synthesis is the no-key TTS fallback.
+Cloud providers are optional; configure their keys only when explicitly selecting those providers.
 Codex is optional unless --codex-test is selected. Logs are saved in logs/launcher/.
 Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
 `);
@@ -193,9 +231,20 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   logFile = path.join(logDir, `vanessa-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
   log('1/5 ENV', hasEnv ? 'Loaded root .env; credentials are not printed.' : 'No root .env; using inherited environment. See .env.example for configuration.');
   if (hasEnv) log('1/5 ENV', `File last changed=${fs.statSync(envPath).mtime.toISOString()}; restart required after .env edits.`);
-  if (process.env.FISH_API_KEY) log('1/5 ENV', `Fish key fingerprint=${createHash('sha256').update(process.env.FISH_API_KEY).digest('hex').slice(0, 12)} (hash only).`);
   log('Launcher', `Log file: ${logFile}`);
   const config = launcherConfig(process.env, process.argv.slice(2), root, fs.existsSync);
+  // Apply no-key defaults to every managed child process. Explicit settings in
+  // the user's .env remain authoritative.
+  process.env.VOICE_ASR_PROVIDER ||= config.asr;
+  process.env.VOICE_TTS_PROVIDER ||= config.tts;
+  process.env.VOICE_TTS_FALLBACK_PROVIDER ||= config.ttsFallback ? 'browser' : 'none';
+  process.env.PLANNER_PROVIDER ||= config.planner;
+  process.env.CONVERSATION_PROVIDER ||= config.conversation;
+  process.env.OLLAMA_BASE_URL ||= config.ollamaBaseUrl;
+  process.env.OLLAMA_MODEL ||= config.ollamaModel;
+  process.env.VOICE_URL ||= config.localAsr?.url || process.env.WHISPER_URL || 'ws://127.0.0.1:4505';
+  process.env.VOICE_MODEL ||= process.env.WHISPER_MODEL || 'base';
+  process.env.VOICE_LANGUAGE ||= 'auto';
   const { asr, tts } = config;
   for (const warning of config.missing) log('CONFIG WARNING', warning);
   if (process.env.FAKE === '1') log('CONFIG WARNING', 'FAKE=1: simulated actions are enabled.');
@@ -226,8 +275,9 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   if (!fs.existsSync(electron)) throw new Error('Electron executable is missing. Restore workspace dependencies.');
   const tsx = config.dev ? require.resolve('tsx/cli', { paths: [path.join(root, 'services/orchestrator')] }) : undefined;
   if (!process.argv.includes('--build-only') && config.localAsr?.local && (!config.localAsr.python || !config.localAsr.script) && !config.reuse) throw new Error('Local Whisper selected but its Python environment/server is missing. Set VOICE_PYTHON or install .venv-voice; use --reuse-existing for an already running server, or --text-only for text work.');
+  if (!process.argv.includes('--build-only')) await assertOllamaReady(config);
   if (process.argv.includes('--check')) {
-    log('Launcher', 'Preflight passed. No services started; credentials have not been sent to providers.');
+    log('Launcher', 'Preflight passed. No services started; no provider credentials are needed for the local default profile.');
     return;
   }
   if (!process.argv.includes('--build-only')) {
@@ -251,15 +301,30 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
     log('Launcher', 'Build validation passed. No services started.');
     return;
   }
-  if (config.localAsr) await ensureLocalAsr(config.localAsr, config.reuse, [port, 4500, 5173]);
+  if (config.localAsr) {
+    try {
+      await ensureLocalAsr(config.localAsr, config.reuse, [port, 4500, 5173]);
+    } catch (error) {
+      if (config.strict) throw error;
+      const detail = error instanceof Error ? error.message : 'unknown startup error';
+      log('LOCAL ASR DEGRADED', `${detail} Speech input may be unavailable; the desktop and typed commands will continue. Run scripts\\setup_windows.ps1 to repair local speech.`);
+    }
+  }
   await ensureService('3/5 ORCHESTRATOR', `${orchestratorUrl}/health`, 'vanessa-orchestrator', port, config.reuse, () => {
     startService('3/5 ORCHESTRATOR', tsx || 'services/orchestrator/dist/server.js', config.dev ? ['watch', 'services/orchestrator/src/server.ts'] : []);
   });
   if (stopping) return;
-  if (config.voice) await ensureService('4/5 VOICE', 'http://127.0.0.1:4500/health', 'vanessa-voice-agent', 4500, config.reuse, () => {
-    startService('4/5 VOICE', tsx || 'services/voice-agent/dist/server.js', config.dev ? ['watch', 'services/voice-agent/src/server.ts'] : []);
-  }, config.strict);
-  else log('4/5 VOICE', 'Skipped (--text-only). Microphone is unavailable in this mode.');
+  if (config.voice) {
+    try {
+      await ensureService('4/5 VOICE', 'http://127.0.0.1:4500/health', 'vanessa-voice-agent', 4500, config.reuse, () => {
+        startService('4/5 VOICE', tsx || 'services/voice-agent/dist/server.js', config.dev ? ['watch', 'services/voice-agent/src/server.ts'] : [], process.execPath, { fatalOnExit: false });
+      }, config.strict);
+    } catch (error) {
+      if (config.strict) throw error;
+      const detail = error instanceof Error ? error.message : 'unknown startup error';
+      log('4/5 VOICE DEGRADED', `${detail} The desktop will still launch; typed commands will go directly to the local orchestrator until voice is repaired.`);
+    }
+  } else log('4/5 VOICE', 'Skipped (--text-only). Microphone is unavailable in this mode.');
   if (stopping) return;
   startService('DESKTOP UI', vite, [...(config.dev ? [] : ['preview']), '--config', 'apps/desktop/vite.config.ts', '--host', '127.0.0.1', '--port', '5173', '--strictPort']);
   let uiReady = false;
@@ -280,7 +345,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   shutdown(0, 'Desktop closed. Stopping services started by this launcher.');
 }
 
-module.exports = { ensureService };
+module.exports = { ensureService, startService };
 if (require.main === module) {
   process.on('SIGINT', () => shutdown(0, 'Ctrl+C received. Stopping owned processes.'));
   process.on('SIGTERM', () => shutdown(0, 'Stop requested.'));

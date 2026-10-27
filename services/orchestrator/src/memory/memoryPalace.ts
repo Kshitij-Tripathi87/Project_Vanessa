@@ -334,7 +334,18 @@ export class MemoryPalace {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const paramsJson = JSON.stringify(task.params || {});
+    const checkpointParams = task.action === "codex.run_task"
+      ? {
+          projectPath: task.params?.projectPath,
+          expectedBranch: task.params?.expectedBranch,
+          timeoutMs: task.params?.timeoutMs,
+          prompt: "[redacted]",
+          promptCharacters: typeof task.params?.prompt === "string" ? task.params.prompt.length : 0,
+          acceptanceCriteriaCount: Array.isArray(task.params?.acceptanceCriteria) ? task.params.acceptanceCriteria.length : 0,
+          allowedPathsCount: Array.isArray(task.params?.allowedPaths) ? task.params.allowedPaths.length : 0,
+        }
+      : (task.params || {});
+    const paramsJson = JSON.stringify(checkpointParams);
     const resultJson = task.result ? JSON.stringify(task.result) : null;
     const verifJson = task.verification ? JSON.stringify(task.verification) : null;
     const isIdempotent = task.isIdempotent ? 1 : 0;
