@@ -134,7 +134,7 @@ test("agent-local dispatch blocks unknown actions and direct autonomous Codex ex
 
   const testing = await new TestingAgent().execute("testing.run_incident_lab", validTestParams);
   assert.equal(testing.status, "blocked");
-  assert.equal(testing.data?.processStarted, false);
+  assert.equal(testing.verification?.passed, false);
 
   const developer = new DeveloperAgent();
   const rawTerminal = await developer.execute("terminal.run_command", { command: "echo unsafe" });
