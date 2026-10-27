@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { test } from "node:test";
+import { eventBus } from "../core/eventBus.js";
 import {
   cancelCodexTask,
   codexTaskRunnerDependencies,
@@ -49,6 +50,7 @@ function fixture(options: {
       child = proc;
       if (options.events) {
         setTimeout(() => {
+          if (terminated) return;
           for (const item of options.events || []) stdout.write(JSON.stringify(item) + "\n");
           stdout.end();
           stderr.end();
@@ -77,6 +79,30 @@ const successEvents = [
   { type: "item.completed", item: { type: "agent_message", text: "Added a regression test and ran the focused checks." } },
   { type: "turn.completed", turn: { status: "completed" } },
 ];
+
+test("does not broadcast raw managed coding prompts through task events", () => {
+  const privatePrompt = "PRIVATE_PROMPT_SECRET_do_not_broadcast";
+  eventBus.emitEvent("task:update", {
+    id: "codex-privacy-task",
+    agent: "developer",
+    action: "codex.run_task",
+    status: "running",
+    params: { projectPath: "C:/repo", prompt: privatePrompt, acceptanceCriteria: ["criterion"] },
+  });
+  const event = eventBus.getRecentEvents(1)[0];
+  assert.equal((event.payload as any).params.prompt, "[redacted]");
+  assert.equal((event.payload as any).params.promptCharacters, privatePrompt.length);
+  assert.equal(JSON.stringify(event).includes(privatePrompt), false);
+
+  eventBus.emitEvent("tool.started", {
+    taskId: "codex-privacy-task",
+    tool: "codex.run_task",
+    params: { projectPath: "C:/repo", prompt: privatePrompt },
+  });
+  const toolEvent = eventBus.getRecentEvents(1)[0];
+  assert.equal((toolEvent.payload as any).params.prompt, "[redacted]");
+  assert.equal(JSON.stringify(toolEvent).includes(privatePrompt), false);
+});
 
 test("validates inputs and refuses a dirty or unexpected repository before spawning", async () => {
   const dirty = fixture({ dirty: true });
