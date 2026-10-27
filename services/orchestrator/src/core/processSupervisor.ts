@@ -146,35 +146,100 @@ function redactOutput(value: string): string {
 }
 
 
-async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> {
-  if (!Number.isSafeInteger(rootPid) || rootPid < 1) return null;
-  const script = "$root = [int]$env:VANESSA_ROOT_PID; $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId -ErrorAction Stop); $ids = @($root); do { $old = @($ids).Count; $children = @($all | Where-Object { $ids -contains [int]$_.ParentProcessId } | Select-Object -ExpandProperty ProcessId); $ids = @($ids + $children | Sort-Object -Unique); } while (@($ids).Count -gt $old); ConvertTo-Json -InputObject @($ids) -Compress";
+interface WindowsProcessSnapshotEntry {
+  pid: number;
+  parentPid: number;
+}
+
+async function getWindowsProcessSnapshot(): Promise<WindowsProcessSnapshotEntry[] | null> {
+  // Use Toolhelp32 directly instead of WMI/CIM. WMI startup is slow or
+  // unavailable on some Windows hosts; inability to enumerate is still a
+  // verification failure, but should not be caused by querying full process
+  // objects when only PID and parent PID are required.
+  const script = `$ErrorActionPreference = "Stop"
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class VanessaProcessSnapshotNative {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+  public struct PROCESSENTRY32 {
+    public uint dwSize;
+    public uint cntUsage;
+    public uint th32ProcessID;
+    public IntPtr th32DefaultHeapID;
+    public uint th32ModuleID;
+    public uint cntThreads;
+    public uint th32ParentProcessID;
+    public int pcPriClassBase;
+    public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string szExeFile;
+  }
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+  [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+  public static extern bool Process32First(IntPtr snapshot, ref PROCESSENTRY32 entry);
+  [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+  public static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+$handle = [VanessaProcessSnapshotNative]::CreateToolhelp32Snapshot([uint32]2, [uint32]0)
+if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { throw "CreateToolhelp32Snapshot failed." }
+$items = New-Object System.Collections.Generic.List[object]
+try {
+  $entry = New-Object -TypeName 'VanessaProcessSnapshotNative+PROCESSENTRY32'
+  $entry.dwSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf($entry)
+  if ([VanessaProcessSnapshotNative]::Process32First($handle, [ref]$entry)) {
+    do {
+      $items.Add([pscustomobject]@{ pid = [int]$entry.th32ProcessID; parentPid = [int]$entry.th32ParentProcessID })
+      $entry.dwSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf($entry)
+    } while ([VanessaProcessSnapshotNative]::Process32Next($handle, [ref]$entry))
+  }
+} finally {
+  [VanessaProcessSnapshotNative]::CloseHandle($handle) | Out-Null
+}
+ConvertTo-Json -InputObject @($items.ToArray()) -Depth 3 -Compress`;
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      env: { ...minimalEnvironment(), VANESSA_ROOT_PID: String(rootPid) },
-      timeout: 10000, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
+      env: minimalEnvironment(),
+      timeout: 10000, maxBuffer: 128 * 1024, windowsHide: true, encoding: "utf8",
     });
-    const value = JSON.parse(result.stdout.trim());
-    const ids = (Array.isArray(value) ? value : [value]).map(Number);
-    return ids.length > 0 && ids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && ids.includes(rootPid) ? ids : null;
+    const parsed = JSON.parse(result.stdout.trim());
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const entries = rows.map((row: any) => ({ pid: Number(row?.pid), parentPid: Number(row?.parentPid) }));
+    if (!entries.length || !entries.every((row: WindowsProcessSnapshotEntry) =>
+      Number.isSafeInteger(row.pid) && row.pid > 0 &&
+      Number.isSafeInteger(row.parentPid) && row.parentPid >= 0
+    )) return null;
+    return entries;
   } catch {
     return null;
   }
 }
 
+async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> {
+  if (!Number.isSafeInteger(rootPid) || rootPid < 1) return null;
+  const processes = await getWindowsProcessSnapshot();
+  if (!processes) return null;
+  const processIds = new Set<number>([rootPid]);
+  let previousSize = -1;
+  while (previousSize !== processIds.size) {
+    previousSize = processIds.size;
+    for (const process of processes) {
+      if (processIds.has(process.parentPid)) processIds.add(process.pid);
+    }
+  }
+  return [...processIds];
+}
+
 async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | null> {
   if (!processIds.length || processIds.some((pid) => !Number.isSafeInteger(pid) || pid < 1)) return null;
-  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $aliveCount = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId -ErrorAction Stop | Where-Object { $ids -contains [int]$_.ProcessId }).Count; ConvertTo-Json -InputObject @{ aliveCount = $aliveCount } -Compress";
-  try {
-    const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
-      timeout: 10000, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
-    });
-    const value = JSON.parse(result.stdout.trim());
-    return value && Number.isSafeInteger(value.aliveCount) && value.aliveCount >= 0 ? value.aliveCount === 0 : null;
-  } catch {
-    return null;
-  }
+  const processes = await getWindowsProcessSnapshot();
+  if (!processes) return null;
+  const alive = new Set(processes.map((process) => process.pid));
+  return processIds.every((pid) => !alive.has(pid));
 }
 
 /**
