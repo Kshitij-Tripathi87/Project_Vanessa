@@ -17,6 +17,8 @@ function fixture(options: {
   events?: unknown[];
   exitCode?: number | null;
   delayMs?: number;
+  changedFiles?: string[];
+  diffStat?: string;
 } = {}) {
   const calls: { file?: string; args?: string[]; spawnOptions?: SpawnOptions; terminated: boolean } = { terminated: false };
   let child: ChildProcess;
@@ -28,6 +30,10 @@ function fixture(options: {
       root: path,
       branch: options.branch ?? "feature/test",
       dirty: options.dirty ?? false,
+    }),
+    collectWorkspaceChanges: async () => ({
+      files: options.changedFiles ?? ["services/orchestrator/src/tests/new.test.ts"],
+      diffStat: options.diffStat ?? "1 file changed, 3 insertions(+)",
     }),
     resolveCli: async () => ({ file: "C:\\node.exe", prefix: ["C:\\codex.js"] }),
     spawnProcess: (file, args, spawnOptions) => {
@@ -152,6 +158,8 @@ test("invokes Codex with JSONL and workspace-write without a shell or Vanessa pr
     assert.equal(result.status, "completed");
     assert.equal(result.exitCode, 0);
     assert.equal(result.branch, "feature/test");
+    assert.deepEqual(result.changedFiles, ["services/orchestrator/src/tests/new.test.ts"]);
+    assert.match(result.diffSummary, /1 file changed/);
     assert.equal(result.verification, undefined, "a Codex turn is not independent verification");
     assert.match(result.spokenSummary, /not independently verified/i);
     assert.equal(f.calls.spawnOptions?.shell, false);
@@ -167,6 +175,24 @@ test("invokes Codex with JSONL and workspace-write without a shell or Vanessa pr
     if (original === undefined) delete process.env.SARVAM_API_KEY;
     else process.env.SARVAM_API_KEY = original;
   }
+});
+
+test("reports allowed-path scope violations without reverting the resulting diff", async () => {
+  const f = fixture({ events: successEvents, changedFiles: ["services/orchestrator/src/core/orchestrator.ts"] });
+  const result = await runCodexTask(
+    {
+      projectPath: "C:\\Projects\\Vanessa",
+      prompt: "Edit only one test file.",
+      allowedPaths: ["services/orchestrator/src/tests"],
+    },
+    { taskId: "codex-scope-violation" },
+    f.deps,
+  );
+  assert.equal(result.success, false);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.scopeViolations, ["services/orchestrator/src/core/orchestrator.ts"]);
+  assert.match(result.error, /Changes were preserved/);
+  assert.deepEqual(result.changedFiles, ["services/orchestrator/src/core/orchestrator.ts"]);
 });
 
 test("does not treat exit code zero without turn.completed and final assistant text as success", async () => {
