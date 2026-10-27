@@ -46,6 +46,17 @@ jobs:
         run: choco install innosetup --yes --no-progress
       - name: Build installer EXE
         run: pnpm run package:windows-installer
+      - name: Sign installer (required for version-tag releases)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $requireSignature = $env:GITHUB_REF -like 'refs/tags/v*'
+          ./scripts/sign-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.exe' -RequireSignature:$requireSignature
+      - name: Install and uninstall smoke test
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.exe'
       - name: Upload installer and bootstrap ZIP
         uses: actions/upload-artifact@v4
         with:
