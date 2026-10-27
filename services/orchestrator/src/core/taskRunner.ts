@@ -94,6 +94,18 @@ export function resolveTaskLocks(task: Task): string[] {
   const decl = getDeclaredLock(task.action);
   if (decl) locks.push(decl);
 
+  // Preserve an execution resource lock when a managed child process is
+  // unresolved. A named worktree gets a per-worktree lock; repair creation is
+  // serialized against the shared repository boundary.
+  if (task.action === "testing.run_incident_lab") {
+    const workspaceId = typeof task.params?.workspaceId === "string" ? task.params.workspaceId : "";
+    if (workspaceId) locks.push(`repair-workspace:${workspaceId}`);
+  } else if (["coding.prepare_patch", "incident.prepare_and_verify", "incident.investigate"].includes(task.action)) {
+    locks.push(`repair-repository:${path.resolve(typeof task.params?.repositoryRoot === "string" ? task.params.repositoryRoot : process.cwd())}`);
+  } else if (task.action === "terminal.run_command") {
+    locks.push("arbitrary-terminal-execution");
+  }
+
   if (task.skillName) {
     const skill = skillsRuntime.getSkill(task.skillName);
     if (skill?.locks) {
@@ -655,12 +667,24 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         agentTask,
       });
 
+      if (task.status === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
+        // Cancellation requested but the supervisor could not prove that the
+        // process tree stopped. Never downgrade this to cancelled/success.
+        memoryPalace.recordTaskCheckpoint(task, plan.id);
+        eventBus.emitEvent("task:update", task);
+        return;
+      }
       if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
         task.status = "cancelled";
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
         task.completedAt = Date.now();
-        task.verification = { verified: false, postconditions: ["Execution was cancelled before verification."], exitCode: 1, outcome: "blocked" };
+        task.verification = {
+          verified: false,
+          postconditions: ["Cancellation was requested. Process termination is only verified when the supervisor has supplied termination evidence."],
+          exitCode: undefined,
+          outcome: "cancelled",
+        };
         memoryPalace.recordTaskCheckpoint(task, plan.id);
         eventBus.emitEvent("task:update", task);
         return;
@@ -733,9 +757,13 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       eventBus.emitEvent("task.failed", { taskId: task.id, agentId: task.agent, error: task.error });
       memoryPalace.recordTaskCheckpoint(task, plan.id);
     } finally {
-      for (const l of locks) {
-        resourceLockManager.releaseLock(l, task.id);
+      if (task.status !== "termination_unconfirmed" && task.verification?.outcome !== "termination_unconfirmed") {
+        for (const l of locks) {
+          resourceLockManager.releaseLock(l, task.id);
+        }
       }
+      // A worker slot is a scheduler capacity token, not the resource itself;
+      // the conflicting resource locks stay held for unresolved processes.
       resourceLockManager.releaseSlot();
     }
 
