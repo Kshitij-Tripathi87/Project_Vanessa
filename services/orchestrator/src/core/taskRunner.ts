@@ -595,7 +595,7 @@ export function composeResponse(tasks: Task[]): string {
   if (summaries.length > 0) {
     return summaries.join(" ");
   }
-  return "All requested tasks have completed successfully.";
+  return "No verifiable completion summary is available. Check task evidence and final statuses before treating the request as complete.";
 }
 
 export async function runPlan(plan: Plan): Promise<Task[]> {
