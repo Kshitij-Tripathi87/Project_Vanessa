@@ -346,6 +346,11 @@ export class IncidentAgent {
         const processResult = await processSupervisor.run({
           taskId,
           actionId: "testing.run_incident_lab",
+          actionParams: {
+            suiteId: "incident-lab.regression",
+            workspaceId: workspace.taskId,
+            expectedDiffHash: diffHash,
+          },
           executable,
           args,
           cwd: workspace.worktreePath,
