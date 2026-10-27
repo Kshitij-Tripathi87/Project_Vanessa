@@ -94,6 +94,16 @@ const validateMemoryStore = (params: Record<string, any>) => {
   if (params.metadata !== undefined && (!params.metadata || typeof params.metadata !== "object" || Array.isArray(params.metadata))) {
     return "Memory metadata must be an object when supplied.";
   }
+  if (params.metadata !== undefined) {
+    try {
+      const serialized = JSON.stringify(params.metadata);
+      if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > 32768) {
+        return "Memory metadata must serialize to 32 KiB or less.";
+      }
+    } catch {
+      return "Memory metadata must be valid JSON data.";
+    }
+  }
   return undefined;
 };
 const validateMemoryList = (params: Record<string, any>) => {
