@@ -23,24 +23,78 @@ Add-Type -AssemblyName System.Drawing
 $logoPath = Join-Path $payloadRoot 'apps/desktop/assets/vanessa.png'
 $iconPath = Join-Path $payloadRoot 'apps/desktop/assets/vanessa.ico'
 if (-not (Test-Path $logoPath)) { throw "Vanessa logo is missing: $logoPath" }
-$bitmap = [System.Drawing.Bitmap]::new($logoPath)
-$iconHandle = $bitmap.GetHicon()
+# Write a classic 32-bit BMP-backed ICO frame. System.Drawing.Icon.Save can emit
+# a handle wrapper that Inno Setup rejects, so the ICO directory and DIB are written explicitly.
+$sourceBitmap = [System.Drawing.Bitmap]::new($logoPath)
+$canvas = [System.Drawing.Bitmap]::new(48, 48, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+$graphics = [System.Drawing.Graphics]::FromImage($canvas)
+$memory = [System.IO.MemoryStream]::new()
+$iconStream = $null
+$writer = $null
 try {
-    $icon = [System.Drawing.Icon]::FromHandle($iconHandle)
-    try { $stream = [System.IO.File]::Create($iconPath); try { $icon.Save($stream) } finally { $stream.Dispose() } } finally { $icon.Dispose() }
-} finally {
-    $bitmap.Dispose()
-    if (-not ('VanessaNativeIcon' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class VanessaNativeIcon {
-  [DllImport("user32.dll", SetLastError = true)]
-  public static extern bool DestroyIcon(IntPtr hIcon);
-}
-'@
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $scale = [Math]::Min(48.0 / $sourceBitmap.Width, 48.0 / $sourceBitmap.Height)
+    $drawWidth = [int][Math]::Round($sourceBitmap.Width * $scale)
+    $drawHeight = [int][Math]::Round($sourceBitmap.Height * $scale)
+    $drawX = [int][Math]::Floor((48 - $drawWidth) / 2.0)
+    $drawY = [int][Math]::Floor((48 - $drawHeight) / 2.0)
+    $graphics.DrawImage($sourceBitmap, $drawX, $drawY, $drawWidth, $drawHeight)
+
+    # ICONDIR + one ICONDIRENTRY (22 bytes total), then a 48x48 32-bit DIB.
+    $pixelBytes = 48 * 48 * 4
+    $maskStride = [int]([Math]::Ceiling(48 / 32.0) * 4)
+    $maskBytes = $maskStride * 48
+    $imageBytes = 40 + $pixelBytes + $maskBytes
+    $iconStream = [System.IO.File]::Create($iconPath)
+    $writer = [System.IO.BinaryWriter]::new($iconStream)
+    $writer.Write([UInt16]0)       # reserved
+    $writer.Write([UInt16]1)       # icon resource
+    $writer.Write([UInt16]1)       # one image frame
+    $writer.Write([Byte]48)        # width
+    $writer.Write([Byte]48)        # height
+    $writer.Write([Byte]0)         # palette colors
+    $writer.Write([Byte]0)         # reserved
+    $writer.Write([UInt16]1)       # planes
+    $writer.Write([UInt16]32)      # bits per pixel
+    $writer.Write([UInt32]$imageBytes)
+    $writer.Write([UInt32]22)      # image offset
+
+    # BITMAPINFOHEADER: height is doubled because ICO DIBs include an AND mask.
+    $writer.Write([UInt32]40)
+    $writer.Write([Int32]48)
+    $writer.Write([Int32]96)
+    $writer.Write([UInt16]1)
+    $writer.Write([UInt16]32)
+    $writer.Write([UInt32]0)       # BI_RGB
+    $writer.Write([UInt32]$pixelBytes)
+    $writer.Write([Int32]0)
+    $writer.Write([Int32]0)
+    $writer.Write([UInt32]0)
+    $writer.Write([UInt32]0)
+
+    # DIB pixels are bottom-up BGRA; alpha is retained.
+    for ($y = 47; $y -ge 0; $y--) {
+        for ($x = 0; $x -lt 48; $x++) {
+            $pixel = $canvas.GetPixel($x, $y)
+            $writer.Write([Byte]$pixel.B)
+            $writer.Write([Byte]$pixel.G)
+            $writer.Write([Byte]$pixel.R)
+            $writer.Write([Byte]$pixel.A)
+        }
     }
-    [VanessaNativeIcon]::DestroyIcon($iconHandle) | Out-Null
+    # Transparent AND mask; rows are padded to a 32-bit boundary.
+    $writer.Write([byte[]]::new($maskBytes))
+    $writer.Flush()
+} finally {
+    if ($writer) { $writer.Dispose() } elseif ($iconStream) { $iconStream.Dispose() }
+    $memory.Dispose()
+    $graphics.Dispose()
+    $canvas.Dispose()
+    $sourceBitmap.Dispose()
+}
+if ((Get-Item $iconPath).Length -ne (22 + 40 + (48 * 48 * 4) + ([int]([Math]::Ceiling(48 / 32.0) * 4) * 48))) {
+    throw "Generated Vanessa icon has an unexpected ICO size."
 }
 $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 $isccPath = if ($iscc) { $iscc.Source } else { $null }
