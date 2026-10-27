@@ -36,7 +36,8 @@ export class VanessaOrchestrator {
     const work: Promise<"cancelled" | "termination_unconfirmed">[] = [];
     for (const plannedTask of plannedTasks) {
       // runPlan owns cloned task records while execution is in flight.
-      const task = activeTasks.get(plannedTask.id) || plannedTask;
+      const activeTask = activeTasks.get(plannedTask.id);
+      const task = activeTask?.parentId === request.plan?.id ? activeTask : plannedTask;
       if (!["pending", "running", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) continue;
       work.push(cancelTaskWithProof(
         task,
@@ -312,7 +313,7 @@ export class VanessaOrchestrator {
       return `${prefix}Done. Successfully completed ${actions.join(" and ")}.`;
     }
 
-    return `${prefix}All requested tasks have completed successfully.`;
+    return `${prefix}No verifiable completion summary is available. Check the task evidence and final statuses before treating this request as complete.`;
   }
 }
 
