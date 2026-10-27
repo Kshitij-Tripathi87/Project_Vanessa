@@ -155,6 +155,13 @@ export interface Task {
   approvalDigest?: string;
   approvalPolicyVersion?: string;
   approvalConsumedAt?: number;
+  /** Immutable repository snapshot captured when a repair approval is requested. */
+  approvalRepositoryRoot?: string;
+  approvalBranch?: string;
+  approvalBaseCommit?: string;
+  approvalWorkingTreeDigest?: string;
+  approvalTarget?: string;
+  approvalPatchContract?: string;
 }
 
 export interface Plan {
