@@ -13,7 +13,7 @@ import type {
   SpecialistAgent,
 } from "@vanessa/shared";
 import { eventBus } from "../core/eventBus.js";
-import { processSupervisor, type ManagedProcessResult } from "../core/processSupervisor.js";
+import { getIncidentLabTestInvocation, processSupervisor, type ManagedProcessResult } from "../core/processSupervisor.js";
 import { repairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
 
 const execFileAsync = promisify(execFile);
@@ -269,10 +269,7 @@ export class TestingAgent implements SpecialistAgent {
     const taskId = ctx?.task?.id || `test-${randomUUID()}`;
     let processResult: ManagedProcessResult;
     try {
-      const executable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
-      const args = process.platform === "win32"
-        ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
-        : ["--filter", "@vanessa/incident-lab", "test"];
+      const { executable, args } = getIncidentLabTestInvocation(workspace.worktreePath);
       processResult = await processSupervisor.run({
         taskId,
         actionId: "testing.run_incident_lab",
