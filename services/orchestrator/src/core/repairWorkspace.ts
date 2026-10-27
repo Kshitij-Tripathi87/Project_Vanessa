@@ -75,7 +75,16 @@ function isContained(parent: string, target: string): boolean {
  * worktree container itself does not make the base checkout appear dirty.
  */
 export class RepairWorkspaceService {
+  private readonly workspaces = new Map<string, RepairWorkspace>();
+
   constructor(private readonly startDirectory: string = process.cwd()) {}
+
+  getWorkspace(workspaceId: string): RepairWorkspace | undefined {
+    if (typeof workspaceId !== "string" || !workspaceId.trim() || workspaceId.includes("/") || workspaceId.includes("\\")) {
+      return undefined;
+    }
+    return this.workspaces.get(workspaceId);
+  }
 
   async create(taskId: string): Promise<RepairWorkspace> {
     if (typeof taskId !== "string" || !taskId.trim()) {
@@ -185,7 +194,7 @@ export class RepairWorkspaceService {
       );
     }
 
-    return {
+    const workspace: RepairWorkspace = {
       taskId,
       repositoryRoot,
       worktreePath,
@@ -195,6 +204,8 @@ export class RepairWorkspaceService {
       baseStatus,
       createdAt: new Date().toISOString(),
     };
+    this.workspaces.set(taskId, workspace);
+    return workspace;
   }
 
   async isBaseCheckoutUnchanged(workspace: RepairWorkspace): Promise<boolean> {
