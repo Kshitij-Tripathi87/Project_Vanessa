@@ -1,12 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { eventBus } from "../core/eventBus.js";
-import { processSupervisor } from "../core/processSupervisor.js";
 import type { AgentRunContext } from "@vanessa/shared";
-import { repairWorkspaceService, RepairWorkspaceError } from "../core/repairWorkspace.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -252,206 +250,42 @@ export class IncidentAgent {
   /**
    * Step 4: Safe Execution & Local Test Verification
    */
-  async prepareFixAndVerify(params: Record<string, any>): Promise<any> {
-    const taskId = typeof params.taskId === "string" && params.taskId.trim() ? params.taskId : `incident-${randomUUID()}`;
-    const deploymentStatus = "REFUSED_PER_POLICY";
-    let workspace;
-    try {
-      workspace = await repairWorkspaceService.create(taskId);
-    } catch (error: any) {
-      const code = error instanceof RepairWorkspaceError ? error.code : "WORKSPACE_CREATION_FAILED";
-      const detail = typeof error?.message === "string" ? error.message : "Repair workspace could not be created.";
-      const blocked = code === "BASE_CHECKOUT_DIRTY";
-      const result = {
-        status: blocked ? "blocked" : "inconclusive",
-        success: false,
-        taskId,
-        patchApplied: false, testsPassed: false, testExitCode: null, evidence: [],
-        errorCode: code, error: detail,
-        summary: detail, spokenSummary: detail,
-        verification: { passed: false, details: detail },
-        data: {
-          outcome: blocked ? "blocked" : "inconclusive",
-          taskId, patchApplied: false, testsPassed: false,
-          errorCode: code, error: detail,
-          deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
-        },
-        deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
-      };
-      eventBus.emitEvent("audit:log", {
-        id: `audit-${Date.now()}`, timestamp: Date.now(), source: "desktop_hud", agent: "incident",
-        action: "incident.prepare_and_verify", resource: taskId, risk: "high", permission: "blocked",
-        status: "warn", result, details: "Repair was not started because the isolated workspace precondition failed.",
-      });
-      return result;
-    }
-
-    const relativeTarget = "packages/incident-lab/src/checkout.ts";
-    const checkoutFile = path.resolve(workspace.worktreePath, relativeTarget);
-    const evidence: Record<string, any>[] = [];
-    let patchApplied = false, testsPassed = false;
-    let testExitCode: number | null = null;
-    let testOutput = "", diff = "", diffHash = "";
-    let testReport: { passed: number; total: number } | undefined;
-    let changedFiles: string[] = [];
-    let outcome: "success" | "failed" | "inconclusive" = "inconclusive";
-    let failureReason = "";
-
-    if (!fs.existsSync(checkoutFile)) {
-      failureReason = `Required patch target does not exist in isolated worktree: ${relativeTarget}`;
-    } else {
-      const originalContent = fs.readFileSync(checkoutFile, "utf8");
-      const targetLine = "const discount = (subtotal * promo.discountRate) / 100;";
-      const matches = originalContent.split(targetLine).length - 1;
-      if (matches !== 1) {
-        failureReason = matches === 0
-          ? "Expected vulnerable source line was not present; no patch was applied."
-          : "Expected source line is ambiguous; refusing to patch multiple locations.";
-      } else {
-        const replacement = "const discountRate = promo?.discountRate ?? 0;\n  const discount = (subtotal * discountRate) / 100;";
-        const patchedContent = originalContent.replace(targetLine, replacement);
-        if (patchedContent === originalContent) {
-          failureReason = "Patch would be a no-op; no successful repair can be claimed.";
-        } else {
-          try {
-            fs.writeFileSync(checkoutFile, patchedContent, "utf8");
-            const actualContent = fs.readFileSync(checkoutFile, "utf8");
-            if (actualContent !== patchedContent || !actualContent.includes(replacement)) {
-              failureReason = "On-disk source did not match the intended patch after write.";
-            } else patchApplied = true;
-          } catch (error: any) {
-            failureReason = `Patch write/readback failed: ${error?.message || "unknown error"}`;
-          }
-        }
-      }
-    }
-
-    if (patchApplied) {
-      try {
-        const diffResult = await execFileAsync("git", ["diff", "--no-ext-diff", "--", relativeTarget], {
-          cwd: workspace.worktreePath, timeout: 10000, maxBuffer: 512 * 1024, windowsHide: true, encoding: "utf8",
-        });
-        diff = diffResult.stdout;
-        diffHash = createHash("sha256").update(diff).digest("hex");
-        const names = await execFileAsync("git", ["diff", "--name-only"], {
-          cwd: workspace.worktreePath, timeout: 10000, windowsHide: true, encoding: "utf8",
-        });
-        changedFiles = names.stdout.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-        if (!diff.trim() || changedFiles.length !== 1 || changedFiles[0] !== relativeTarget) {
-          patchApplied = false;
-          failureReason = "Observed diff is empty or includes unexpected changed files.";
-        } else {
-          evidence.push({ type: "patch", target: relativeTarget, diffHash, changedFiles, baseCommit: workspace.baseCommit, worktreePath: workspace.worktreePath });
-        }
-      } catch (error: any) {
-        patchApplied = false;
-        failureReason = `Patch diff inspection failed: ${error?.message || "unknown error"}`;
-      }
-    }
-
-    if (patchApplied) {
-      try {
-        const executable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
-        const args = process.platform === "win32"
-          ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
-          : ["--filter", "@vanessa/incident-lab", "test"];
-        const processResult = await processSupervisor.run({
-          taskId,
-          actionId: "testing.run_incident_lab",
-          actionParams: {
-            suiteId: "incident-lab.regression",
-            workspaceId: workspace.taskId,
-            expectedDiffHash: diffHash,
-          },
-          executable,
-          args,
-          cwd: workspace.worktreePath,
-          timeoutMs: 25000,
-          maxOutputBytes: 256 * 1024,
-        });
-        testOutput = [processResult.stdout, processResult.stderr].filter(Boolean).join("\n").slice(-20000);
-        testExitCode = processResult.exitCode;
-        const match = testOutput.match(/ALL REGRESSION TESTS PASSED\s*\((\d+)\s*\/\s*(\d+)\)/);
-        if (match) testReport = { passed: Number(match[1]), total: Number(match[2]) };
-        testsPassed = processResult.status === "exited" && testExitCode === 0 &&
-          Boolean(testReport && testReport.total > 0 && testReport.passed === testReport.total) &&
-          !processResult.stdoutTruncated && !processResult.stderrTruncated;
-        outcome = testsPassed ? "success" :
-          processResult.status === "exited" && testExitCode !== 0 ? "failed" : "inconclusive";
-        if (!testsPassed) failureReason = processResult.error ||
-          (testExitCode !== null && testExitCode !== 0
-            ? `Regression suite exited with code ${testExitCode}.`
-            : "Process supervisor did not produce a valid structured passing result.");
-        evidence.push({
-          type: "test-run", suiteId: "incident-lab.regression", runId: processResult.runId,
-          command: "pnpm --filter @vanessa/incident-lab test", processStatus: processResult.status,
-          exitCode: testExitCode, report: testReport, outputDigest: processResult.outputDigest,
-          stdoutTruncated: processResult.stdoutTruncated, stderrTruncated: processResult.stderrTruncated,
-          terminationVerified: processResult.terminationVerified,
-        });
-      } catch (error: any) {
-        testOutput = typeof error?.message === "string" ? error.message : "Test process execution failed.";
-        testExitCode = null;
-        testsPassed = false;
-        outcome = "inconclusive";
-        failureReason = "Regression runner failed to produce a process-supervisor result.";
-        evidence.push({
-          type: "test-run", suiteId: "incident-lab.regression", error: testOutput,
-          outputDigest: createHash("sha256").update(testOutput).digest("hex"),
-        });
-      }
-    }
-
-    const baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
-    evidence.push({
-      type: "workspace", repositoryRoot: workspace.repositoryRoot, worktreePath: workspace.worktreePath,
-      branch: workspace.branchName, baseCommit: workspace.baseCommit, baseCheckoutUnchanged,
-    });
-    if (!baseCheckoutUnchanged) {
-      outcome = "failed";
-      failureReason = "Base checkout changed during repair; isolation invariant failed.";
-    }
-    if (!patchApplied && outcome === "success") outcome = "inconclusive";
-    if (!patchApplied && !failureReason) failureReason = "No verifiable patch was applied.";
-    if (outcome !== "success") testsPassed = false;
-
-    const detail = outcome === "success"
-      ? `Patch and regression suite verified in isolated worktree ${workspace.branchName}; base checkout unchanged.`
-      : failureReason || "Required verification evidence was not established.";
-    const verificationResult = {
-      status: outcome,
-      success: outcome === "success",
-      taskId,
-      branch: workspace.branchName, worktreePath: workspace.worktreePath,
-      baseCommit: workspace.baseCommit, patchApplied, diffHash: diffHash || undefined, changedFiles,
-      testsPassed, testSuiteRun: patchApplied ? "incident-lab.regression" : undefined, testExitCode,
-      testReport, testOutput, baseCheckoutUnchanged, evidence,
-      error: outcome === "success" ? undefined : detail,
+  async prepareFixAndVerify(_params: Record<string, any>): Promise<any> {
+    const detail = "Combined repair-and-test execution is disabled. Use the staged coding.prepare_patch operation, approve its exact worktree/base-commit/patch contract, then separately approve testing.run_incident_lab for the resulting diff digest.";
+    const result = {
+      status: "blocked",
+      success: false,
+      patchApplied: false,
+      testsPassed: false,
+      error: detail,
       summary: detail,
       spokenSummary: detail,
-      verification: { passed: outcome === "success", details: detail },
-      data: {
-        outcome: outcome === "success" ? "repair_verified" : outcome,
-        taskId, status: outcome, branch: workspace.branchName, worktreePath: workspace.worktreePath,
-        baseCommit: workspace.baseCommit, patchApplied, diffHash: diffHash || undefined, changedFiles,
-        testsPassed, testSuiteRun: patchApplied ? "incident-lab.regression" : undefined, testExitCode,
-        testReport, testOutput, baseCheckoutUnchanged, evidence,
-        error: outcome === "success" ? undefined : detail,
-        deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
-      },
-      deploymentStatus, deploymentReason: "Deployment is outside this workflow and was not attempted.",
+      verification: { passed: false, details: detail },
+      evidence: [{
+        type: "policy",
+        actionId: "incident.prepare_and_verify",
+        processStarted: false,
+        timestamp: new Date().toISOString(),
+        detail,
+      }],
+      data: { outcome: "blocked", patchApplied: false, testsPassed: false, processStarted: false },
+      deploymentStatus: "REFUSED_PER_POLICY",
+      deploymentReason: "Deployment is outside this workflow and was not attempted.",
     };
     eventBus.emitEvent("audit:log", {
-      id: `audit-${Date.now()}`, timestamp: Date.now(), source: "desktop_hud", agent: "incident",
-      action: "incident.prepare_and_verify", resource: `worktree:${workspace.worktreePath}`,
-      risk: "high", permission: "allowed",
-      status: outcome === "success" ? "success" : outcome === "failed" ? "error" : "warn",
-      result: verificationResult,
-      details: outcome === "success"
-        ? "Patch diff, structured regression report, and base-checkout preservation were verified."
-        : `Repair did not pass all evidence gates: ${verificationResult.error}`,
+      id: `audit-${Date.now()}`,
+      timestamp: Date.now(),
+      source: "desktop_hud",
+      agent: "incident",
+      action: "incident.prepare_and_verify",
+      resource: "incident-lab",
+      risk: "high",
+      permission: "blocked",
+      status: "blocked",
+      result,
+      details: detail,
     });
-    return verificationResult;
+    return result;
   }
 
   /**
@@ -471,51 +305,53 @@ export class IncidentAgent {
       confidence: worker.confidence,
       data: worker.findings,
     }));
+
     if (diagnosis.status !== "diagnosed" || !diagnosis.proposedFix) {
-      const summary = "Investigation is inconclusive. The available source and log evidence did not establish the targeted defect; no patch or deployment was attempted.";
-      const verification = {
-        status: "inconclusive",
-        patchApplied: false,
-        testsPassed: false,
-        error: "Repair was not attempted because current source evidence did not establish the targeted defect.",
-        deploymentStatus: "REFUSED_PER_POLICY",
-      };
+      const summary = "Investigation is inconclusive. Source and log evidence did not establish the targeted defect; no patch or test process was started.";
       return {
         status: "partial",
         success: false,
-        investigationId, workers, diagnosis, summary, spokenSummary: summary,
+        investigationId,
+        workers,
+        diagnosis,
+        summary,
+        spokenSummary: summary,
         verification: { passed: false, details: summary },
         evidence: workerEvidence,
         artifacts: [],
-        data: { outcome: "inconclusive", investigationId, workers, diagnosis, verification, summary },
+        data: {
+          outcome: "inconclusive",
+          investigationId,
+          workers,
+          diagnosis,
+          patchApplied: false,
+          testsPassed: false,
+          processStarted: false,
+          deploymentStatus: "REFUSED_PER_POLICY",
+        },
       };
     }
-    const verification = await this.prepareFixAndVerify({ ...params, taskId: params.taskId || investigationId });
-    const outcome = verification.status === "success" ? "success"
-      : verification.status === "failed" ? "failed"
-      : verification.status === "blocked" ? "blocked" : "inconclusive";
-    const summary = outcome === "success"
-      ? `Investigation verified a patch in worktree ${verification.worktreePath}; ${verification.testReport.passed}/${verification.testReport.total} regression tests passed. Base checkout unchanged. Deployment was not attempted.`
-      : outcome === "failed"
-        ? `Investigation failed a required verification gate: ${verification.error || "see evidence"}.`
-        : outcome === "blocked"
-          ? `Investigation was blocked before repair: ${verification.error || "a required precondition was not met"}.`
-          : `Investigation is inconclusive: ${verification.error || "required verification evidence is missing"}.`;
-    const evidence = [...workerEvidence, ...(Array.isArray(verification.evidence) ? verification.evidence : [])];
+
+    const summary = "Diagnosis is supported by observed source and log evidence. No patch was applied and no tests were run. Continue through the separately approved coding.prepare_patch and testing.run_incident_lab stages.";
     return {
-      status: outcome === "success" ? "completed" : outcome === "failed" ? "failed" : outcome === "blocked" ? "blocked" : "partial",
-      success: outcome === "success",
+      status: "completed",
+      success: true,
       investigationId,
-      workers, diagnosis, verification, summary, spokenSummary: summary,
-      evidence,
-      artifacts: verification.worktreePath ? [`worktree:${verification.worktreePath}`] : [],
-      verification: { passed: outcome === "success", details: summary },
+      workers,
+      diagnosis,
+      summary,
+      spokenSummary: summary,
+      verification: { passed: true, details: "The diagnosis is supported by direct source evidence plus a matching observed log signature; no repair success is claimed." },
+      evidence: workerEvidence,
+      artifacts: [],
       data: {
-        outcome: outcome === "success" ? "repair_verified" : outcome,
-        investigationId, workers, diagnosis, verification, summary,
-        worktreePath: verification.worktreePath, branch: verification.branch,
-        baseCommit: verification.baseCommit, patchApplied: verification.patchApplied,
-        testsPassed: verification.testsPassed, testReport: verification.testReport,
+        outcome: "diagnosed",
+        investigationId,
+        workers,
+        diagnosis,
+        patchApplied: false,
+        testsPassed: false,
+        processStarted: false,
         deploymentStatus: "REFUSED_PER_POLICY",
       },
     };
