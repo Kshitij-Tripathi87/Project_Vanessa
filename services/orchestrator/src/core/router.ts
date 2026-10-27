@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 // import { GeminiClient } from "./geminiClient.js";
 import { SarvamChatClient } from "./sarvamChat.js";
 import { DEFAULT_NVIDIA_MODEL, NvidiaClient } from "./nvidiaClient.js";
-import { DEFAULT_OLLAMA_MODEL, OllamaClient } from "./ollamaClient.js";
+import { OllamaClient } from "./ollamaClient.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
