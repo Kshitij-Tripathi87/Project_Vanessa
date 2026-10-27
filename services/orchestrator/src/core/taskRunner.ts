@@ -11,7 +11,9 @@ import { recordAgentResult } from "./agentResult.js";
 import { cancelCodexTask } from "../agents/codex-task-runner.js";
 import { processSupervisor } from "./processSupervisor.js";
 import { resolveManagedAction } from "./actionRegistry.js";
+import { repairWorkspaceService } from "./repairWorkspace.js";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 export { recordAgentResult } from "./agentResult.js";
 
@@ -35,14 +37,65 @@ function stableJson(value: any): string {
 export function computeApprovalDigest(task: Task, expiresAt: number): string {
   const params = task.params || {};
   const managed = resolveManagedAction(task.action, params);
+  let repositoryBinding: Record<string, any> | null = null;
+
+  if (["coding.prepare_patch", "incident.prepare_and_verify"].includes(task.action)) {
+    // Resolve the actual repository identity at both approval creation and
+    // consumption. A branch/head/working-tree change invalidates the approval.
+    const git = (args: string[]) => execFileSync("git", args, {
+      cwd: process.cwd(),
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 128 * 1024,
+    });
+    try {
+      const repositoryRoot = path.resolve(git(["rev-parse", "--show-toplevel"]).trim());
+      const branch = git(["branch", "--show-current"]).trim();
+      const baseCommit = git(["rev-parse", "HEAD"]).trim();
+      const status = git(["status", "--porcelain=v1", "--untracked-files=all"]);
+      if (!repositoryRoot || !branch || !baseCommit) throw new Error("Repository identity is incomplete.");
+      if (status.trim()) throw new Error("Repair approval is blocked because the base checkout is dirty.");
+      repositoryBinding = {
+        repositoryRoot,
+        branch,
+        baseCommit,
+        workingTreeDigest: createHash("sha256").update(status).digest("hex"),
+        targetRelativePath: "packages/incident-lab/src/checkout.ts",
+        patchContract: "incident-lab.checkout-promo-null-guard.v1",
+      };
+    } catch (error: any) {
+      throw new Error(
+        `Cannot bind approval to a clean repository and base commit: ${error?.message || "Git inspection failed"}`
+      );
+    }
+  } else if (task.action === "testing.run_incident_lab") {
+    const workspace = typeof params.workspaceId === "string"
+      ? repairWorkspaceService.getWorkspace(params.workspaceId)
+      : undefined;
+    if (!workspace || typeof params.expectedDiffHash !== "string") {
+      throw new Error("Test approval cannot be bound without a registered worktree and patch digest.");
+    }
+    repositoryBinding = {
+      repositoryRoot: workspace.repositoryRoot,
+      worktreePath: workspace.worktreePath,
+      workspaceId: workspace.taskId,
+      baseCommit: workspace.baseCommit,
+      branch: workspace.branchName,
+      targetRelativePath: "packages/incident-lab/src/checkout.ts",
+      expectedDiffHash: params.expectedDiffHash,
+    };
+  }
+
   const binding = {
     policyVersion: APPROVAL_POLICY_VERSION,
     taskId: task.id,
     actionId: task.action,
     normalizedArgs: params,
-    target: params.workspacePath || params.worktreePath || params.workspaceId || params.targetPath ||
-      params.path || params.deviceId || params.resource || task.agent,
-    baseCommit: params.baseCommit || params.expectedBaseCommit || null,
+    target: repositoryBinding || params.workspacePath || params.worktreePath || params.workspaceId ||
+      params.targetPath || params.path || params.deviceId || params.resource || task.agent,
+    baseCommit: params.baseCommit || params.expectedBaseCommit || repositoryBinding?.baseCommit || null,
     sideEffectClass: managed.sideEffectClass || "unclassified",
     risk: task.risk || "medium",
     expiresAt,
