@@ -138,11 +138,17 @@ export class WindowsAgent implements SpecialistAgent {
           ? control + ' ' + operation + ' verified: ' + JSON.stringify(result.observed)
           : control + ' operation failed: ' + (result.error?.message ?? 'Unverified state');
         return {
-          agentId: this.id, status: 'completed', success: result.success,
-          summary, spokenSummary: summary, evidence: [], artifacts: [],
-          verification: {passed: result.success && result.verification.passed, details: summary},
-          data: {actionsAttempted: [JSON.stringify(request)], actualObservations: result.observed,
-            failures: result.success ? [] : [result.error?.message ?? 'Control failed'], controls: result},
+          agentId: this.id, status: result.success ? "completed" : "failed", success: result.success,
+          summary, spokenSummary: summary,
+          evidence: [{
+            description: summary, source: "windows-control.readback", timestamp: new Date().toISOString(),
+            confidence: result.success && result.verification.passed ? 1 : 0,
+            data: { request, observed: result.observed, verification: result.verification },
+          }],
+          artifacts: [],
+          verification: { passed: result.success && result.verification.passed, details: summary },
+          data: { outcome: result.success && result.verification.passed ? "succeeded" : "failed", actionsAttempted: [JSON.stringify(request)], actualObservations: result.observed,
+            failures: result.success ? [] : [result.error?.message ?? "Control failed"], controls: result },
         };
       }
 
@@ -163,19 +169,24 @@ export class WindowsAgent implements SpecialistAgent {
           : `Audio operation failed: ${res.error?.message ?? 'No verified audio state returned'}`;
         return {
           agentId: this.id,
-          status: "completed",
+          status: res.success ? "completed" : "failed",
           success: res.success,
           summary,
           spokenSummary: summary,
-          evidence: [],
+          evidence: [{
+            description: summary, source: "windows-audio.readback", timestamp: new Date().toISOString(),
+            confidence: res.success && Boolean(observed) ? 1 : 0,
+            data: { operation: request, observed, device: res.device, error: res.error },
+          }],
           artifacts: [],
           data: {
+            outcome: res.success ? "succeeded" : "failed",
             actionsAttempted: [JSON.stringify(request)],
             actualObservations: observed,
-            failures: res.success ? [] : [res.error?.message ?? 'Audio verification failed'],
+            failures: res.success ? [] : [res.error?.message ?? "Audio verification failed"],
             audio: res,
           },
-          verification: { passed: res.success, details: summary },
+          verification: { passed: res.success && Boolean(observed), details: summary },
         };
       }
 
@@ -207,18 +218,23 @@ export class WindowsAgent implements SpecialistAgent {
       case "windows.app_close": {
         const appName = params.appName || params.name;
         const res = await this.closeApp(appName);
+        const detail = res.output;
         return {
           agentId: this.id,
-          status: "completed",
+          status: res.success ? "completed" : "failed",
           success: res.success,
-          summary: `Terminated application: ${appName}`,
-          spokenSummary: `Closed ${appName}.`,
-          evidence: [],
+          summary: res.success ? detail : "Could not verify that " + String(appName || "the requested application") + " closed: " + detail,
+          spokenSummary: res.success ? "The application close state was verified." : "I could not verify that the application closed.",
+          evidence: [{ description: detail, source: "windows.process-close", timestamp: startTime, confidence: res.success ? 1 : 0,
+            data: { requestedApplication: appName ?? null, processStateVerified: res.success } }],
           artifacts: [],
+          verification: { passed: res.success, details: detail },
           data: {
-            actionsAttempted: [`Stop-Process -Name '${appName}'`],
-            actualObservations: res.output,
-            failures: [],
+            outcome: res.success ? "succeeded" : "failed",
+            actionsAttempted: res.success ? ["Stop-Process through allow-listed process mapping"] : [],
+            actualObservations: detail,
+            processStateVerified: res.success,
+            failures: res.success ? [] : [detail],
           },
         };
       }
@@ -226,15 +242,19 @@ export class WindowsAgent implements SpecialistAgent {
       case "screenshot.capture":
       case "windows.screenshot_capture": {
         const res = await this.captureScreenshot();
+        const detail = res.success
+          ? "Captured and verified a non-empty Windows desktop screenshot at " + res.path + "."
+          : "Screenshot capture failed or produced no verifiable file.";
         return {
           agentId: this.id,
-          status: "completed",
+          status: res.success ? "completed" : "failed",
           success: res.success,
-          summary: "Captured Windows desktop screenshot",
-          spokenSummary: "Screenshot captured.",
-          evidence: [],
-          artifacts: [res.path],
-          data: res,
+          summary: detail,
+          spokenSummary: res.success ? "Screenshot captured and the file was verified." : "I could not verify screenshot capture.",
+          evidence: res.success ? [{ description: detail, source: res.path, timestamp: new Date().toISOString(), confidence: 1, data: { artifactExists: true } }] : [],
+          artifacts: res.success ? [res.path] : [],
+          verification: { passed: res.success, details: detail },
+          data: { outcome: res.success ? "succeeded" : "failed", path: res.path || null, artifactExists: res.success },
         };
       }
 
