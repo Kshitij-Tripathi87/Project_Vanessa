@@ -167,8 +167,11 @@ fastify.post("/api/reject", async (request, reply) => {
 });
 
 fastify.post("/api/cancel", async (_request, reply) => {
-  orchestrator.cancelAll();
-  return reply.send({ success: true, message: "Emergency kill switch engaged." });
+  await orchestrator.cancelAll();
+  return reply.send({
+    success: true,
+    message: "Emergency cancellation processed. Inspect task statuses for any termination_unconfirmed operations; their conflicting locks remain held.",
+  });
 });
 
 fastify.post("/api/cancel/request", async (request, reply) => {
@@ -176,8 +179,16 @@ fastify.post("/api/cancel/request", async (request, reply) => {
   if (typeof body?.requestId !== "string" || !/^[a-zA-Z0-9:_-]{1,160}$/.test(body.requestId)) {
     return reply.status(400).send({ error: "Invalid requestId" });
   }
-  orchestrator.cancelRequest(body.requestId);
-  return { success: true, message: "Cancellation requested; already-started external actions may continue." };
+  const result = await orchestrator.cancelRequest(body.requestId);
+  return {
+    success: true,
+    ...result,
+    message: result.terminationUnconfirmed > 0
+      ? "Cancellation processed, but one or more process trees could not be verified stopped. Conflicting locks remain held."
+      : result.planningOnly
+        ? "Cancellation recorded before task execution; late planning results will not be allowed to start work."
+        : "Cancellation processed using process termination evidence.",
+  };
 });
 
 fastify.get("/api/status", async () => {
