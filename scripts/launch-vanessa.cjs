@@ -223,8 +223,8 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   process.env.CONVERSATION_PROVIDER ||= config.conversation;
   process.env.OLLAMA_BASE_URL ||= config.ollamaBaseUrl;
   process.env.OLLAMA_MODEL ||= config.ollamaModel;
-  process.env.VOICE_URL ||= 'ws://127.0.0.1:4505';
-  process.env.VOICE_MODEL ||= 'base';
+  process.env.VOICE_URL ||= config.localAsr?.url || process.env.WHISPER_URL || 'ws://127.0.0.1:4505';
+  process.env.VOICE_MODEL ||= process.env.WHISPER_MODEL || 'base';
   process.env.VOICE_LANGUAGE ||= 'auto';
   const { asr, tts } = config;
   for (const warning of config.missing) log('CONFIG WARNING', warning);

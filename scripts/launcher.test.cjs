@@ -70,7 +70,7 @@ test('provider selection rejects unsupported values and placeholders before star
     assert.throws(() => config({ PLANNER_PROVIDER: provider }, ['--text-only']), /Unsupported planning provider/);
     assert.throws(() => config({ PLANNER_PROVIDER: 'nvidia', SARVAM_CHAT_PROVIDER: provider }, ['--text-only']), /Unsupported conversation provider/);
   }
-  assert.throws(() => config({ NVIDIA_API_KEY: 'nvapi-placeholder-key' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
+  assert.throws(() => config({ PLANNER_PROVIDER: 'nvidia', NVIDIA_API_KEY: 'nvapi-placeholder-key' }, ['--text-only', '--codex-test']), /NVIDIA_API_KEY/);
 });
 test('selects existing providers without Fish requirements for ElevenLabs', () => {
   const result = config({ NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'elevenlabs', VOICE_TTS_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'test', ELEVENLABS_VOICE_ID: 'voice' });
