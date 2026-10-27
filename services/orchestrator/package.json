@@ -6,7 +6,7 @@
   "main": "./dist/server.js",
   "scripts": {
     "smoke:codex": "tsx src/scripts/codex-smoke.ts",
-    "test:codex": "tsx --test src/tests/codexLauncher.test.ts",
+    "test:codex": "tsx --test src/tests/codexLauncher.test.ts src/tests/codexTaskRunner.test.ts",
     "build": "tsc && node scripts/copy-windows-audio.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
