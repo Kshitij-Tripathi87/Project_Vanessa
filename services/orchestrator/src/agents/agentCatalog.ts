@@ -46,8 +46,8 @@ export const AGENT_CATALOG: CatalogAgent[] = [
         acceptanceCriteria: p("array", "Optional list of measurable acceptance criteria."),
         allowedPaths: p("array", "Optional repository-relative path scope; no absolute paths or parent-directory traversal."),
         timeoutMs: p("number", "Optional deadline in milliseconds, from 10000 to 900000."),
-      }, "{success, status, exitCode?, branch?, output?, evidence?, error?}. A clean exit and turn.completed event are not independent verification.", "high", true, ["coding_run"]),
-      action("codex.open", "Preferred action for ALL project coding work, even when the user does not say Codex. Preserve the user's task, constraints, relevant history, and completion criteria in prompt.", {
+      }, "{success, status, exitCode?, branch?, changedFiles?, diffSummary?, scopeViolations?, output?, evidence?, error?}. The allowedPaths list is checked against the Git diff after execution; it is not an OS-enforced per-path sandbox. A clean exit and turn.completed event are not independent verification.", "high", true, ["coding_run"]),
+      action("codex.open", "Use only when the user explicitly wants an interactive Codex terminal handoff; terminal launch does not mean the coding task was executed or verified.", {
         projectPath: p("string", "Absolute existing project directory; use the trusted current project in runtime context unless the user selected another project.", true),
         prompt: p("string", "Concrete coding instructions, including scope, relevant files if known, and the user's constraints. Do not fabricate repository findings.", true),
       }, "{success, status: started|failed, terminalPid?, projectPath?, output?, error?}. PID identifies the terminal. Started proves launch only.", "high"),
