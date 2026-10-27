@@ -15,10 +15,10 @@ Supported target: Windows 11.
    setup requires internet access and disk space; the default Ollama model is roughly
    2 GB, and the speech model download size depends on VOICE_MODEL.
 
-4. If startup fails after prerequisites are installed, run:
-      Launch-Vanessa.bat --doctor
-   If Vanessa is already running, use:
-      Launch-Vanessa.bat --doctor --live
+4. To validate local configuration and prerequisites without starting services, run:
+      node scripts\launch-vanessa.cjs --check
+   For a build-only compile check, run:
+      node scripts\launch-vanessa.cjs --build-only
 
 5. Start voice from the Vanessa HUD and speak a short phrase to verify microphone
    capture. The command-line doctor cannot grant Windows microphone permission or
