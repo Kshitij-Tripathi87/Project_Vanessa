@@ -122,6 +122,10 @@ if ($needsOllama) {
     $ollama = Get-Command ollama.exe -ErrorAction SilentlyContinue
     $ollamaExePath = if ($ollama) { $ollama.Source } else { $null }
     if (-not $ollamaExePath) {
+        $knownOllama = Join-Path $env:LOCALAPPDATA 'Programs/Ollama/ollama.exe'
+        if (Test-Path $knownOllama) { $ollamaExePath = $knownOllama }
+    }
+    if (-not $ollamaExePath) {
         if (-not $winget) { throw 'Ollama is required by the zero-key default and winget is unavailable. Install it from https://ollama.com/download/windows, then rerun setup.' }
         Invoke-Checked 'Install Ollama local model runtime' $winget.Source @('install', '--id', 'Ollama.Ollama', '--exact', '--silent', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
         $machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
