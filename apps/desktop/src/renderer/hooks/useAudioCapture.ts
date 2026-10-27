@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
+import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 
 export interface SentimentData {
@@ -663,7 +664,8 @@ export function useAudioCapture() {
       sourceNode.connect(analyserNode);
 
       // AudioWorklet keeps PCM conversion away from the renderer's main UI thread.
-      await openedContext.audioWorklet.addModule(new URL("../audio/pcmCapture.worklet.ts", import.meta.url));
+      // Compile TypeScript as a separate same-origin JavaScript module, never an inlined asset.
+      await openedContext.audioWorklet.addModule(pcmCaptureWorkletUrl);
       workletNode = new AudioWorkletNode(openedContext, "vanessa-pcm-capture", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -715,7 +717,8 @@ export function useAudioCapture() {
       setVoiceState("idle");
     } catch (error: unknown) {
       const name = (error as { name?: string } | null)?.name || "UnknownError";
-      console.warn("[useAudioCapture] Microphone initialization failed:", name);
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error(`[useAudioCapture] Microphone initialization failed (${name}): ${detail}`);
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
