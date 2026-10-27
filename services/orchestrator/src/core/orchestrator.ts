@@ -37,7 +37,9 @@ export class VanessaOrchestrator {
     for (const plannedTask of plannedTasks) {
       // runPlan owns cloned task records while execution is in flight.
       const activeTask = activeTasks.get(plannedTask.id);
-      const task = activeTask?.parentId === request.plan?.id ? activeTask : plannedTask;
+      // Optional chaining made the equality true when both sides were undefined,
+      // which allowed task to infer as possibly undefined.
+      const task = activeTask && activeTask.parentId === request.plan?.id ? activeTask : plannedTask;
       if (!["pending", "running", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) continue;
       work.push(cancelTaskWithProof(
         task,
