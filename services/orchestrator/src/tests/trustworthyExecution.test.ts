@@ -11,6 +11,7 @@ import { CodingAgent } from "../agents/coding.agent.js";
 import { DeveloperAgent } from "../agents/developer.agent.js";
 import { IncidentAgent } from "../agents/incident.agent.js";
 import { VanessaAgent } from "../agents/openjarvis.agent.js";
+import { MemoryAgent } from "../agents/memory.agent.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
@@ -185,6 +186,31 @@ test("legacy OpenJarvis/Vanessa shell, tool, status, schedule and goal aliases f
 
   assert.equal(resolveManagedAction("vanessa.ask", { query: "Explain the current task." }).blocked, undefined);
   assert.equal(resolveManagedAction("vanessa.ask", { query: "Explain the current task.", command: "echo unsafe" }).blocked, true);
+});
+
+test("memory agent returns real matches or inconclusive and never fabricates a historical record", async () => {
+  const agent = new MemoryAgent();
+  const noMatchQuery = "vanessa-trust-test-no-match-" + randomUUID();
+  const noMatch = await agent.execute("memory.retrieve", { query: noMatchQuery });
+  assert.equal(noMatch.status, "partial");
+  assert.equal(noMatch.success, false);
+  assert.equal((noMatch.data as Record<string, any>)?.outcome, "inconclusive");
+  assert.equal((noMatch.data as Record<string, any>)?.resultCount, 0);
+  assert.deepEqual((noMatch.data as Record<string, any>)?.records, []);
+  assert.doesNotMatch(noMatch.summary || "", /INC-842|missing null check/i);
+  assert.equal(noMatch.evidence?.[0]?.source, "memoryPalace.retrieve");
+
+  const malformed = await agent.execute("memory.retrieve", { query: "checkout", command: "echo unsafe" });
+  assert.equal(malformed.status, "blocked");
+  assert.equal((malformed.data as Record<string, any>)?.processStarted, false);
+
+  const unknown = await agent.execute("memory.execute_arbitrary", { query: "checkout" });
+  assert.equal(unknown.status, "blocked");
+  assert.equal((unknown.data as Record<string, any>)?.processStarted, false);
+
+  const invalidLimit = await agent.execute("memory.list", { limit: 0 });
+  assert.equal(invalidLimit.status, "blocked");
+  assert.equal((invalidLimit.data as Record<string, any>)?.processStarted, false);
 });
 
 test("incident memory retrieval reports the unmanaged Python bridge as disabled", async () => {
