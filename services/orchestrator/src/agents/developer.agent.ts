@@ -1,15 +1,48 @@
 import { runPowerShell } from "./powershell.js";
 import { openCodex } from "./codex-launcher.js";
-import { runCodexTask } from "./codex-task-runner.js";
-import { eventBus } from "../core/eventBus.js";
 import type { AgentRunContext } from "@vanessa/shared";
 
 export class DeveloperAgent {
   private vsCodePath = "C:\\Users\\21330\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd";
 
+  private blocked(action: string, reason: string): any {
+    return {
+      agentId: "developer",
+      status: "blocked",
+      success: false,
+      summary: reason,
+      spokenSummary: "I blocked this developer operation before launching a process.",
+      error: reason,
+      evidence: [{
+        description: "No process was started; the operation was rejected before execution.",
+        source: "developer-agent-containment",
+        timestamp: new Date().toISOString(),
+        confidence: 1,
+        data: { outcome: "blocked", actionId: action, processStarted: false },
+      }],
+      artifacts: [],
+      verification: { passed: false, details: reason },
+      data: { outcome: "blocked", actionId: action, processStarted: false },
+    };
+  }
+
   async execute(action: string, params: Record<string, any> = {}, context?: AgentRunContext): Promise<any> {
     switch (action) {
       case "codex.open":
+        if (
+          !context?.task ||
+          context.task.action !== "codex.open" ||
+          !context.task.approvalDigest ||
+          context.task.approvalConsumedAt === undefined ||
+          context.task.approvalPolicyVersion !== "trustworthy-execution-v1" ||
+          typeof context.task.approvalExpiresAt !== "number" ||
+          context.task.approvalExpiresAt <= Date.now()
+        ) {
+          return this.blocked(
+            action,
+            "Interactive Codex launch requires a live, consumed, task-bound approval. Direct agent invocation is not an authorization path."
+          );
+        }
         console.log(`[Codex] handoff project=${params.projectPath} promptCharacters=${typeof params.prompt === "string" ? params.prompt.length : 0}`);
         {
           const result = await openCodex(params);
@@ -18,24 +51,11 @@ export class DeveloperAgent {
           return result;
         }
 
-      case "codex.run_task": {
-        const taskId = context?.task?.id || "codex-" + Date.now();
-        const requestId = context?.task?.requestId;
-        const result = await runCodexTask(params, {
-          taskId,
-          requestId,
-          onProgress: (event) => eventBus.emitEvent("codex:progress", event),
-        });
-        console.log("[Codex] managed task=" + taskId + " status=" + result.status +
-          " exitCode=" + String(result.exitCode ?? "none") + "; independent verification required");
-        return {
-          ...result,
-          taskId,
-          agentId: "developer",
-          summary: typeof result.output === "string" ? result.output : undefined,
-          spokenSummary: result.spokenSummary || "The managed coding task returned without a verified result.",
-        };
-      }
+      case "codex.run_task":
+        return this.blocked(
+          action,
+          "Autonomous Codex task execution is disabled by Trustworthy Execution v1 policy. Prepare repairs only through the approved isolated-worktree workflow."
+        );
 
       case "vscode.open_project": {
         const projectPath = params.path || process.cwd();
