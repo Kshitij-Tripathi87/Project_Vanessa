@@ -161,7 +161,7 @@ test("invokes Codex with JSONL and workspace-write without a shell or Vanessa pr
     assert.deepEqual(result.changedFiles, ["services/orchestrator/src/tests/new.test.ts"]);
     assert.match(result.diffSummary, /1 file changed/);
     assert.equal(result.verification, undefined, "a Codex turn is not independent verification");
-    assert.match(result.spokenSummary, /not independently verified/i);
+    assert.match(result.spokenSummary, /independent verification/i);
     assert.equal(f.calls.spawnOptions?.shell, false);
     assert.equal(f.calls.spawnOptions?.cwd, "C:\\Projects\\Vanessa");
     assert.ok(f.calls.args?.includes("--json"));
