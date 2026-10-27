@@ -248,7 +248,7 @@ export class IncidentAgent {
   }
 
   /**
-   * Step 4: Safe Execution & Local Test Verification
+   * Combined patch-and-test execution remains blocked until every stage is individually approved.
    */
   async prepareFixAndVerify(_params: Record<string, any>): Promise<any> {
     const detail = "Combined repair-and-test execution is disabled. Use the staged coding.prepare_patch operation, approve its exact worktree/base-commit/patch contract, then separately approve testing.run_incident_lab for the resulting diff digest.";
