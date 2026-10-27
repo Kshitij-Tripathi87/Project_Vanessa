@@ -126,16 +126,16 @@ async function collectGitWorkspaceChanges(projectPath: string): Promise<CodexWor
     runGit(["ls-files", "--others", "--exclude-standard"]),
     runGit(["diff", "--stat", "HEAD"]),
   ]);
-  const files = [...new Set([...tracked, ...untracked].flatMap((group) => group.split(/\\r?\\n/)).filter(Boolean))]
-    .map((file) => file.replace(/\\\\/g, "/"))
+  const files = [...new Set([...tracked, ...untracked].flatMap((group) => group.split(/\r?\n/)).filter(Boolean))]
+    .map((file) => file.replace(/\\/g, "/"))
     .sort((a, b) => a.localeCompare(b));
   return { files, diffStat: redact(diffStat, 8_000) };
 }
 
 function findScopeViolations(files: string[], allowedPaths: string[]): string[] {
-  const roots = allowedPaths.map((item) => item.replace(/\\\\/g, "/").replace(/^\\.\\//, "").replace(/\\/$/, "").toLowerCase());
+  const roots = allowedPaths.map((item) => item.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "").toLowerCase());
   return files.filter((file) => {
-    const normalized = file.replace(/\\\\/g, "/").replace(/^\\.\\//, "").toLowerCase();
+    const normalized = file.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
     return !roots.some((root) => normalized === root || normalized.startsWith(root + "/"));
   });
 }
