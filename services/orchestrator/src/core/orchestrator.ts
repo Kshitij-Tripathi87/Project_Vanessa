@@ -187,7 +187,7 @@ export class VanessaOrchestrator {
     // 3. Inspect results to build spoken response
     const pendingApproval = tasks.filter((t) => t.status === "awaiting_approval");
     const failedTasks = tasks.filter((t) => t.status === "failed");
-    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired" || t.status === "cancelled" || t.status === "termination_unconfirmed");
+    const partialTasks = tasks.filter((t) => ["partial", "blocked", "expired", "cancelled", "termination_unconfirmed", "pending", "running", "planning", "cancel_requested"].includes(t.status));
     const successTasks = tasks.filter((t) => t.status === "success");
 
     let status: ExecuteCommandResult["status"] = "success";
