@@ -464,7 +464,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     }
 
     // Cancellation may arrive while waiting for a slot/lock.
-    if (task.status === "cancelled" || task.status === "termination_unconfirmed") return task;
+    if ((task.status as string) === "cancelled" || (task.status as string) === "termination_unconfirmed") return task;
     if (
       task.approvalDigest &&
       (task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
@@ -484,11 +484,11 @@ export async function approveTask(taskId: string): Promise<Task | null> {
         agentTask,
       });
 
-      if (task.status === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
+      if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Do not overwrite an unresolved process state with a convenient terminal status.
         memoryPalace.recordTaskCheckpoint(task, plan.id);
         eventBus.emitEvent("task:update", task);
-        return;
+        return task;
       }
       if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
         task.status = "cancelled";
@@ -538,7 +538,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     };
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
   } finally {
-    if (task.verification?.outcome !== "termination_unconfirmed" && task.status !== "termination_unconfirmed") {
+    if (task.verification?.outcome !== "termination_unconfirmed" && (task.status as string) !== "termination_unconfirmed") {
       for (const l of acquiredLocks) {
         resourceLockManager.releaseLock(l, task.id);
       }
@@ -548,7 +548,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   eventBus.emitEvent("task:update", task);
   const parentPlan = activePlanMap.get(task.parentId || "");
-  if (parentPlan && (task.status === "success" || task.status === "partial" || task.status === "failed" || task.status === "expired")) {
+  if (parentPlan && (task.status === "success" || task.status === "partial" || task.status === "failed" || (task.status as string) === "expired")) {
     await runPlan(parentPlan);
   }
   return task;
@@ -789,12 +789,12 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         agentTask,
       });
 
-      if (task.status === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
+      if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Cancellation requested but the supervisor could not prove that the
         // process tree stopped. Never downgrade this to cancelled/success.
         memoryPalace.recordTaskCheckpoint(task, plan.id);
         eventBus.emitEvent("task:update", task);
-        return;
+        return task;
       }
       if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
         task.status = "cancelled";
@@ -879,7 +879,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       eventBus.emitEvent("task.failed", { taskId: task.id, agentId: task.agent, error: task.error });
       memoryPalace.recordTaskCheckpoint(task, plan.id);
     } finally {
-      if (task.status !== "termination_unconfirmed" && task.verification?.outcome !== "termination_unconfirmed") {
+      if ((task.status as string) !== "termination_unconfirmed" && task.verification?.outcome !== "termination_unconfirmed") {
         for (const l of locks) {
           resourceLockManager.releaseLock(l, task.id);
         }
