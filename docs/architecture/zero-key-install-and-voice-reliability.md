@@ -50,6 +50,7 @@ This work must preserve the existing permission gate, request IDs/idempotency, t
 - Launch is one click; no terminal and no credential fields for the default local profile.
 - Services bind only to loopback by default; each service has a health/readiness endpoint.
 - The launcher waits for readiness, not merely an open TCP port.
+- Local Whisper and the voice agent are supervised as optional capabilities in normal mode: startup/runtime failure is reported as degraded voice state instead of shutting down the desktop/orchestrator. Strict diagnostic/test mode still fails fast. Typed requests fall back to the orchestrator over the trusted desktop IPC channel when the voice socket is not open.
 - Startup failure explains the failing dependency and gives one remediation action.
 - Logs use request IDs and sanitized provider/device codes. They do not record audio, full transcripts by default, or credentials.
 - If microphone input fails, text remains fully usable. If external TTS fails, browser/OS speech synthesis may speak the response only when the configured fallback says so. If STT fails, Vanessa must ask the user to retry or type the command; it must not invent a transcript.

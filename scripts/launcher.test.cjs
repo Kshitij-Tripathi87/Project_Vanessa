@@ -4,7 +4,7 @@ const path = require('node:path');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
 const { launcherConfig } = require('./launcher-config.cjs');
-const { ensureService } = require('./launch-vanessa.cjs');
+const { ensureService, startService } = require('./launch-vanessa.cjs');
 const root = process.cwd();
 const config = (env = {}, args = [], files = []) => launcherConfig(env, args, root, p => files.some(file => p === path.resolve(root, file)));
 
@@ -140,4 +140,28 @@ test('Sarvam launcher rejects missing TTS persona/model instead of starting a si
   };
   assert(config(base).missing.some(key => key.includes('SARVAM_TTS_MODEL')));
   assert(config(base).missing.some(key => key.includes('SARVAM_TTS_SPEAKER')));
+});
+
+
+test('optional speech service failure keeps the launcher in degraded mode', async () => {
+  const captured = [];
+  const originalLog = console.log;
+  console.log = (...args) => captured.push(args.join(' '));
+  try {
+    const child = startService(
+      'Optional speech service fixture',
+      '-e',
+      ['process.exit(7)'],
+      process.execPath,
+      { fatalOnExit: false },
+    );
+    const [code] = await once(child, 'close');
+    assert.equal(code, 7);
+    assert(captured.some((line) =>
+      line.includes('Optional speech service fixture DEGRADED') &&
+      line.includes('typed commands remain available')
+    ));
+  } finally {
+    console.log = originalLog;
+  }
 });

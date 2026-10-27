@@ -50,15 +50,21 @@ function run(stage, executable, args, cwd = root) {
   });
 }
 
-function startService(stage, entry, args = [], executable = process.execPath) {
+function startService(stage, entry, args = [], executable = process.execPath, options = {}) {
+  const fatalOnExit = options.fatalOnExit !== false;
   log(stage, 'Starting managed process');
   const child = spawn(executable, [entry, ...args], { cwd: root, env: process.env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(child);
   attachOutput(child, stage);
-  child.once('error', () => shutdown(1, `${stage} failed to start.`));
+  child.once('error', (error) => {
+    if (fatalOnExit) shutdown(1, `${stage} failed to start.`);
+    else log(`${stage} DEGRADED`, `Optional service failed to start (${error.code || "process error"}); desktop and typed commands remain available.`);
+  });
   child.once('close', (code) => {
     children.delete(child);
-    if (!stopping) shutdown(1, `${stage} stopped unexpectedly (exit ${code}).`);
+    if (stopping) return;
+    if (fatalOnExit) shutdown(1, `${stage} stopped unexpectedly (exit ${code}).`);
+    else log(`${stage} DEGRADED`, `Optional service stopped (exit ${code}); desktop and typed commands remain available. Voice can be repaired by restarting Vanessa.`);
   });
   return child;
 }
@@ -164,9 +170,15 @@ async function ensureLocalAsr(asr, reuse, reservedPorts) {
   // Keep legacy and consolidated Python servers aligned with the client's URL.
   Object.assign(process.env, { VOICE_HOST: '127.0.0.1', WHISPER_HOST: '127.0.0.1', VOICE_PORT: String(asr.port), WHISPER_PORT: String(asr.port), PYTHONUNBUFFERED: '1' });
   log('LOCAL ASR', `Starting ${path.basename(asr.script)} on port ${asr.port}; first model load/download may take time.`);
-  startService('LOCAL ASR', asr.script, [], asr.python);
+  const child = startService('LOCAL ASR', asr.script, [], asr.python, { fatalOnExit: false });
+  let processStartError = null;
+  child.once('error', (error) => { processStartError = error; });
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline && !stopping) {
+    if (processStartError) throw new Error(`Local ASR process could not start: ${processStartError.message}`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Local ASR process exited before readiness (exit ${child.exitCode ?? 'signal ' + child.signalCode}).`);
+    }
     if (await asrReachable(asr.url)) { log('LOCAL ASR', 'WebSocket ready.'); return; }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -282,15 +294,30 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
     log('Launcher', 'Build validation passed. No services started.');
     return;
   }
-  if (config.localAsr) await ensureLocalAsr(config.localAsr, config.reuse, [port, 4500, 5173]);
+  if (config.localAsr) {
+    try {
+      await ensureLocalAsr(config.localAsr, config.reuse, [port, 4500, 5173]);
+    } catch (error) {
+      if (config.strict) throw error;
+      const detail = error instanceof Error ? error.message : 'unknown startup error';
+      log('LOCAL ASR DEGRADED', `${detail} Speech input may be unavailable; the desktop and typed commands will continue. Run scripts\\setup_windows.ps1 to repair local speech.`);
+    }
+  }
   await ensureService('3/5 ORCHESTRATOR', `${orchestratorUrl}/health`, 'vanessa-orchestrator', port, config.reuse, () => {
     startService('3/5 ORCHESTRATOR', tsx || 'services/orchestrator/dist/server.js', config.dev ? ['watch', 'services/orchestrator/src/server.ts'] : []);
   });
   if (stopping) return;
-  if (config.voice) await ensureService('4/5 VOICE', 'http://127.0.0.1:4500/health', 'vanessa-voice-agent', 4500, config.reuse, () => {
-    startService('4/5 VOICE', tsx || 'services/voice-agent/dist/server.js', config.dev ? ['watch', 'services/voice-agent/src/server.ts'] : []);
-  }, config.strict);
-  else log('4/5 VOICE', 'Skipped (--text-only). Microphone is unavailable in this mode.');
+  if (config.voice) {
+    try {
+      await ensureService('4/5 VOICE', 'http://127.0.0.1:4500/health', 'vanessa-voice-agent', 4500, config.reuse, () => {
+        startService('4/5 VOICE', tsx || 'services/voice-agent/dist/server.js', config.dev ? ['watch', 'services/voice-agent/src/server.ts'] : [], process.execPath, { fatalOnExit: false });
+      }, config.strict);
+    } catch (error) {
+      if (config.strict) throw error;
+      const detail = error instanceof Error ? error.message : 'unknown startup error';
+      log('4/5 VOICE DEGRADED', `${detail} The desktop will still launch; typed commands will go directly to the local orchestrator until voice is repaired.`);
+    }
+  } else log('4/5 VOICE', 'Skipped (--text-only). Microphone is unavailable in this mode.');
   if (stopping) return;
   startService('DESKTOP UI', vite, [...(config.dev ? [] : ['preview']), '--config', 'apps/desktop/vite.config.ts', '--host', '127.0.0.1', '--port', '5173', '--strictPort']);
   let uiReady = false;
@@ -311,7 +338,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   shutdown(0, 'Desktop closed. Stopping services started by this launcher.');
 }
 
-module.exports = { ensureService };
+module.exports = { ensureService, startService };
 if (require.main === module) {
   process.on('SIGINT', () => shutdown(0, 'Ctrl+C received. Stopping owned processes.'));
   process.on('SIGTERM', () => shutdown(0, 'Stop requested.'));
