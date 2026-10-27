@@ -43,4 +43,13 @@ jobs:
         run: pnpm run test:desktop:microphone
       - run: pnpm run test:sarvam:gate
       - run: node --test scripts/security.test.cjs
+      - name: Package sanitized Windows bootstrap ZIP
+        run: pnpm run package:bootstrap
+      - name: Upload Windows bootstrap ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanessa-Windows-Bootstrap-${{ github.sha }}
+          path: artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
+          if-no-files-found: error
+          retention-days: 7
       # No real microphone, cloud credentials, or billable provider calls in CI.
