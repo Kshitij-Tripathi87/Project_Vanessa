@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 const { buildReadinessConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./readiness-config.cjs");
+const { probeOllama } = createRequire(path.join(__dirname, "check_readiness.ts"))("./ollama-readiness.cjs");
 
 // Load .env
 let envDir = process.cwd();
@@ -20,7 +21,7 @@ for (let i = 0; i < 4; i++) {
 interface ServiceCheck {
   name: string;
   port: number;
-  protocol: "http" | "ws";
+  protocol: "http" | "ws" | "ollama";
   url: string;
   status: "ONLINE" | "OFFLINE" | "DEGRADED";
   latencyMs: number;
@@ -125,6 +126,20 @@ async function main() {
     },
   ];
 
+  if (config.usesOllama) {
+    let ollamaPort = 11434;
+    try { ollamaPort = Number(new URL(config.ollamaBaseUrl).port || 11434); } catch { /* probe reports invalid endpoint */ }
+    services.splice(0, 0, {
+      name: "Local Ollama",
+      port: ollamaPort,
+      protocol: "ollama",
+      url: config.ollamaBaseUrl,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    });
+  }
+
   if (usesLocalAsr) {
     services.splice(2, 0, {
       name: "Local Whisper ASR",
@@ -139,7 +154,12 @@ async function main() {
 
   const selectedServices = services.filter(s => s.name !== "Mobile Relay WSS" || process.env.VANESSA_REQUIRE_RELAY === "true");
   for (const s of selectedServices) {
-    if (s.protocol === "http") {
+    if (s.protocol === "ollama") {
+      const res = await probeOllama(config.ollamaBaseUrl, config.ollamaModel);
+      s.status = res.status;
+      s.latencyMs = res.latencyMs;
+      s.details = res.message;
+    } else if (s.protocol === "http") {
       const res = await checkHttp(s.url);
       s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
       s.latencyMs = res.latencyMs;
@@ -165,7 +185,7 @@ async function main() {
   console.log("--------------------------------------------------------------------------------");
 
   for (const s of selectedServices) {
-    const statusIcon = s.status === "ONLINE" ? "🟢" : "🔴";
+    const statusIcon = s.status === "ONLINE" ? "🟢" : s.status === "DEGRADED" ? "🟡" : "🔴";
     console.log(
       `${statusIcon} ${s.name.padEnd(21)}` +
       `${s.port}`.padEnd(8) +
