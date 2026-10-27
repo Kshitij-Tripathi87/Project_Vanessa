@@ -16,6 +16,7 @@ export class FileAgent implements SpecialistAgent {
   id = "files";
   capabilities = [
     "file_search",
+    "file_inspection",
     "folder_creation",
     "file_manipulation",
     "drive_upload",
@@ -151,6 +152,73 @@ export class FileAgent implements SpecialistAgent {
             data: { matches: [] },
           };
         }
+      }
+
+      case "file.inspect": {
+        const requestedPath = params.path;
+        if (typeof requestedPath !== "string" || !requestedPath.trim()) throw new Error("file.inspect requires a path.");
+        const canonicalPath = await fs.realpath(path.resolve(requestedPath));
+        if (!privacyGuard.isPathAllowed(canonicalPath)) throw new Error("The requested file is outside approved folders.");
+        const stat = await fs.stat(canonicalPath);
+        if (!stat.isFile()) throw new Error("file.inspect accepts a file, not a directory.");
+        const extension = path.extname(canonicalPath).toLowerCase();
+        const readable = new Set([".txt", ".md", ".rst", ".log", ".json", ".csv", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg", ".env", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".cs", ".cpp", ".c", ".h", ".hpp", ".php", ".rb", ".swift", ".kt", ".scala", ".sql", ".sh", ".ps1", ".bat", ".cmd", ".html", ".htm", ".xhtml", ".css", ".scss", ".vue", ".svelte"]);
+        if (!readable.has(extension)) {
+          return {
+            agentId: this.id, status: "failed", success: false,
+            summary: "The file was found, but its content format is not supported by the text inspector.",
+            spokenSummary: "I found the file, but I cannot analyze this file format yet.",
+            error: "Unsupported content format: " + (extension || "(no extension)") + ". A format-specific parser is not configured.",
+            evidence: [{ description: "File metadata inspected without reading content", source: canonicalPath, timestamp: startTime, confidence: 1 }],
+            artifacts: [canonicalPath],
+            data: { path: canonicalPath, fileName: path.basename(canonicalPath), extension, bytes: stat.size, modifiedAt: stat.mtime.toISOString(), contentRead: false },
+            verification: { passed: false, details: "Content was not read because no safe parser is configured for this format." },
+          };
+        }
+
+        const requestedLimit = Number(params.maxBytes);
+        const maxBytes = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(262144, Math.max(1024, Math.floor(requestedLimit))) : 65536;
+        const handle = await fs.open(canonicalPath, "r");
+        let rawContent: Buffer;
+        let bytesRead = 0;
+        try {
+          const buffer = Buffer.alloc(maxBytes + 1);
+          const readResult = await handle.read(buffer, 0, maxBytes + 1, 0);
+          bytesRead = readResult.bytesRead;
+          rawContent = buffer.subarray(0, Math.min(bytesRead, maxBytes));
+        } finally {
+          await handle.close();
+        }
+        if (rawContent.includes(0)) throw new Error("The target appears to be a binary file and cannot be safely decoded as text.");
+
+        const content = rawContent.toString("utf8");
+        const truncated = stat.size > maxBytes || bytesRead > maxBytes;
+        let structure: Record<string, unknown> = {};
+        if (extension === ".json") {
+          try {
+            const parsed = JSON.parse(content);
+            structure = Array.isArray(parsed)
+              ? { jsonType: "array", itemCount: parsed.length }
+              : parsed && typeof parsed === "object"
+                ? { jsonType: "object", topLevelKeys: Object.keys(parsed as Record<string, unknown>).slice(0, 100) }
+                : { jsonType: typeof parsed };
+          } catch {
+            structure = { jsonParseable: false, note: "Preview may be truncated or invalid JSON." };
+          }
+        } else if (extension === ".csv") {
+          const rows = content.split(/\r?\n/).filter((line) => line.length > 0);
+          structure = { columnCount: rows[0] ? rows[0].split(",").length : 0, header: rows[0] ? rows[0].split(",").slice(0, 100) : [], dataRowsInPreview: Math.max(0, rows.length - 1), previewRows: rows.slice(0, 21) };
+        }
+
+        const detail = "Read " + Math.min(stat.size, maxBytes) + " byte(s) from " + canonicalPath + (truncated ? " (preview truncated)." : ".");
+        return {
+          agentId: this.id, status: "completed", success: true, summary: detail,
+          spokenSummary: "I inspected the file and prepared a bounded content preview.",
+          evidence: [{ description: detail, source: canonicalPath, timestamp: startTime, confidence: 1, data: { bytes: stat.size, truncated } }],
+          artifacts: [canonicalPath],
+          verification: { passed: true, details: "The file exists, is approved, and its content preview was read within the configured size limit." },
+          data: { path: canonicalPath, fileName: path.basename(canonicalPath), extension, bytes: stat.size, modifiedAt: stat.mtime.toISOString(), content, truncated, maxBytes, structure, contentRead: true },
+        };
       }
 
       case "file.rename": {

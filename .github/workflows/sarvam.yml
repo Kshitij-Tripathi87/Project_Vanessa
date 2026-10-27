@@ -33,6 +33,8 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Verify incident log target resolution
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
+      - name: Test resource routing and approved file operations
+        run: pnpm --filter @vanessa/orchestrator test:resource-workflows
       - name: Verify local Ollama client contracts
         run: pnpm --filter @vanessa/orchestrator test:ollama-client
       - name: Verify managed Codex runner contracts

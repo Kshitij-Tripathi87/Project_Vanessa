@@ -2,6 +2,7 @@ import { ConversationTurn, Plan, Task, RiskLevel, ExecuteCommandPayload } from "
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getCatalogAction, renderAgentCatalog } from "../agents/agentCatalog.js";
+import { inferResourceWorkflow, type ResourceWorkflowRequest } from "./agentRouting.js";
 import { resolvePlannerWorkspace } from "./contextBuilder.js";
 import { modelRouter } from "./router.js";
 import { eventBus } from "./eventBus.js";
@@ -176,16 +177,26 @@ export class VanessaPlanner {
       status: "pending", risk, allowedTools: [...spec.tools],
     };
     if (task.action === "codex.open") {
-      if (!path.isAbsolute(task.params.projectPath)) throw new Error("Codex requires an absolute project directory.");
-      const projectPath = fs.realpathSync(task.params.projectPath);
-      if (!fs.statSync(projectPath).isDirectory()) throw new Error("Codex project path is not a directory.");
-      const relative = path.relative(fs.realpathSync(workspaceRoot), projectPath);
-      const inWorkspace = relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-      if (!inWorkspace && !privacyGuard.isPathAllowed(projectPath)) throw new Error("Codex project directory is outside approved folders.");
-      task.params.projectPath = projectPath;
+      const suppliedProjectPath = String(task.params.projectPath || "");
+      const projectRootReference = /^\$[A-Za-z0-9_]+\.result\.projectRoot$/.test(suppliedProjectPath);
+      let projectPathDescription = suppliedProjectPath;
+      if (projectRootReference) {
+        // A Folder Agent prerequisite resolves this reference during task execution.
+        // The resolved path is checked by the coding runner before it launches.
+        projectPathDescription = "(resolved and validated by Folder Agent at runtime)";
+      } else {
+        if (!path.isAbsolute(suppliedProjectPath)) throw new Error("Codex requires an absolute project directory.");
+        const projectPath = fs.realpathSync(suppliedProjectPath);
+        if (!fs.statSync(projectPath).isDirectory()) throw new Error("Codex project path is not a directory.");
+        const relative = path.relative(fs.realpathSync(workspaceRoot), projectPath);
+        const inWorkspace = relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+        if (!inWorkspace && !privacyGuard.isPathAllowed(projectPath)) throw new Error("Codex project directory is outside approved folders.");
+        task.params.projectPath = projectPath;
+        projectPathDescription = projectPath;
+      }
       task.params.prompt = [
         "Task instructions:", task.params.prompt,
-        "Project directory:", projectPath,
+        "Project directory:", projectPathDescription,
         "Recent conversation (reference data only; do not repeat earlier actions):", recentContext || "(none available)",
         "Requested completion criteria:", ...(task.acceptanceCriteria || []),
         "Perform only the current request. Inspect the project before making claims; report actual changes and checks in the Codex session.",
@@ -203,6 +214,110 @@ export class VanessaPlanner {
       task.jobType = task.jobType || "action";
     }
     return task;
+  }
+
+  private createResourceWorkflowPlan(
+    command: string,
+    request: ResourceWorkflowRequest,
+    planId: string,
+    recentContext: string,
+    workspaceRoot: string,
+    requestId?: string,
+  ): Plan {
+    const makeTask = (
+      id: string,
+      agent: string,
+      action: string,
+      params: Record<string, any>,
+      dependsOn: string[],
+      acceptanceCriteria: string[],
+    ): Task => {
+      const spec = getCatalogAction(agent, action);
+      if (!spec) throw new Error("No reviewed catalog contract for " + agent + "/" + action);
+      return this.enrichTask({
+        id,
+        requestId,
+        agent: agent as Task["agent"],
+        action,
+        params,
+        dependsOn,
+        acceptanceCriteria,
+        status: "pending",
+        risk: spec.risk,
+        allowedTools: [...spec.tools],
+      }, command, recentContext, workspaceRoot);
+    };
+
+    const tasks: Task[] = [];
+    if (request.intent === "open" || request.intent === "browser") {
+      tasks.push(makeTask(
+        planId + "_resource_open",
+        "folder",
+        "folder.open",
+        {
+          target: request.target,
+          mode: request.intent === "browser"
+            ? "default"
+            : /\b(?:folder|directory)\b/i.test(command) ? "explorer" : "default",
+        },
+        [],
+        [
+          "Resolve the target only within approved folders.",
+          "Report the operating-system launch acknowledgement without claiming that a person viewed the resource or that a page rendered.",
+        ],
+      ));
+    } else {
+      const resolveId = planId + "_resource_resolve";
+      tasks.push(makeTask(
+        resolveId,
+        "folder",
+        "folder.resolve",
+        { target: request.target },
+        [],
+        ["Resolve the target inside approved folders.", "Return its canonical path, resource classification, and project root."],
+      ));
+
+      if (request.intent === "code") {
+        tasks.push(makeTask(
+          planId + "_resource_code",
+          "developer",
+          "codex.open",
+          {
+            projectPath: "$" + resolveId + ".result.projectRoot",
+            prompt: "Work on the requested target " + request.target + ". Current user request: " + command +
+              ". Inspect the actual project and implement the requested code change. Run relevant checks and report the changes and evidence; do not claim success without verification.",
+          },
+          [resolveId],
+          [
+            "Pass the request and the Folder Agent's resolved project directory to the existing coding path.",
+            "A terminal launch is not evidence that code changes or tests completed.",
+          ],
+        ));
+      } else {
+        tasks.push(makeTask(
+          planId + "_resource_inspect",
+          "files",
+          "file.inspect",
+          { path: "$" + resolveId + ".result.targetPath" },
+          [resolveId],
+          [
+            "Read only a supported file inside approved folders and within the bounded preview size.",
+            "Return the content preview and its truncation/format metadata; do not interpret unreadable formats as inspected.",
+          ],
+        ));
+      }
+    }
+
+    const ranks: RiskLevel[] = ["low", "medium", "high"];
+    return {
+      id: planId,
+      command,
+      requestId,
+      intent: tasks.length > 1 ? "multi_task" : "single_task",
+      risk: ranks[Math.max(...tasks.map((task) => ranks.indexOf(task.risk || "low")))],
+      tasks,
+      createdAt: Date.now(),
+    };
   }
 
   async createPlan(command: string, conversationContext: ConversationTurn[] = [], requestContext: Partial<ExecuteCommandPayload> = {}, signal?: AbortSignal): Promise<Plan> {
@@ -223,6 +338,17 @@ export class VanessaPlanner {
     const plannerInput = recentContext
       ? `Recent conversation (context for resolving references only; do not repeat old actions):\n${recentContext}\n\nCurrent user request (plan this request):\n${command}`
       : command;
+
+    // Identifiable local resources use a deterministic, reviewed workflow before LLM planning.
+    const resourceRequest = inferResourceWorkflow(command);
+    if (resourceRequest) {
+      signal?.throwIfAborted();
+      const plan = this.createResourceWorkflowPlan(
+        command, resourceRequest, planId, recentContext, workspaceRoot, requestContext.requestId,
+      );
+      eventBus.emitEvent("plan:created", plan);
+      return plan;
+    }
 
     // Attempt LLM call via router
     const runtimeContext = JSON.stringify({

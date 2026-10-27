@@ -110,9 +110,26 @@ export const AGENT_CATALOG: CatalogAgent[] = [
     ],
   },
   {
+    id: "folder",
+    purpose: "Resolve a mentioned file, folder or project inside approved roots, classify it, discover its project root and optionally open it in the desktop.",
+    limitations: "Only approved folders are searchable. Bare-name search is bounded by depth and entry count; multiple matches require a more specific path. An OS launch acknowledgement is not proof that a person viewed a resource.",
+    actions: [
+      action("folder.resolve", "Resolve a path or filename within approved folders and return its canonical path, resource type, and project root. Optionally show it in Explorer.", {
+        target: p("string", "Path or unambiguous file/folder name from the current request.", true),
+        basePath: p("string", "Optional approved directory."),
+        openExplorer: p("boolean", "Whether to open Explorer and select the resolved resource."),
+      }, "AgentResult with data.targetPath, projectRoot, kind, extension, fileName and verified path provenance.", "low", true, ["folder_resolve"]),
+      action("folder.open", "Resolve and open a folder in Explorer or a file with its associated desktop application.", {
+        target: p("string", "Path or unambiguous file/folder name from the current request.", true),
+        basePath: p("string", "Optional approved directory."),
+        mode: p("string", "explorer to show/select the target, or default to use its associated application."),
+      }, "AgentResult records the OS launch result; simulated/failed desktop operations are not reported as opened.", "low", true, ["folder_open"]),
+    ],
+  },
+  {
     id: "files",
-    purpose: "Create directories, search one directory, rename filesystem entries, and create zip archives.",
-    limitations: "Use allowed folders. Search is a nonrecursive filename substring match. Folder creation also writes a demo note and opens Explorer. Drive upload/link actions generate synthetic IDs and do not contact Google Drive.",
+    purpose: "Create directories, search filenames, inspect supported text/source, JSON and CSV files, rename filesystem entries, and create zip archives.",
+    limitations: "Use approved folders. Search is nonrecursive. File inspection is bounded to 256 KiB and supports text/source, JSON and CSV previews; binary and office formats require dedicated parsers. Drive upload/link actions remain placeholders and are not selectable.",
     actions: [
       action("folder.create", "Create a folder within an approved base directory.", {
         name: p("string", "Folder name or absolute folder path.", true), basePath: p("string", "Approved base directory; omitted means backend's default allowed folder."),
@@ -120,6 +137,7 @@ export const AGENT_CATALOG: CatalogAgent[] = [
       action("file.search", "List one directory and filter entry names.", {
         query: p("string", "Filename substring.", true), path: p("string", "Directory to list; service cwd if omitted."),
       }, "AgentResult with data.matches, data.bestMatch, directory and fileReferences.", "low", true, ["file_search"]),
+      action("file.inspect", "Read a bounded preview of a supported text/source, JSON, or CSV file inside approved folders.", { path: p("string", "Existing file path inside approved folders.", true), maxBytes: p("number", "Optional preview size, clamped to 1 KiB–256 KiB.") }, "AgentResult with data.content, truncation state, metadata, optional JSON/CSV structure, and evidence.", "low", true, ["file_read"]),
       action("file.rename", "Rename an existing file or directory.", {
         oldPath: p("string", "Existing source path.", true), newPath: p("string", "Destination path within allowed folders.", true),
       }, "AgentResult with destination artifact and observed rename verification.", "medium", true, ["file_write"]),

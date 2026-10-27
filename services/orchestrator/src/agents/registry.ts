@@ -6,6 +6,7 @@ import { testingAgent } from "./testing.agent.js";
 import { windowsAgent } from "./windows.agent.js";
 import { browserAgent } from "./browser.agent.js";
 import { fileAgent } from "./file.agent.js";
+import { folderAgent } from "./folder.agent.js";
 import { developerAgent } from "./developer.agent.js";
 import { cloudAgent } from "./cloud.agent.js";
 import { vanessaAgent, openJarvisAgent, toolsAgent, connectorAgent } from "./openjarvis.agent.js";
@@ -22,6 +23,7 @@ export const agentRegistry: Record<string, SpecialistAgent | any> = {
   windows: windowsAgent,
   browser: browserAgent,
   files: fileAgent,
+  folder: folderAgent,
 
   // Compatibility & Integration Agents
   system: windowsAgent,
@@ -44,7 +46,7 @@ export function getAgent(name: string) {
 }
 
 export function listSpecialistAgents(): { id: string; capabilities: string[]; allowedTools: string[] }[] {
-  const specialists = [memoryAgent, codingAgent, itOpsAgent, knowledgeAgent, testingAgent, windowsAgent, browserAgent, fileAgent];
+  const specialists = [memoryAgent, codingAgent, itOpsAgent, knowledgeAgent, testingAgent, windowsAgent, browserAgent, fileAgent, folderAgent];
   return specialists.map((s) => ({
     id: s.id,
     capabilities: s.capabilities,
