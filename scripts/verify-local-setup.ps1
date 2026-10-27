@@ -1,9 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+$ConfigHome = if ($env:VANESSA_CONFIG_HOME) { [System.IO.Path]::GetFullPath($env:VANESSA_CONFIG_HOME) } else { $Root }
+$ConfigPath = Join-Path $ConfigHome '.env'
 
 function Get-EnvSetting([string]$Name, [string]$DefaultValue) {
-    $envFile = Join-Path $Root '.env'
+    $envFile = $ConfigPath
     if (-not (Test-Path $envFile)) { return $DefaultValue }
     $pattern = '^\s*' + [regex]::Escape($Name) + '\s*=\s*(.*)$'
     foreach ($line in Get-Content $envFile) {
@@ -20,7 +22,7 @@ function Fail-Preflight([string]$Reason) {
     exit 1
 }
 
-if (-not (Test-Path (Join-Path $Root '.env'))) { Fail-Preflight 'Local configuration does not exist yet.' }
+if (-not (Test-Path $ConfigPath)) { Fail-Preflight 'Local configuration does not exist yet.' }
 foreach ($relativePath in @('node_modules/dotenv/package.json', 'apps/desktop/node_modules/electron/package.json', 'services/orchestrator/node_modules/tsx/package.json')) {
     if (-not (Test-Path (Join-Path $Root $relativePath))) { Fail-Preflight 'Workspace dependencies are missing.' }
 }
