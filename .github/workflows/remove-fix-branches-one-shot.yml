@@ -1,0 +1,43 @@
+name: One-time removal of fix branches
+
+on:
+  push:
+    branches:
+      - Vanessa-Prototype-1-MAIN
+
+permissions:
+  contents: write
+
+jobs:
+  remove-fix-branches:
+    if: "${{ startsWith(github.event.head_commit.message, 'chore: remove fix branches as requested') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete only the explicitly requested fix branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          open_heads="$(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" --jq '.[].head.ref')"
+          branches=(
+            "fix/desktop-orb-task-panel-current"
+            "fix/desktop-orb-window-ux"
+            "fix/desktop-orb-window-ux-final"
+            "fix/desktop-orb-window-ux-latest"
+            "fix/desktop-orb-window-ux-ready"
+            "fix/it-ops-log-target-resolution"
+          )
+
+          for branch in "${branches[@]}"; do
+            if grep -Fxq "$branch" <<<"$open_heads"; then
+              echo "SKIP $branch: an open PR still uses this branch"
+              continue
+            fi
+            if gh api --silent --method DELETE "repos/${REPO}/git/refs/heads/${branch}"; then
+              echo "DELETED $branch"
+            else
+              echo "::warning::Could not delete $branch; it may already be absent or protected."
+            fi
+          done
