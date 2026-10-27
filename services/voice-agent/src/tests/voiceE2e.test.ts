@@ -32,6 +32,11 @@ async function startOrchestratorStub(
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     try {
       const body = await readRequestBody(request);
+      if (request.url === "/api/cancel/request") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ status: "cancelled" }));
+        return;
+      }
       requests.push({ body, method: request.method, path: request.url });
       response.writeHead(statusCode, { "Content-Type": "application/json" });
       response.end(JSON.stringify(statusCode >= 200 && statusCode < 300
