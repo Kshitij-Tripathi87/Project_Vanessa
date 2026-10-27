@@ -82,7 +82,7 @@ const validateMemoryQuery = (params: Record<string, any>) => {
   const unknown = onlyKeys(params, ["query", "keyword"]);
   if (unknown) return unknown;
   const query = params.query ?? params.keyword;
-  if (typeof query !== "string" || query.length > 1000) return "Memory query must be a string of 1,000 characters or fewer.";
+  if (typeof query !== "string" || !query.trim() || query.length > 1000) return "Memory query must be a non-empty string of 1,000 characters or fewer.";
   return undefined;
 };
 const validateMemoryStore = (params: Record<string, any>) => {
