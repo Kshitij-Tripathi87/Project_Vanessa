@@ -81,7 +81,7 @@ export interface TaskVerificationResult {
   postconditions: string[];
   exitCode?: number;
   artifacts?: string[];
-  outcome: "succeeded" | "partial" | "failed" | "blocked";
+  outcome: "succeeded" | "partial" | "failed" | "blocked" | "inconclusive" | "timed_out" | "cancelled" | "termination_unconfirmed" | "simulated";
   details?: string;
 }
 
