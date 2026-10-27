@@ -127,15 +127,23 @@ export class RepairWorkspaceService {
       );
     }
 
+    // Git rejects a worktree path nested inside the repository's .git
+    // directory. Use a dedicated sibling directory so the base checkout stays
+    // clean and worktree metadata/files remain outside user project files.
     const commonDirText = commonDirResult.stdout.trim();
     const commonDir = path.resolve(repositoryRoot, commonDirText);
     await fs.mkdir(commonDir, { recursive: true });
-    const realCommonDir = await fs.realpath(commonDir);
-    const worktreesRoot = path.resolve(realCommonDir, "vanessa-repair-worktrees");
+    const parentDirectory = path.dirname(repositoryRoot);
+    const repositoryName = safeToken(path.basename(repositoryRoot));
+    const worktreesRoot = path.resolve(parentDirectory, `.vanessa-${repositoryName}-repair-worktrees`);
     await fs.mkdir(worktreesRoot, { recursive: true });
     const realWorktreesRoot = await fs.realpath(worktreesRoot);
-    if (!isContained(realCommonDir, realWorktreesRoot)) {
-      throw new RepairWorkspaceError("Managed worktree root escaped the Git metadata directory.", "WORKTREE_VALIDATION_FAILED");
+    if (
+      !isContained(parentDirectory, realWorktreesRoot) ||
+      isContained(repositoryRoot, realWorktreesRoot) ||
+      path.resolve(realWorktreesRoot) !== realWorktreesRoot
+    ) {
+      throw new RepairWorkspaceError("Managed worktree root escaped the approved sibling directory.", "WORKTREE_VALIDATION_FAILED");
     }
 
     const taskToken = safeToken(taskId);
