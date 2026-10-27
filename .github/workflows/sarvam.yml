@@ -27,12 +27,16 @@ jobs:
           version: 11.24.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Test first-run setup diagnostics
+        run: pnpm run test:doctor
       - name: Verify agent result contracts
         run: pnpm --filter @vanessa/orchestrator test:agent-result
       - name: Verify incident log target resolution
         run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
       - name: Verify local Ollama client contracts
         run: pnpm --filter @vanessa/orchestrator test:ollama-client
+      - name: Verify managed Codex runner contracts
+        run: pnpm --filter @vanessa/orchestrator test:codex
       # Full legacy scenarios require a user-selected live planner and include removed legacy actions;
       # deterministic planner/voice contracts are covered below without live API calls.
       - name: Type-check evaluation harness
