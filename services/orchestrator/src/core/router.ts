@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 // import { GeminiClient } from "./geminiClient.js";
 import { SarvamChatClient } from "./sarvamChat.js";
 import { DEFAULT_NVIDIA_MODEL, NvidiaClient } from "./nvidiaClient.js";
+import { DEFAULT_OLLAMA_MODEL, OllamaClient } from "./ollamaClient.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
@@ -20,25 +21,34 @@ export class ModelRouter {
   // private readonly gemini = new GeminiClient();
   private nvidia?: NvidiaClient;
   private sarvam?: SarvamChatClient;
+  private ollama?: OllamaClient;
 
   get activeProvider(): string {
-    return (process.env.PLANNER_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || "nvidia").toLowerCase();
+    return (process.env.PLANNER_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || "ollama").toLowerCase();
   }
 
   get conversationalProvider(): string {
-    return (process.env.SARVAM_CHAT_PROVIDER?.trim() || this.activeProvider).toLowerCase();
+    return (process.env.CONVERSATION_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || this.activeProvider).toLowerCase();
   }
 
   get activeModel(): string {
-    return this.activeProvider === "sarvam" ? this.sarvamClient().getModel() : process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
+    if (this.activeProvider === "sarvam") return this.sarvamClient().getModel();
+    if (this.activeProvider === "ollama") return this.ollamaClient().getModel();
+    return process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
   }
 
   get conversationalModel(): string {
-    return this.conversationalProvider === "sarvam" ? this.sarvamClient().getModel() : process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
+    if (this.conversationalProvider === "sarvam") return this.sarvamClient().getModel();
+    if (this.conversationalProvider === "ollama") return this.ollamaClient().getModel();
+    return process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
   }
 
   private sarvamClient(): SarvamChatClient {
     return this.sarvam ??= new SarvamChatClient();
+  }
+
+  private ollamaClient(): OllamaClient {
+    return this.ollama ??= new OllamaClient();
   }
 
   getUsageSnapshot() {
@@ -67,8 +77,9 @@ export class ModelRouter {
       });
       return result.text;
     }
+    if (provider === "ollama") return this.ollamaClient().generate(prompt, systemPrompt, json, requestId, signal);
     if (provider !== "nvidia") {
-      throw new Error("Unsupported LLM provider '" + provider + "'. Set PLANNER_PROVIDER or SARVAM_CHAT_PROVIDER to nvidia or sarvam.");
+      throw new Error("Unsupported LLM provider '" + provider + "'. Set PLANNER_PROVIDER or CONVERSATION_PROVIDER to ollama, nvidia, or sarvam.");
     }
     // return this.gemini.generate(prompt, systemPrompt, json);
     return (this.nvidia ??= new NvidiaClient()).generate(prompt, systemPrompt, json, requestId, signal);
