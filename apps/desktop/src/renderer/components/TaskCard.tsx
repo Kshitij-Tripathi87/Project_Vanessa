@@ -34,6 +34,12 @@ const AGENT_CONFIG: Record<
     bg: "rgba(251, 191, 36, 0.12)",
     icon: <Folder size={14} />,
   },
+  folder: {
+    label: "FOLDER",
+    color: "#60a5fa",
+    bg: "rgba(96, 165, 250, 0.12)",
+    icon: <Folder size={14} />,
+  },
   developer: {
     label: "DEV",
     color: "#34d399",
