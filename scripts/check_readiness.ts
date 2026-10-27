@@ -58,20 +58,22 @@ async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; st
   const start = Date.now();
   return new Promise((resolve) => {
     let finished = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const socket = new WebSocket(url, { handshakeTimeout: timeoutMs });
 
     const finish = (ok: boolean, statusText: string) => {
       if (finished) return;
       finished = true;
+      if (timer) clearTimeout(timer);
       try {
         socket.close();
       } catch {}
       resolve({ ok, statusText, latencyMs: Date.now() - start });
     };
 
-    socket.on("open", () => finish(true, "CONNECTED"));
-    socket.on("error", (err: Error) => finish(false, err.message));
-    setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
+    socket.once("open", () => finish(true, "CONNECTED"));
+    socket.once("error", (err: Error) => finish(false, err.message));
+    timer = setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
   });
 }
 
