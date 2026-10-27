@@ -1,7 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
+import { resolveManagedAction } from "./actionRegistry.js";
+import { repairWorkspaceService } from "./repairWorkspace.js";
+
+const execFileAsync = promisify(execFile);
 
 export type ManagedProcessStatus =
   | "exited"
@@ -15,6 +20,8 @@ export interface ManagedProcessRequest {
   actionId: string;
   executable: string;
   args: string[];
+  /** Inputs used to validate the registered action and resolve its managed target. */
+  actionParams: Record<string, any>;
   cwd: string;
   timeoutMs: number;
   maxOutputBytes?: number;
@@ -139,11 +146,55 @@ export class ProcessSupervisor {
     if (!request.executable?.trim() || !Array.isArray(request.args) || request.args.some((arg) => typeof arg !== "string")) {
       throw new Error("Managed execution requires an executable and a string argument array.");
     }
+    const actionPolicy = resolveManagedAction(request.actionId, request.actionParams || {});
+    if (!actionPolicy.managed || actionPolicy.blocked || actionPolicy.canonicalId !== request.actionId) {
+      throw new Error(actionPolicy.reason || "The process supervisor only accepts canonical registered actions.");
+    }
+    if (request.actionId !== "testing.run_incident_lab") {
+      throw new Error(`No process executor is registered for action '${request.actionId}'.`);
+    }
+    const workspaceId = request.actionParams?.workspaceId;
+    const expectedDiffHash = request.actionParams?.expectedDiffHash;
+    const workspace = typeof workspaceId === "string" ? repairWorkspaceService.getWorkspace(workspaceId) : undefined;
+    if (!workspace || typeof expectedDiffHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedDiffHash)) {
+      throw new Error("The registered test runner requires a known worktree and expected SHA-256 patch digest.");
+    }
     if (!path.isAbsolute(request.cwd) || !fs.existsSync(request.cwd) || !fs.statSync(request.cwd).isDirectory()) {
       throw new Error("Managed execution cwd must be an existing absolute directory.");
     }
     const cwd = fs.realpathSync(path.resolve(request.cwd));
     if (!path.isAbsolute(cwd)) throw new Error("Invalid canonical working directory.");
+    if (cwd !== path.resolve(workspace.worktreePath) || fs.realpathSync(workspace.worktreePath) !== cwd) {
+      throw new Error("Process cwd does not match the registered repair worktree.");
+    }
+    const [rootResult, headResult, branchResult, diffResult, namesResult] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5000, encoding: "utf8" }),
+      execFileAsync("git", ["rev-parse", "HEAD"], { cwd, timeout: 5000, encoding: "utf8" }),
+      execFileAsync("git", ["branch", "--show-current"], { cwd, timeout: 5000, encoding: "utf8" }),
+      execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd, timeout: 5000, encoding: "utf8" }),
+      execFileAsync("git", ["diff", "--name-only"], { cwd, timeout: 5000, encoding: "utf8" }),
+    ]);
+    const actualDiffHash = createHash("sha256").update(diffResult.stdout).digest("hex");
+    const changedFiles = namesResult.stdout.split(/\\r?\\n/).map((value) => value.trim()).filter(Boolean);
+    if (
+      path.resolve(rootResult.stdout.trim()) !== cwd ||
+      headResult.stdout.trim() !== workspace.baseCommit ||
+      branchResult.stdout.trim() !== workspace.branchName ||
+      !diffResult.stdout.trim() ||
+      changedFiles.length !== 1 ||
+      changedFiles[0] !== "packages/incident-lab/src/checkout.ts" ||
+      actualDiffHash !== expectedDiffHash ||
+      !(await repairWorkspaceService.isBaseCheckoutUnchanged(workspace))
+    ) {
+      throw new Error("The target worktree, base commit, changed-file scope, patch digest, or base-checkout invariant failed revalidation.");
+    }
+    const expectedExecutable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
+    const expectedArgs = process.platform === "win32"
+      ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
+      : ["--filter", "@vanessa/incident-lab", "test"];
+    if (request.executable !== expectedExecutable || JSON.stringify(request.args) !== JSON.stringify(expectedArgs)) {
+      throw new Error("Executable and argv do not match the registered incident-lab test runner.");
+    }
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 10 * 60 * 1000) {
       throw new Error("Managed execution timeout must be between 1 ms and 10 minutes.");
     }
@@ -221,6 +272,11 @@ export class ProcessSupervisor {
   async cancel(taskId: string): Promise<ManagedProcessResult | undefined> {
     const entry = this.active.get(taskId);
     if (!entry) return this.completed.get(taskId);
+    if (entry.result?.status === "termination_unconfirmed") {
+      entry.result = undefined;
+      this.completed.delete(taskId);
+      entry.terminatePromise = undefined;
+    }
     entry.cancellationRequested = true;
     await this.terminate(entry);
     if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
@@ -288,6 +344,9 @@ export class ProcessSupervisor {
       error = error || "The process closed without an exit code.";
     }
 
+    // The close handler and timeout/cancel handler can overlap while awaiting
+    // termination proof. The first finalizer wins.
+    if (entry.result) return;
     const stdoutBuffer = Buffer.concat(entry.stdout);
     const stderrBuffer = Buffer.concat(entry.stderr);
     const stdout = stdoutBuffer.toString("utf8");
