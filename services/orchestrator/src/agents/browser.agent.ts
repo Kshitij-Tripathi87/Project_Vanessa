@@ -170,7 +170,7 @@ export class BrowserAgent implements SpecialistAgent {
     }
   }
 
-  private async openUrl(url: string): Promise<{ success: boolean; url: string }> {
+  private async openUrl(url: string): Promise<{ success: boolean; url: string; simulated?: boolean }> {
     if (process.env.FAKE === "1") {
       return { success: false, url, simulated: true };
     }
