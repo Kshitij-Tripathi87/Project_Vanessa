@@ -4,7 +4,7 @@ import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
-const { launcherConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./launcher-config.cjs");
+const { buildReadinessConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./readiness-config.cjs");
 
 // Load .env
 let envDir = process.cwd();
@@ -80,15 +80,18 @@ async function main() {
   console.log("     VANESSA SERVICE STACK READINESS PROBE       ");
   console.log("==================================================\n");
 
+  // Use the same normalized provider defaults as launch-vanessa.cjs. The readiness
+  // probe must not silently report Fish/Gemini when a clean install uses local Whisper/Ollama.
+  const config = buildReadinessConfig(process.env, process.cwd(), fs.existsSync);
   const orchestratorPort = Number(process.env.VANESSA_PORT || 4319);
   const voiceAgentPort = Number(process.env.VOICE_AGENT_PORT || 4500);
-  const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
+  const localAsrUrl = config.localAsrUrl;
   const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
   const relayPort = Number(process.env.RELAY_PORT || process.env.PORT || 4400);
-  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
-  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
+  const asrProvider = config.asrProvider;
+  const ttsProvider = config.ttsProvider;
   const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
-  const usesLocalAsr = ["voice", "whisper"].includes(asrProvider) || (asrProvider === "fish" && fallbackEnabled);
+  const usesLocalAsr = config.usesLocalAsr;
 
   const services: ServiceCheck[] = [
     {
@@ -199,8 +202,8 @@ async function main() {
   }
   console.log(`- Local ASR: ${usesLocalAsr ? `${localAsrUrl} (selected)` : "not selected for the active ASR provider"}`);
 
-  const config = launcherConfig(process.env, [], process.cwd(), fs.existsSync);
-  console.log(`- Planner: ${process.env.SARVAM_CHAT_PROVIDER || process.env.PLANNER_PROVIDER || "gemini"}`);
+  console.log(`- Planner: ${config.plannerProvider}`);
+  console.log(`- Conversation: ${config.conversationProvider}`);
   console.log(`- Selected-provider configuration: ${config.missing.length ? "INCOMPLETE" : "configured (not live-provider verification)"}`);
   for (const missing of config.missing) console.log(`  Missing: ${missing}`);
   const onlineCount = selectedServices.filter((s) => s.status === "ONLINE").length;
