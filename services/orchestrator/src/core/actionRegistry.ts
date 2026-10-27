@@ -93,7 +93,7 @@ for (const policy of policyList) {
 }
 
 const failClosedPrefixes = ["testing.", "incident.", "coding."];
-const explicitlyBlockedActions = new Set(["terminal.run_command", "tests.run", "claude_code.open", "developer.claude_code.open_autonomous", "incident.prepare_and_verify"]);
+const explicitlyBlockedActions = new Set(["terminal.run_command", "tests.run", "claude_code.open", "developer.claude_code.open_autonomous", "incident.prepare_and_verify", "codex.run_task"]);
 
 /**
  * Canonical policy registry for the incident/repair/testing execution surface.
