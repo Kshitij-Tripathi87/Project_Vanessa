@@ -162,7 +162,11 @@ test("doctor JSON output has a stable schema and strict mode catches warnings", 
     stdout: (value) => output.push(value),
     stderr: (value) => error.push(value),
     options: dependencies(BASE_FILES, {
-      env: localEnv({ SARVAM_API_KEY: "" }),
+      env: localEnv({
+        VOICE_ASR_PROVIDER: "sarvam",
+        SARVAM_API_KEY: "",
+        SARVAM_ASR_MODEL: "saaras:v3-realtime",
+      }),
     }),
   });
   assert.equal(code, 1);
