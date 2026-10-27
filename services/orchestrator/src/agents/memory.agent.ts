@@ -57,7 +57,7 @@ export class MemoryAgent implements SpecialistAgent {
     }
   }
 
-  async retrieve(query: string, _ctx?: AgentRunContext): Promise<AgentResult> {
+  private async retrieve(query: string, _ctx?: AgentRunContext): Promise<AgentResult> {
     const startTime = new Date().toISOString();
     const normalizedQuery = query.trim();
     let records;
@@ -117,7 +117,7 @@ export class MemoryAgent implements SpecialistAgent {
     };
   }
 
-  async store(content: string, metadata?: Record<string, any>, _ctx?: AgentRunContext): Promise<AgentResult> {
+  private async store(content: string, metadata?: Record<string, any>, _ctx?: AgentRunContext): Promise<AgentResult> {
     const startTime = new Date().toISOString();
     const normalizedContent = content.trim();
     if (!normalizedContent) return this.blocked("memory.store", "Memory content must be a non-empty string.");
@@ -158,7 +158,7 @@ export class MemoryAgent implements SpecialistAgent {
     }
   }
 
-  async list(limit: number, _ctx?: AgentRunContext): Promise<AgentResult> {
+  private async list(limit: number, _ctx?: AgentRunContext): Promise<AgentResult> {
     const startTime = new Date().toISOString();
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
       return this.blocked("memory.list", "Memory list limit must be an integer from 1 to 50.");
