@@ -79,11 +79,27 @@ export class CodingAgent implements SpecialistAgent {
       case "coding.git_diff":
         return this.gitDiff(params.target || "HEAD~1", runCtx);
 
-      default:
-        if (action.includes("patch") || action.includes("fix")) {
-          return this.preparePatch(params, runCtx);
-        }
-        return this.inspectChanges(params, runCtx);
+      default: {
+        const reason = `Unregistered coding action '${action}' is blocked.`;
+        return {
+          agentId: this.id,
+          status: "blocked",
+          success: false,
+          summary: reason,
+          spokenSummary: "I blocked an unregistered coding operation before it could inspect or modify files.",
+          error: reason,
+          evidence: [{
+            description: reason,
+            source: "coding-agent-dispatch",
+            timestamp: new Date().toISOString(),
+            confidence: 1,
+            data: { outcome: "blocked", actionId: action, processStarted: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: reason },
+          data: { outcome: "blocked", actionId: action, processStarted: false },
+        };
+      }
     }
   }
 
