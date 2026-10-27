@@ -152,7 +152,7 @@ async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> 
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_ROOT_PID: String(rootPid) },
-      timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
+      timeout: 10000, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
     });
     const value = JSON.parse(result.stdout.trim());
     const ids = (Array.isArray(value) ? value : [value]).map(Number);
@@ -168,7 +168,7 @@ async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | 
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
-      timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
+      timeout: 10000, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
     });
     const value = JSON.parse(result.stdout.trim());
     return value && Number.isSafeInteger(value.aliveCount) && value.aliveCount >= 0 ? value.aliveCount === 0 : null;
