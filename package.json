@@ -22,7 +22,8 @@
     "test:checkout:gate": "pnpm --filter @vanessa/orchestrator exec tsx src/tests/checkoutIncidentGate.test.ts",
     "test:voice:real": ".venv-voice\\Scripts\\python.exe scripts/test_real_voice_pipeline.py test_wifi.wav",
     "test:all": "pnpm test:scenarios && pnpm test:skills && pnpm test:drills && pnpm test:drills:process && pnpm --filter @vanessa/voice-agent test",
-    "lint": "pnpm -r run lint"
+    "lint": "pnpm -r run lint",
+    "test:desktop:microphone": "pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/renderer/hooks/microphoneDiagnostics.test.ts"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",

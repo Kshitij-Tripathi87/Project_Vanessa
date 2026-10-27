@@ -4,7 +4,6 @@ const path = require('node:path');
 const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
-const { createHash } = require('node:crypto');
 const { launcherConfig } = require('./launcher-config.cjs');
 
 const root = path.resolve(__dirname, '..');
@@ -120,6 +119,27 @@ async function ensureService(stage, url, identity, port, reuse, start, strict = 
   await waitForHealth(stage, url, identity, strict);
 }
 
+async function assertOllamaReady(config) {
+  if (![config.planner, config.conversation].includes('ollama')) return;
+  let parsed;
+  try { parsed = new URL(process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl); }
+  catch { throw new Error('OLLAMA_BASE_URL is invalid. Use http://127.0.0.1:11434 for local Ollama.'); }
+  const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+  if (parsed.protocol !== 'http:' || !localHosts.has(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('OLLAMA_BASE_URL must be a local loopback HTTP origin, for example http://127.0.0.1:11434. Vanessa will not send local prompts to remote hosts.');
+  }
+  const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen2.5:3b').trim();
+  let response;
+  try { response = await fetch(\x60\x24{parsed.origin}/api/tags\x60, { signal: AbortSignal.timeout(2500) }); }
+  catch { throw new Error(\x60Local Ollama is not reachable at \x24{parsed.origin}. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.\x60); }
+  if (!response.ok) throw new Error(\x60Local Ollama returned HTTP \x24{response.status}. Restart Ollama and retry.\x60);
+  let body;
+  try { body = await response.json(); } catch { throw new Error('Local Ollama returned an invalid model list. Restart Ollama and retry.'); }
+  const installed = Array.isArray(body.models) && body.models.some(item => item && item.name === model);
+  if (!installed) throw new Error(\x60Local model "\x24{model}" is not installed. Run .\\\\scripts\\\\setup_windows.ps1 or execute ollama pull \x24{model}.\x60);
+  log('OLLAMA', \x60Local model ready: \x24{model}; no provider key required.\x60);
+}
+
 function asrReachable(url) {
   return new Promise((resolve) => {
     const WebSocket = require('ws');
@@ -169,10 +189,9 @@ Usage: Launch-Vanessa.bat [options]
 
 Root .env is loaded for all managed processes. Existing .env files are never rewritten.
 Sarvam, Fish, ElevenLabs, and local voice/whisper providers follow VOICE_ASR_PROVIDER / VOICE_TTS_PROVIDER.
-Planning uses PLANNER_PROVIDER; conversational replies use SARVAM_CHAT_PROVIDER (sarvam or nvidia).
-Local Whisper uses VOICE_URL (or WHISPER_URL), voice_server.py (legacy whisper_server.py fallback),
-and VOICE_PYTHON or .venv-voice / .venv-whisper. Install its Python dependencies beforehand.
-Missing cloud keys warn during ordinary startup; unavailable providers cannot serve requests.
+Planning uses PLANNER_PROVIDER; replies use CONVERSATION_PROVIDER (ollama, sarvam, or nvidia). Local Ollama is the default and needs no API key.
+Local Whisper uses VOICE_URL and .venv-voice. Run scripts\\setup_windows.ps1 once to provision local models and dependencies. Browser speech synthesis is the no-key TTS fallback.
+Cloud providers are optional; configure their keys only when explicitly selecting those providers.
 Codex is optional unless --codex-test is selected. Logs are saved in logs/launcher/.
 Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
 `);
@@ -193,9 +212,20 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   logFile = path.join(logDir, `vanessa-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
   log('1/5 ENV', hasEnv ? 'Loaded root .env; credentials are not printed.' : 'No root .env; using inherited environment. See .env.example for configuration.');
   if (hasEnv) log('1/5 ENV', `File last changed=${fs.statSync(envPath).mtime.toISOString()}; restart required after .env edits.`);
-  if (process.env.FISH_API_KEY) log('1/5 ENV', `Fish key fingerprint=${createHash('sha256').update(process.env.FISH_API_KEY).digest('hex').slice(0, 12)} (hash only).`);
   log('Launcher', `Log file: ${logFile}`);
   const config = launcherConfig(process.env, process.argv.slice(2), root, fs.existsSync);
+  // Apply no-key defaults to every managed child process. Explicit settings in
+  // the user's .env remain authoritative.
+  process.env.VOICE_ASR_PROVIDER ||= config.asr;
+  process.env.VOICE_TTS_PROVIDER ||= config.tts;
+  process.env.VOICE_TTS_FALLBACK_PROVIDER ||= config.ttsFallback ? 'browser' : 'none';
+  process.env.PLANNER_PROVIDER ||= config.planner;
+  process.env.CONVERSATION_PROVIDER ||= config.conversation;
+  process.env.OLLAMA_BASE_URL ||= config.ollamaBaseUrl;
+  process.env.OLLAMA_MODEL ||= config.ollamaModel;
+  process.env.VOICE_URL ||= 'ws://127.0.0.1:4505';
+  process.env.VOICE_MODEL ||= 'base';
+  process.env.VOICE_LANGUAGE ||= 'auto';
   const { asr, tts } = config;
   for (const warning of config.missing) log('CONFIG WARNING', warning);
   if (process.env.FAKE === '1') log('CONFIG WARNING', 'FAKE=1: simulated actions are enabled.');
@@ -226,8 +256,9 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   if (!fs.existsSync(electron)) throw new Error('Electron executable is missing. Restore workspace dependencies.');
   const tsx = config.dev ? require.resolve('tsx/cli', { paths: [path.join(root, 'services/orchestrator')] }) : undefined;
   if (!process.argv.includes('--build-only') && config.localAsr?.local && (!config.localAsr.python || !config.localAsr.script) && !config.reuse) throw new Error('Local Whisper selected but its Python environment/server is missing. Set VOICE_PYTHON or install .venv-voice; use --reuse-existing for an already running server, or --text-only for text work.');
+  if (!process.argv.includes('--build-only')) await assertOllamaReady(config);
   if (process.argv.includes('--check')) {
-    log('Launcher', 'Preflight passed. No services started; credentials have not been sent to providers.');
+    log('Launcher', 'Preflight passed. No services started; no provider credentials are needed for the local default profile.');
     return;
   }
   if (!process.argv.includes('--build-only')) {
