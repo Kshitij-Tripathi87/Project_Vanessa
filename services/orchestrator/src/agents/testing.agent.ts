@@ -237,12 +237,16 @@ export class TestingAgent implements SpecialistAgent {
     const exitSucceeded = processResult.status === "exited" && processResult.exitCode === 0;
     let baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
     const testSuccess = exitSucceeded && report !== null && !processResult.stdoutTruncated && !processResult.stderrTruncated && baseCheckoutUnchanged;
-    const processFailed = processResult.status === "exited" && processResult.exitCode !== 0;
+    const processFailed =
+      (processResult.status === "exited" && processResult.exitCode !== 0) ||
+      processResult.status === "orphaned_processes";
     const outcome = testSuccess ? "succeeded" : processFailed || !baseCheckoutUnchanged ? "failed" : "inconclusive";
     const details = testSuccess
       ? `Registered incident-lab suite passed ${report!.passed}/${report!.total} tests with exit code 0.`
       : processFailed
         ? `Registered incident-lab suite exited with code ${processResult.exitCode}.`
+        : processResult.status === "orphaned_processes"
+        ? "The test launcher exited but left descendant processes; the supervisor terminated them, and this run is not eligible for success."
         : processResult.status === "timed_out"
           ? "The registered test process timed out; passing results were not established."
           : processResult.status === "termination_unconfirmed"
