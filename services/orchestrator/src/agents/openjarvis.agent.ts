@@ -1,33 +1,37 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-import path from "node:path";
-import fs from "node:fs";
 import { modelRouter } from "../core/router.js";
-
-const execAsync = promisify(exec);
+import { resolveManagedAction } from "../core/actionRegistry.js";
 
 export class VanessaAgent {
-  private openJarvisDir: string;
-
-  constructor() {
-    const searchDirs = [
-      path.resolve(process.cwd(), "agents and tools"),
-      path.resolve(process.cwd(), "..", "..", "agents and tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\agents and tools",
-      path.resolve(process.cwd(), "agents_and_tools"),
-      path.resolve(process.cwd(), "..", "..", "agents_and_tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\agents_and_tools",
-      path.resolve(process.cwd(), "tools"),
-      path.resolve(process.cwd(), "..", "..", "tools"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\tools",
-      path.resolve(process.cwd(), "OpenJarvis"),
-      path.resolve(process.cwd(), "..", "..", "OpenJarvis"),
-      "c:\\Users\\21330\\Documents\\Project_Vanessa\\OpenJarvis",
-    ];
-    this.openJarvisDir = searchDirs.find((d) => fs.existsSync(d)) || searchDirs[0];
+  private blocked(action: string, reason: string): any {
+    return {
+      agentId: "openjarvis",
+      status: "blocked",
+      success: false,
+      summary: reason,
+      spokenSummary: "I blocked this operation because its legacy execution path is not approved.",
+      error: reason,
+      evidence: [{
+        description: "No legacy Python bridge, shell, or tool process was started.",
+        source: "openjarvis-execution-containment",
+        timestamp: new Date().toISOString(),
+        confidence: 1,
+        data: { outcome: "blocked", actionId: action, processStarted: false },
+      }],
+      artifacts: [],
+      verification: { passed: false, details: reason },
+      data: { outcome: "blocked", actionId: action, processStarted: false },
+    };
   }
 
   async execute(action: string, params: Record<string, any> = {}): Promise<any> {
+    const policy = resolveManagedAction(action, params);
+    if (!policy.managed || policy.blocked) {
+      return this.blocked(
+        action,
+        policy.reason || `Unregistered action '${action}' is blocked; no legacy executor is available.`,
+      );
+    }
+
     switch (action) {
       case "vanessa.ask":
       case "tools.ask":
@@ -130,41 +134,11 @@ export class VanessaAgent {
     }
   }
 
-  async runBridge(action: string, payload?: Record<string, any>): Promise<any> {
-    try {
-      if (!process.env.NVIDIA_API_KEY) {
-        process.env.NVIDIA_API_KEY = "nvapi-placeholder-key-replace-with-your-nvidia-key";
-      }
-      if (!process.env.NVIDIA_BASE_URL) {
-        process.env.NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
-      }
-      if (!process.env.NVIDIA_MODEL) {
-        process.env.NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
-      }
-
-      const venvPy = path.join(this.openJarvisDir, ".venv", "Scripts", "python.exe");
-      const pythonExe = fs.existsSync(venvPy) ? `"${venvPy}"` : "uv run python";
-
-      let cmd = `${pythonExe} vanessa_bridge.py ${action}`;
-      if (payload) {
-        const b64 = Buffer.from(JSON.stringify(payload)).toString("base64");
-        cmd += ` --b64 ${b64}`;
-      }
-
-      const { stdout } = await execAsync(cmd, {
-        cwd: this.openJarvisDir,
-        timeout: 45000,
-      });
-
-      return JSON.parse(stdout.trim());
-    } catch (err: any) {
-      console.warn("[VanessaAgent] Bridge execution fallback:", err.message);
-      return {
-        success: false,
-        error: err.message,
-        fallback: true,
-      };
-    }
+  async runBridge(action: string, _payload?: Record<string, any>): Promise<any> {
+    return this.blocked(
+      `openjarvis.bridge.${action}`,
+      "The legacy Python bridge is disabled until its executable inventory, authorization, minimal environment, and process lifecycle are migrated to Trustworthy Execution.",
+    );
   }
 
   async getStatus(): Promise<any> {
