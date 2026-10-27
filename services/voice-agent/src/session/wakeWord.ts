@@ -15,10 +15,12 @@ export class WakeWordDetector {
     const lower = text.toLowerCase().trim();
 
     for (const phrase of this.wakeWords) {
-      if (lower.startsWith(phrase)) {
+      const suffix = lower.slice(phrase.length, phrase.length + 1);
+      const hasWakeBoundary = lower === phrase || /^[\s,!.?;:'"-]$/.test(suffix);
+      if (lower.startsWith(phrase) && hasWakeBoundary) {
         this.touchActiveSession();
         // Clean off the wake word prefix and punctuation
-        const remainder = lower.substring(phrase.length).replace(/^[,\s.!?\-]+/, "").replace(/[.!?]+$/, "").trim();
+        const remainder = lower.substring(phrase.length).replace(/^[,\s.!?;:'"-]+/, "").replace(/[.!?]+$/, "").trim();
         return {
           detected: true,
           cleanedText: remainder,
