@@ -132,6 +132,8 @@ export class ProcessSupervisor {
   private readonly active = new Map<string, ManagedEntry>();
   private readonly completed = new Map<string, ManagedProcessResult>();
 
+  constructor(private readonly workspaceService = repairWorkspaceService) {}
+
   listActiveTaskIds(): string[] {
     return [...this.active.keys()];
   }
@@ -155,7 +157,7 @@ export class ProcessSupervisor {
     }
     const workspaceId = request.actionParams?.workspaceId;
     const expectedDiffHash = request.actionParams?.expectedDiffHash;
-    const workspace = typeof workspaceId === "string" ? repairWorkspaceService.getWorkspace(workspaceId) : undefined;
+    const workspace = typeof workspaceId === "string" ? this.workspaceService.getWorkspace(workspaceId) : undefined;
     if (!workspace || typeof expectedDiffHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedDiffHash)) {
       throw new Error("The registered test runner requires a known worktree and expected SHA-256 patch digest.");
     }
@@ -184,7 +186,7 @@ export class ProcessSupervisor {
       changedFiles.length !== 1 ||
       changedFiles[0] !== "packages/incident-lab/src/checkout.ts" ||
       actualDiffHash !== expectedDiffHash ||
-      !(await repairWorkspaceService.isBaseCheckoutUnchanged(workspace))
+      !(await this.workspaceService.isBaseCheckoutUnchanged(workspace))
     ) {
       throw new Error("The target worktree, base commit, changed-file scope, patch digest, or base-checkout invariant failed revalidation.");
     }
