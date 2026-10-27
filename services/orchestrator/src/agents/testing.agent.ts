@@ -1,5 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import type {
   AgentEvidence,
@@ -10,6 +13,9 @@ import type {
 } from "@vanessa/shared";
 import { eventBus } from "../core/eventBus.js";
 import { processSupervisor, type ManagedProcessResult } from "../core/processSupervisor.js";
+import { repairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
+
+const execFileAsync = promisify(execFile);
 
 const INCIDENT_LAB_SUITE_ID = "incident-lab.regression";
 
@@ -27,16 +33,24 @@ export function parseRegressionSummary(output: string): RegressionSummary | null
   return { passed, total };
 }
 
-export function validateRegressionRequest(params: Record<string, any>): { valid: true; suiteId: string } | { valid: false; reason: string } {
+export function validateRegressionRequest(params: Record<string, any>):
+  | { valid: true; suiteId: string; workspaceId: string; expectedDiffHash: string }
+  | { valid: false; reason: string } {
   if (Object.prototype.hasOwnProperty.call(params, "command")) {
     return { valid: false, reason: "Free-form command execution is not accepted by the testing agent. Use a registered suiteId." };
   }
-  const unknown = Object.keys(params).filter((key) => key !== "suiteId");
+  const unknown = Object.keys(params).filter((key) => !["suiteId", "workspaceId", "expectedDiffHash"].includes(key));
   if (unknown.length) return { valid: false, reason: `Unsupported testing parameter(s): ${unknown.join(", ")}` };
   if (params.suiteId !== INCIDENT_LAB_SUITE_ID) {
     return { valid: false, reason: `Unknown or missing test suite. Registered suite: ${INCIDENT_LAB_SUITE_ID}.` };
   }
-  return { valid: true, suiteId: INCIDENT_LAB_SUITE_ID };
+  if (typeof params.workspaceId !== "string" || !params.workspaceId.trim() || /[\\/]/.test(params.workspaceId)) {
+    return { valid: false, reason: "A registered workspaceId is required; arbitrary workspace paths are not accepted." };
+  }
+  if (typeof params.expectedDiffHash !== "string" || !/^[a-f0-9]{64}$/i.test(params.expectedDiffHash)) {
+    return { valid: false, reason: "The expected patch digest is missing or malformed." };
+  }
+  return { valid: true, suiteId: INCIDENT_LAB_SUITE_ID, workspaceId: params.workspaceId, expectedDiffHash: params.expectedDiffHash };
 }
 
 function findRepositoryRoot(start: string): string {
@@ -70,7 +84,13 @@ export class TestingAgent implements SpecialistAgent {
   private workspaceRoot: string;
 
   constructor() {
-    this.workspaceRoot = findRepositoryRoot(process.cwd());
+    try {
+      this.workspaceRoot = findRepositoryRoot(process.cwd());
+    } catch {
+      // Keep the service bootable; test execution will be blocked if the repo
+      // cannot be resolved, rather than throwing during module initialization.
+      this.workspaceRoot = "";
+    }
   }
 
   async execute(
@@ -136,15 +156,58 @@ export class TestingAgent implements SpecialistAgent {
     const request = validateRegressionRequest(params);
     if (!request.valid) return this.blocked(request.reason);
 
+    const workspace: RepairWorkspace | undefined = repairWorkspaceService.getWorkspace(request.workspaceId);
+    if (!workspace) {
+      return this.blocked("The requested workspace is not registered in this orchestrator session.", "testing.run_incident_lab");
+    }
+    if (!this.workspaceRoot) {
+      return this.blocked("The monorepo root is unavailable; safe test execution is disabled.", "testing.run_incident_lab");
+    }
+
+    let actualRoot = "", actualHead = "", actualBranch = "", actualDiff = "";
+    let changedFiles: string[] = [];
+    try {
+      const [root, head, branch, diff, names] = await Promise.all([
+        execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["branch", "--show-current"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["diff", "--name-only"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
+      ]);
+      actualRoot = path.resolve(root.stdout.trim());
+      actualHead = head.stdout.trim();
+      actualBranch = branch.stdout.trim();
+      actualDiff = diff.stdout;
+      changedFiles = names.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    } catch (error: any) {
+      return this.blocked(`Could not validate the registered repair workspace: ${error?.message || "git inspection failed"}`, "testing.run_incident_lab");
+    }
+    const actualDiffHash = createHash("sha256").update(actualDiff).digest("hex");
+    if (
+      actualRoot !== path.resolve(workspace.worktreePath) ||
+      actualHead !== workspace.baseCommit ||
+      actualBranch !== workspace.branchName ||
+      !actualDiff.trim() ||
+      changedFiles.length !== 1 ||
+      changedFiles[0] !== "packages/incident-lab/src/checkout.ts" ||
+      actualDiffHash !== request.expectedDiffHash
+    ) {
+      return this.blocked("The registered worktree, base commit, changed-file scope, or patch digest did not match the approved test target.", "testing.run_incident_lab");
+    }
+
     const taskId = ctx?.task?.id || `test-${randomUUID()}`;
     let processResult: ManagedProcessResult;
     try {
+      const executable = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
+      const args = process.platform === "win32"
+        ? ["/d", "/s", "/c", "pnpm --filter @vanessa/incident-lab test"]
+        : ["--filter", "@vanessa/incident-lab", "test"];
       processResult = await processSupervisor.run({
         taskId,
         actionId: "testing.run_incident_lab",
-        executable: process.platform === "win32" ? "pnpm.cmd" : "pnpm",
-        args: ["--filter", "@vanessa/incident-lab", "test"],
-        cwd: this.workspaceRoot,
+        executable,
+        args,
+        cwd: workspace.worktreePath,
         timeoutMs: 25000,
         maxOutputBytes: 256 * 1024,
       });
@@ -167,9 +230,10 @@ export class TestingAgent implements SpecialistAgent {
     const output = diagnosticOutput(processResult);
     const report = parseRegressionSummary(output);
     const exitSucceeded = processResult.status === "exited" && processResult.exitCode === 0;
-    const testSuccess = exitSucceeded && report !== null && !processResult.stdoutTruncated && !processResult.stderrTruncated;
+    let baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
+    const testSuccess = exitSucceeded && report !== null && !processResult.stdoutTruncated && !processResult.stderrTruncated && baseCheckoutUnchanged;
     const processFailed = processResult.status === "exited" && processResult.exitCode !== 0;
-    const outcome = testSuccess ? "succeeded" : processFailed ? "failed" : "inconclusive";
+    const outcome = testSuccess ? "succeeded" : processFailed || !baseCheckoutUnchanged ? "failed" : "inconclusive";
     const details = testSuccess
       ? `Registered incident-lab suite passed ${report!.passed}/${report!.total} tests with exit code 0.`
       : processFailed
@@ -190,6 +254,13 @@ export class TestingAgent implements SpecialistAgent {
         taskId: processResult.taskId,
         actionId: processResult.actionId,
         suiteId: request.suiteId,
+        workspaceId: request.workspaceId,
+        expectedDiffHash: request.expectedDiffHash,
+        actualDiffHash,
+        changedFiles,
+        workspacePath: workspace.worktreePath,
+        baseCommit: workspace.baseCommit,
+        baseCheckoutUnchanged,
         executable: processResult.executable,
         args: processResult.args,
         cwd: processResult.cwd,
@@ -242,6 +313,10 @@ export class TestingAgent implements SpecialistAgent {
         outcome,
         actionId: "testing.run_incident_lab",
         suiteId: request.suiteId,
+        workspaceId: request.workspaceId,
+        expectedDiffHash: request.expectedDiffHash,
+        actualDiffHash,
+        baseCheckoutUnchanged,
         processStatus: processResult.status,
         exitStatus: processResult.exitCode,
         report,
