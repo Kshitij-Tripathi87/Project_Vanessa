@@ -31,8 +31,14 @@ $needsWhisper = ($asr -in @('whisper', 'voice')) -or ($asr -eq 'fish' -and $allo
 if ($needsWhisper) {
     $python = Join-Path $Root '.venv-voice/Scripts/python.exe'
     if (-not (Test-Path $python)) { Fail-Preflight 'The local speech runtime is not installed.' }
-    & $python -c 'import faster_whisper, numpy, websockets' 2>$null
+    & $python -c 'import faster_whisper, numpy, websockets, huggingface_hub' 2>$null
     if ($LASTEXITCODE -ne 0) { Fail-Preflight 'The local speech dependencies are incomplete.' }
+
+    $voiceModel = Get-EnvSetting 'VOICE_MODEL' 'base'
+    $modelChecker = Join-Path $Root 'scripts/check_local_whisper_model.py'
+    if (-not (Test-Path $modelChecker)) { Fail-Preflight 'The local speech model checker is missing; rerun setup to repair the installation.' }
+    & $python $modelChecker --model $voiceModel 2>$null
+    if ($LASTEXITCODE -ne 0) { Fail-Preflight "The local speech model '$voiceModel' is missing or incomplete; rerun setup to download or repair it." }
 }
 
 $planner = (Get-EnvSetting 'PLANNER_PROVIDER' 'ollama').ToLowerInvariant()
