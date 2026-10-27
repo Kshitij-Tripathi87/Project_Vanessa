@@ -235,7 +235,7 @@ test("PowerShell helper excludes inherited secrets and only accepts explicit VAN
     assert.equal(env.VANESSA_URL, "https://example.invalid");
     assert.ok(Object.keys(env).some((key) => key.toUpperCase() === "PATH"), "Windows executable lookup path remains available");
     assert.throws(() => buildPowerShellEnvironment({ PATH: "unapproved" }), /Invalid PowerShell environment key/);
-    assert.throws(() => buildPowerShellEnvironment({ VANESSA_URL: "x\\0y" }), /Invalid value/);
+    assert.throws(() => buildPowerShellEnvironment({ VANESSA_URL: "x" + String.fromCharCode(0) + "y" }), /Invalid value/);
   } finally {
     if (previousSecret === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousSecret;
