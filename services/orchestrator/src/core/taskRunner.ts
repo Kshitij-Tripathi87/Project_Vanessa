@@ -913,13 +913,20 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
   for (const task of tasks.values()) {
     const dependencies = (task.dependsOn || []).map((id) => tasks.get(id));
     const dependencyFailed = dependencies.some((dependency) =>
-      dependency && ["failed", "partial", "blocked", "cancelled", "expired"].includes(dependency.status)
+      dependency && ["failed", "partial", "blocked", "cancelled", "expired", "termination_unconfirmed"].includes(dependency.status)
     );
     const missingDependency = (task.dependsOn || []).some((id) => !tasks.has(id));
-    if (task.status === "pending" && (dependencyFailed || missingDependency)) {
+    const waitingForApproval = dependencies.some((dependency) => dependency?.status === "awaiting_approval");
+    const unresolvedDependency = dependencies.some((dependency) => dependency && dependency.status !== "success" && dependency.status !== "awaiting_approval");
+    const orphanedPending = dependencies.length === 0 || dependencies.every((dependency) => dependency?.status === "success") === false;
+    if (task.status === "pending" && !waitingForApproval && (dependencyFailed || missingDependency || unresolvedDependency || orphanedPending)) {
       task.status = "blocked";
       task.lifecycleState = "blocked";
-      task.error = "A prerequisite did not complete with verified success.";
+      task.error = missingDependency
+        ? "A declared prerequisite does not exist."
+        : dependencyFailed
+          ? "A prerequisite did not complete with verified success."
+          : "Task remained unschedulable after dependency evaluation; no operation was executed.";
       task.completedAt = Date.now();
       task.verification = { verified: false, postconditions: [task.error], exitCode: 1, outcome: "blocked" };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
