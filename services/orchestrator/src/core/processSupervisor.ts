@@ -258,7 +258,7 @@ export class ProcessSupervisor {
     try {
       child = spawn(normalizedRequest.executable, normalizedRequest.args, {
         cwd: normalizedRequest.cwd,
-        env: minimalEnvironment(),
+        env: { ...minimalEnvironment(), VANESSA_EXECUTION_RUN_ID: runId },
         shell: false,
         windowsHide: true,
         detached: process.platform !== "win32",
