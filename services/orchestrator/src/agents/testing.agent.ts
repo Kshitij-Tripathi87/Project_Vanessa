@@ -205,6 +205,11 @@ export class TestingAgent implements SpecialistAgent {
       processResult = await processSupervisor.run({
         taskId,
         actionId: "testing.run_incident_lab",
+        actionParams: {
+          suiteId: request.suiteId,
+          workspaceId: request.workspaceId,
+          expectedDiffHash: request.expectedDiffHash,
+        },
         executable,
         args,
         cwd: workspace.worktreePath,
