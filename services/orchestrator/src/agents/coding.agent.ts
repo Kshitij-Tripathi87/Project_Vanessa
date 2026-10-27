@@ -126,9 +126,53 @@ export class CodingAgent implements SpecialistAgent {
 
   async preparePatch(params: Record<string, any>, ctx?: AgentRunContext): Promise<AgentResult> {
     const startedAt = new Date().toISOString();
-    const taskId = ctx?.task?.id || `coding-${randomUUID()}`;
+    const task = ctx?.task;
+    const taskId = task?.id || `coding-${randomUUID()}`;
+    const unexpectedParams = Object.keys(params || {}).filter((key) => key !== "taskId");
+    if (unexpectedParams.length || (params.taskId !== undefined && params.taskId !== taskId)) {
+      const reason = "Patch preparation accepts no user-selected target/path/task override.";
+      return {
+        agentId: this.id, status: "blocked", success: false, summary: reason, spokenSummary: reason,
+        error: reason, evidence: [], artifacts: [], verification: { passed: false, details: reason },
+        data: { outcome: "blocked", patchApplied: false, processStarted: false },
+      };
+    }
+
+    // Direct agent invocation is not an authorization path. The one-use task
+    // approval must already have been consumed by the orchestrator, with a
+    // repository snapshot captured into the approval digest.
+    const hasBoundApproval = Boolean(
+      task?.action === "coding.prepare_patch" &&
+      task.approvalDigest &&
+      task.approvalConsumedAt !== undefined &&
+      task.approvalPolicyVersion === "trustworthy-execution-v1" &&
+      task.approvalExpiresAt !== undefined &&
+      task.approvalExpiresAt > Date.now() &&
+      task.approvalRepositoryRoot &&
+      task.approvalBranch &&
+      task.approvalBaseCommit &&
+      task.approvalWorkingTreeDigest &&
+      task.approvalTarget === "packages/incident-lab/src/checkout.ts" &&
+      task.approvalPatchContract === "incident-lab.checkout-promo-null-guard.v1"
+    );
+    if (!hasBoundApproval) {
+      const reason = "Patch preparation was blocked because no valid one-use approval is bound to the repository, base commit, target, and patch contract.";
+      return {
+        agentId: this.id, status: "blocked", success: false, summary: reason, spokenSummary: reason, error: reason,
+        evidence: [{ description: reason, source: "coding.approval-gate", timestamp: startedAt, confidence: 1 }],
+        artifacts: [], verification: { passed: false, details: reason }, data: { outcome: "blocked", patchApplied: false },
+      };
+    }
+    const expected = {
+      repositoryRoot: task!.approvalRepositoryRoot!,
+      branch: task!.approvalBranch!,
+      baseCommit: task!.approvalBaseCommit!,
+      workingTreeDigest: task!.approvalWorkingTreeDigest!,
+      targetRelativePath: task!.approvalTarget!,
+      patchContract: task!.approvalPatchContract!,
+    };
     let workspace;
-    try { workspace = await repairWorkspaceService.create(taskId); }
+    try { workspace = await repairWorkspaceService.create(taskId, expected); }
     catch (error: any) {
       const reason = typeof error?.message === "string" ? error.message : "Isolated repair workspace could not be created.";
       return { agentId: this.id, status: "blocked", success: false, summary: reason, spokenSummary: reason, error: reason,
