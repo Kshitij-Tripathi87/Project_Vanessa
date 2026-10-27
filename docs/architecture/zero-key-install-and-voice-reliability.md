@@ -161,6 +161,7 @@ Resource cleanup is mandatory on every failure path: stop acquired media tracks,
 - Local services bind to loopback; WebSocket origin checks and Electron context isolation remain enabled.
 - Validate external LLM URLs, provider names, configured models, timeouts, payload sizes, and ports before use.
 - Secrets are redacted from provider errors and process output. Do not hash-log API keys or print any key fragments.
+- Local ASR logs utterance length and language only by default; raw transcript logging requires explicit opt-in via VANESSA_LOG_TRANSCRIPTS=true for local debugging and should not be enabled in normal use.
 - No user audio/transcript telemetry by default. Diagnostic bundles are opt-in, previewable, and redact paths/tokens.
 - Managed profile needs authentication, per-user/device authorization, request quotas/spend, abuse controls, provider failover policy, audit records, data retention/deletion, incident response, and key rotation before production.
 - Retry idempotent health checks, not arbitrary execution requests. Do not replay a task when a connection is lost after submission; reconcile by request ID.

@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import websockets  # type: ignore
 from faster_whisper import WhisperModel  # type: ignore
+from transcript_logging import format_transcript_log
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,7 +79,7 @@ async def handle_client(websocket):
                             text = " ".join([seg.text.strip() for seg in segments]).strip()
                             if text and text != last_emitted_text:
                                 last_emitted_text = text
-                                logger.info(f"Partial Transcript: '{text}'")
+                                logger.info(format_transcript_log("Partial transcript", text, getattr(info, "language", None)))
                                 await websocket.send(json.dumps({
                                     "text": text,
                                     "is_final": False,
@@ -106,7 +107,7 @@ async def handle_client(websocket):
                             detected_language = info.language or detected_language
                             full_text = " ".join([seg.text.strip() for seg in segments]).strip()
                             out_text = full_text or last_emitted_text
-                            logger.info(f"Silence detected. Auto-finalizing turn: '{out_text}'")
+                            logger.info(format_transcript_log("Silence detected; auto-finalizing", out_text, detected_language))
                             await websocket.send(json.dumps({
                                 "text": out_text,
                                 "is_final": True,
@@ -158,7 +159,7 @@ async def handle_client(websocket):
                                 final_text = last_emitted_text
 
                             out_text = final_text or last_emitted_text
-                            logger.info(f"Final Transcript Result: '{out_text}'")
+                            logger.info(format_transcript_log("Final transcript", out_text, detected_language))
                             if out_text:
                                 await websocket.send(json.dumps({
                                     "text": out_text,

@@ -14,6 +14,11 @@ jobs:
       SARVAM_API_KEY: vanessa-build-secret-canary
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify local speech transcripts are private by default
+        run: python -m unittest discover -s services/voice-agent/tests -p "test_*.py"
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
