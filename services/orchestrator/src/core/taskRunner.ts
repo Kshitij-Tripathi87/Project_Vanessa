@@ -34,42 +34,69 @@ function stableJson(value: any): string {
   return JSON.stringify(value);
 }
 
+function captureRepairRepositorySnapshot() {
+  const git = (args: string[]) => execFileSync("git", args, {
+    cwd: process.cwd(),
+    timeout: 3000,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 128 * 1024,
+  });
+  const repositoryRoot = path.resolve(git(["rev-parse", "--show-toplevel"]).trim());
+  const branch = git(["branch", "--show-current"]).trim();
+  const baseCommit = git(["rev-parse", "HEAD"]).trim();
+  const status = git(["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (!repositoryRoot || !branch || !baseCommit) {
+    throw new Error("Repository identity is incomplete.");
+  }
+  if (status.trim()) {
+    throw new Error("Repair approval is blocked because the base checkout is dirty.");
+  }
+  return {
+    repositoryRoot,
+    branch,
+    baseCommit,
+    workingTreeDigest: createHash("sha256").update(status).digest("hex"),
+    targetRelativePath: "packages/incident-lab/src/checkout.ts",
+    patchContract: "incident-lab.checkout-promo-null-guard.v1",
+  };
+}
+
 export function computeApprovalDigest(task: Task, expiresAt: number): string {
   const params = task.params || {};
   const managed = resolveManagedAction(task.action, params);
   let repositoryBinding: Record<string, any> | null = null;
 
   if (["coding.prepare_patch", "incident.prepare_and_verify"].includes(task.action)) {
-    // Resolve the actual repository identity at both approval creation and
-    // consumption. A branch/head/working-tree change invalidates the approval.
-    const git = (args: string[]) => execFileSync("git", args, {
-      cwd: process.cwd(),
-      timeout: 3000,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-      windowsHide: true,
-      maxBuffer: 128 * 1024,
-    });
+    let observed: ReturnType<typeof captureRepairRepositorySnapshot>;
     try {
-      const repositoryRoot = path.resolve(git(["rev-parse", "--show-toplevel"]).trim());
-      const branch = git(["branch", "--show-current"]).trim();
-      const baseCommit = git(["rev-parse", "HEAD"]).trim();
-      const status = git(["status", "--porcelain=v1", "--untracked-files=all"]);
-      if (!repositoryRoot || !branch || !baseCommit) throw new Error("Repository identity is incomplete.");
-      if (status.trim()) throw new Error("Repair approval is blocked because the base checkout is dirty.");
-      repositoryBinding = {
-        repositoryRoot,
-        branch,
-        baseCommit,
-        workingTreeDigest: createHash("sha256").update(status).digest("hex"),
-        targetRelativePath: "packages/incident-lab/src/checkout.ts",
-        patchContract: "incident-lab.checkout-promo-null-guard.v1",
-      };
+      observed = captureRepairRepositorySnapshot();
     } catch (error: any) {
-      throw new Error(
-        `Cannot bind approval to a clean repository and base commit: ${error?.message || "Git inspection failed"}`
-      );
+      throw new Error(`Cannot bind approval to a clean repository and base commit: ${error?.message || "Git inspection failed"}`);
     }
+
+    // Capture the approved snapshot once. Recomputations include both the
+    // immutable snapshot and current observation, so changing branch, HEAD,
+    // or working-tree state invalidates a previously issued approval.
+    if (!task.approvalBaseCommit) {
+      task.approvalRepositoryRoot = observed.repositoryRoot;
+      task.approvalBranch = observed.branch;
+      task.approvalBaseCommit = observed.baseCommit;
+      task.approvalWorkingTreeDigest = observed.workingTreeDigest;
+      task.approvalTarget = observed.targetRelativePath;
+      task.approvalPatchContract = observed.patchContract;
+    }
+
+    repositoryBinding = {
+      approvedRepositoryRoot: task.approvalRepositoryRoot,
+      approvedBranch: task.approvalBranch,
+      approvedBaseCommit: task.approvalBaseCommit,
+      approvedWorkingTreeDigest: task.approvalWorkingTreeDigest,
+      approvedTarget: task.approvalTarget,
+      approvedPatchContract: task.approvalPatchContract,
+      observed,
+    };
   } else if (task.action === "testing.run_incident_lab") {
     const workspace = typeof params.workspaceId === "string"
       ? repairWorkspaceService.getWorkspace(params.workspaceId)
@@ -95,7 +122,8 @@ export function computeApprovalDigest(task: Task, expiresAt: number): string {
     normalizedArgs: params,
     target: repositoryBinding || params.workspacePath || params.worktreePath || params.workspaceId ||
       params.targetPath || params.path || params.deviceId || params.resource || task.agent,
-    baseCommit: params.baseCommit || params.expectedBaseCommit || repositoryBinding?.baseCommit || null,
+    baseCommit: params.baseCommit || params.expectedBaseCommit || task.approvalBaseCommit ||
+      repositoryBinding?.baseCommit || repositoryBinding?.approvedBaseCommit || null,
     sideEffectClass: managed.sideEffectClass || "unclassified",
     risk: task.risk || "medium",
     expiresAt,
