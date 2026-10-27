@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useVanessaStore } from "../stores/vanessaStore.js";
+import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 
 export interface SentimentData {
   valence: number;
@@ -515,7 +516,8 @@ export function useAudioCapture() {
 
       // AudioWorklet replaces the deprecated ScriptProcessorNode while keeping
       // microphone processing off the renderer's main UI thread.
-      await audioCtx.audioWorklet.addModule(new URL("../audio/pcmCapture.worklet.ts", import.meta.url));
+      // Compile TypeScript as a separate same-origin JS module, never an inlined asset.
+      await audioCtx.audioWorklet.addModule(pcmCaptureWorkletUrl);
       const processor = new AudioWorkletNode(audioCtx, "vanessa-pcm-capture", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -582,8 +584,11 @@ export function useAudioCapture() {
       setIsMicActive(true);
       setVoiceState("idle");
     } catch (err: any) {
-      console.error("[useAudioCapture] Failed to access microphone:", err);
-      setMicError(err.message || "Microphone access denied");
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.error(`[useAudioCapture] Microphone capture failed: ${detail}`);
+      // A failed worklet must not leave an open stream that looks ready on retry.
+      stopCaptureRef.current?.();
+      setMicError(`Could not start microphone capture: ${detail}`);
       setIsMicActive(false);
       setVoiceState("idle");
     }
