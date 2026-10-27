@@ -21,6 +21,7 @@ interface CompactAssistantProps {
   pendingApproval: Task | null;
   providerStatus: VoiceProviderStatus | null;
   voiceConnectionState: "connecting" | "connected" | "disconnected" | "disabled";
+  wakeWordActive: boolean;
   microphoneTestState: MicrophoneTestState;
   microphoneTestMessage: string;
   onTestMicrophone: () => void;
@@ -75,6 +76,7 @@ export function CompactAssistant({
   pendingApproval,
   providerStatus,
   voiceConnectionState,
+  wakeWordActive,
   microphoneTestState,
   microphoneTestMessage,
   onTestMicrophone,
@@ -270,7 +272,7 @@ export function CompactAssistant({
           {isBusy ? <button className="stop-button" onClick={onStop}><CircleStop size={16} /> Stop</button> : <button className="send-button" onClick={onExecute} aria-label="Send request">Send</button>}
         </div>
         <div className="footer-hint">
-          <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>
+          <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : wakeWordActive ? "Wake-word listener active · say Hey Vanessa" : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>
           {taskStage === "completed" && <span className="verified"><Check size={12} /> Verified</span>}
           {isBusy && taskStage === "planning" && <Loader2 size={13} className="spin" />}
         </div>
