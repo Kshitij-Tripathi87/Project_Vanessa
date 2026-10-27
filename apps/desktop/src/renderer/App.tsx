@@ -41,6 +41,7 @@ export function App() {
     cancelVoice,
     submitTextCommand,
     voiceConnectionState,
+    wakeWordActive,
     toggleRecording,
     resumeAudio,
   } = useAudioCapture();
@@ -172,6 +173,7 @@ export function App() {
       pendingApproval={pendingApproval}
       providerStatus={providerStatus}
       voiceConnectionState={voiceConnectionState}
+      wakeWordActive={wakeWordActive}
       microphoneTestState={microphoneTestState}
       microphoneTestMessage={microphoneTestMessage}
       onTestMicrophone={() => void testMicrophone()}
