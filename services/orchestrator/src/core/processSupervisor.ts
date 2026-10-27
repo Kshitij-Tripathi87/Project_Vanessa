@@ -145,14 +145,14 @@ async function getWindowsProcessTree(rootPid: number): Promise<number[] | null> 
 
 async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | null> {
   if (!processIds.length || processIds.some((pid) => !Number.isSafeInteger(pid) || pid < 1)) return null;
-  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $alive = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId } | Select-Object -ExpandProperty ProcessId); ConvertTo-Json -InputObject @($alive) -Compress";
+  const script = "$ids = @($env:VANESSA_VERIFY_PIDS -split ',' | ForEach-Object { [int]$_ }); $alive = @(Get-CimInstance Win32_Process | Where-Object { $ids -contains [int]$_.ProcessId } | Select-Object -ExpandProperty ProcessId); ConvertTo-Json -InputObject @{ alive = @($alive) } -Compress";
   try {
     const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: { ...minimalEnvironment(), VANESSA_VERIFY_PIDS: processIds.join(",") },
       timeout: 2500, maxBuffer: 16 * 1024, windowsHide: true, encoding: "utf8",
     });
     const value = JSON.parse(result.stdout.trim());
-    return Array.isArray(value) ? value.length === 0 : value === null || value === undefined;
+    return value && Array.isArray(value.alive) ? value.alive.length === 0 : null;
   } catch {
     return null;
   }
@@ -164,9 +164,9 @@ async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | 
  * environment and output, and keeps an active registry keyed by task ID.
  *
  * POSIX cancellation owns a detached process group and verifies group exit.
- * Windows currently uses taskkill as a best-effort containment step but
- * deliberately reports termination_unconfirmed until a Job Object-backed
- * implementation can prove descendant termination.
+ * Windows snapshots descendant PIDs, invokes taskkill as the termination
+ * mechanism, and independently verifies that all captured PIDs are absent.
+ * If either query or postcondition check fails, termination remains unconfirmed.
  */
 export class ProcessSupervisor {
   private readonly active = new Map<string, ManagedEntry>();
