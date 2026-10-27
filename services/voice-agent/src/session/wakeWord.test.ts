@@ -15,3 +15,10 @@ test("wake phrase must lead the utterance and have a token boundary", () => {
   assert.equal(detector.processTranscript("Okay Vanessa").detected, true);
   detector.resetSession();
 });
+import { VanessaVoiceSession } from "./voiceSession.js";
+
+test("hosted ASR cannot enable always-on ambient wake-word monitoring", async () => {
+  const session = new VanessaVoiceSession({ asrProvider: "sarvam", ttsProvider: "sarvam" });
+  await assert.rejects(session.enableWakeWordMonitor(), /local Whisper speech runtime/);
+  session.stop();
+});
