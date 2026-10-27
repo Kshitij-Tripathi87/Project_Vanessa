@@ -77,9 +77,10 @@ test("explicit failed or blocked status overrides a contradictory passing verifi
       verification: { passed: true, details: "Contradictory positive text must not override the terminal status." },
     });
 
-    assert.equal(outcome, "failed", `status=${status}`);
+    const expected = status === "blocked" ? "blocked" : "failed";
+    assert.equal(outcome, expected, `status=${status}`);
     assert.equal(task.verification?.verified, false, `status=${status}`);
-    assert.equal(task.verification?.outcome, "failed", `status=${status}`);
+    assert.equal(task.verification?.outcome, expected, `status=${status}`);
   }
 });
 
