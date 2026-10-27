@@ -12,6 +12,7 @@ import { cancelCodexTask } from "../agents/codex-task-runner.js";
 import { processSupervisor } from "./processSupervisor.js";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { createHash } from "node:crypto";
+import * as path from "node:path";
 export { recordAgentResult } from "./agentResult.js";
 
 // Active in-memory map of running and paused tasks
