@@ -151,6 +151,7 @@ export class MemoryAgent implements SpecialistAgent {
     if (normalizedContent.length > 20000) return this.blocked("memory.store", "Memory content exceeds the 20,000-character limit.");
 
     const redacted = privacyGuard.redactSensitiveData(normalizedContent);
+    let totalRedactedCount = redacted.redactedCount;
     try {
       const safeMetadata = sanitizeMemoryMetadata(metadata);
       const cleanTitle = privacyGuard.redactSensitiveData(
@@ -161,7 +162,7 @@ export class MemoryAgent implements SpecialistAgent {
         title: cleanTitle.cleanText.slice(0, 200),
         content: redacted.cleanText, rawData: safeMetadata.value, agent: this.id, ttlDays: 30,
       });
-      const totalRedactedCount = redacted.redactedCount + safeMetadata.redactedCount + cleanTitle.redactedCount;
+      totalRedactedCount = redacted.redactedCount + safeMetadata.redactedCount + cleanTitle.redactedCount;
       const safeRecord = {
         id: record.id, type: record.type, title: record.title, content: record.content,
         agent: record.agent, status: record.status, createdAt: record.createdAt, expiresAt: record.expiresAt,
