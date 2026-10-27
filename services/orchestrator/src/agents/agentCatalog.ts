@@ -36,9 +36,17 @@ const action = (
 export const AGENT_CATALOG: CatalogAgent[] = [
   {
     id: "developer",
-    purpose: "Send project coding, debugging, refactoring, implementation, and code-review requests to the existing Codex launcher. Also open an IDE or run an explicitly requested command.",
-    limitations: "Codex accepts only projectPath and prompt. It launches an interactive Windows terminal; no coding completion, diff, test evidence, or agent response is returned. Its runner context argument is ignored, so selected context must be included in prompt. Never promise the code is fixed merely because a terminal opened.",
+    purpose: "Run bounded project coding tasks through a managed Codex subprocess, and retain an explicit interactive handoff when requested.",
+    limitations: "codex.run_task requires Windows, an installed Codex CLI, a clean Git repository root, and a non-detached branch. It never commits or pushes. A completed CLI turn is execution evidence only; task success remains partial until independent tests/postconditions are verified. codex.open only opens an interactive terminal.",
     actions: [
+      action("codex.run_task", "Preferred action for scoped coding work when the user expects Vanessa to manage execution and report progress. Confirm the task scope and repository before running.", {
+        projectPath: p("string", "Absolute path to the Git repository root; must have a clean working tree.", true),
+        prompt: p("string", "Concrete coding objective. Do not include credentials or other secrets.", true),
+        expectedBranch: p("string", "Optional branch name the runner must verify before it starts."),
+        acceptanceCriteria: p("array", "Optional list of measurable acceptance criteria."),
+        allowedPaths: p("array", "Optional repository-relative path scope; no absolute paths or parent-directory traversal."),
+        timeoutMs: p("number", "Optional deadline in milliseconds, from 10000 to 900000."),
+      }, "{success, status, exitCode?, branch?, output?, evidence?, error?}. A clean exit and turn.completed event are not independent verification.", "high", true, ["coding_run"]),
       action("codex.open", "Preferred action for ALL project coding work, even when the user does not say Codex. Preserve the user's task, constraints, relevant history, and completion criteria in prompt.", {
         projectPath: p("string", "Absolute existing project directory; use the trusted current project in runtime context unless the user selected another project.", true),
         prompt: p("string", "Concrete coding instructions, including scope, relevant files if known, and the user's constraints. Do not fabricate repository findings.", true),
