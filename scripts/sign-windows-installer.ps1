@@ -33,14 +33,14 @@ $tempPfx = Join-Path ([IO.Path]::GetTempPath()) ("vanessa-signing-" + [Guid]::Ne
 try {
     $bytes = [Convert]::FromBase64String($encodedCertificate)
     [IO.File]::WriteAllBytes($tempPfx, $bytes)
-    Write-Host '[SIGN] Signing Windows Setup EXE with SHA-256 and RFC3161 timestamp...' -ForegroundColor Cyan
+    Write-Host '[SIGN] Signing Windows installer package with SHA-256 and RFC3161 timestamp...' -ForegroundColor Cyan
     & $signTool sign /fd SHA256 /td SHA256 /tr 'http://timestamp.digicert.com' /f $tempPfx /p $certificatePassword $installer
     if ($LASTEXITCODE -ne 0) { throw "SignTool failed with exit code $LASTEXITCODE." }
     & $signTool verify /pa /all $installer
-    if ($LASTEXITCODE -ne 0) { throw 'Authenticode signature verification failed.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Installer Authenticode signature verification failed.' }
     $signature = Get-AuthenticodeSignature -FilePath $installer
     if ($signature.Status -ne 'Valid') { throw "Windows does not consider the Setup EXE signature valid (status: $($signature.Status))." }
-    Write-Host "[PASS] Setup EXE has a valid Authenticode signature. Signer: $($signature.SignerCertificate.Subject)" -ForegroundColor Green
+    Write-Host "[PASS] Installer package has a valid Authenticode signature. Signer: $($signature.SignerCertificate.Subject)" -ForegroundColor Green
 }
 finally {
     if (Test-Path -LiteralPath $tempPfx) { Remove-Item -LiteralPath $tempPfx -Force -ErrorAction SilentlyContinue }
