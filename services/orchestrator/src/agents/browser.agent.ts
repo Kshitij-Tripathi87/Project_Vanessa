@@ -7,7 +7,27 @@ import {
   SpecialistAgent,
 } from "@vanessa/shared";
 
+export interface BrowserAgentOptions {
+  /** Injected external-browser launcher for deterministic launch success/failure tests. */
+  openExternalBrowser?: (url: string) => Promise<void>;
+}
+
+export function buildYouTubeSearchUrl(query: string): string {
+  const normalized = typeof query === "string" ? query.trim() : "";
+  if (!normalized) throw new Error("YouTube query must be non-empty.");
+  if (normalized.length > 500) throw new Error("YouTube query must be 500 characters or fewer.");
+  const url = new URL("https://www.youtube.com/results");
+  url.searchParams.set("search_query", normalized);
+  return url.toString();
+}
+
 export class BrowserAgent implements SpecialistAgent {
+  private readonly openExternalBrowser: (url: string) => Promise<void>;
+
+  constructor(options: BrowserAgentOptions = {}) {
+    this.openExternalBrowser = options.openExternalBrowser || ((url) => this.launchExternalBrowser(url));
+  }
+
   id = "browser";
   capabilities = [
     "browser_navigation",
@@ -129,8 +149,8 @@ export class BrowserAgent implements SpecialistAgent {
       }
 
       case "youtube.search_and_play": {
-        const query = typeof params.query === "string" && params.query.trim() ? params.query.trim().slice(0, 1000) : "Bolna Buildathon";
-        const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        const query = typeof params.query === "string" && params.query.trim() ? params.query.trim().slice(0, 500) : "Bolna Buildathon";
+        const url = buildYouTubeSearchUrl(query);
         const res = await this.openUrl(url);
         const detail = res.simulated
           ? "Simulation only: YouTube navigation and playback were not attempted or verified."
@@ -145,15 +165,15 @@ export class BrowserAgent implements SpecialistAgent {
           spokenSummary: res.simulated
             ? "This was a simulation. No YouTube navigation or playback occurred."
             : res.success
-              ? "I requested the YouTube search page, but I could not verify that a video played."
-              : "I could not launch the YouTube search page.",
-          evidence: [{
+              ? "I opened the YouTube search page; playback has not been verified."
+              : "I could not open the YouTube search page.",
+          evidence: res.success || res.simulated ? [{
             description: detail, source: "youtube.launch-request", timestamp: startTime, confidence: res.simulated ? 1 : 0.6,
             data: { query, url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false },
-          }],
+          }] : [],
           artifacts: [],
           verification: { passed: false, details: detail },
-          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false, query, url },
+          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, externalBrowser: res.success && !res.simulated, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false, query, url, ...(res.error ? { error: res.error } : {}) },
         };
       }
 
@@ -177,7 +197,7 @@ export class BrowserAgent implements SpecialistAgent {
     }
   }
 
-  private async openUrl(url: string): Promise<{ success: boolean; url: string; simulated?: boolean }> {
+  private async openUrl(url: string): Promise<{ success: boolean; url: string; simulated?: boolean; error?: string }> {
     if (typeof url !== "string" || !url.trim() || url.length > 4096) {
       return { success: false, url: typeof url === "string" ? url.slice(0, 4096) : "" };
     }
@@ -189,13 +209,20 @@ export class BrowserAgent implements SpecialistAgent {
     if (process.env.FAKE === "1") {
       return { success: false, url, simulated: true };
     }
+    try {
+      await this.openExternalBrowser(url);
+      return { success: true, url };
+    } catch (error: any) {
+      return { success: false, url, error: typeof error?.message === "string" ? error.message : "External browser launch failed." };
+    }
+  }
+
+  private async launchExternalBrowser(url: string): Promise<void> {
     const psCommand = "$url = $env:VANESSA_URL; Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList $url";
     try {
       await runPowerShell(psCommand, { VANESSA_BROWSER: this.edgePath, VANESSA_URL: url }, 10000);
-      return { success: true, url };
     } catch {
       await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: url }, 10000);
-      return { success: true, url };
     }
   }
 }
