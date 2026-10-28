@@ -106,9 +106,10 @@ export function getIncidentLabTestInvocation(worktreePath: string): { executable
 }
 
 const ENV_ALLOWLIST = [
-  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP",
-  "USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "PNPM_HOME",
-  "COREPACK_HOME", "CI", "NODE_ENV",
+  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "SYSTEMDRIVE", "ComSpec",
+  "TEMP", "TMP", "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH",
+  "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "PROGRAMFILES", "PSMODULEPATH",
+  "PNPM_HOME", "COREPACK_HOME", "CI", "NODE_ENV",
 ] as const;
 
 function minimalEnvironment(): NodeJS.ProcessEnv {
