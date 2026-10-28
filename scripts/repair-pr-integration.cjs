@@ -43,6 +43,7 @@ restoreTarget([
   "apps/desktop/src/renderer/index.css",
   "services/orchestrator/src/agents/windows.agent.ts",
   "services/orchestrator/src/agents/agentCatalog.ts",
+  "services/orchestrator/src/agents/memory.agent.ts",
   "services/orchestrator/src/tests/agentCatalog.test.ts",
   "services/orchestrator/src/core/planner.ts",
   "services/orchestrator/src/core/taskRunner.ts",
