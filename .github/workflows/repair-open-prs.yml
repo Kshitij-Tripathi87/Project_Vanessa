@@ -200,6 +200,17 @@ jobs:
         run: |
           pnpm install --lockfile-only
           if ($LASTEXITCODE -ne 0) { throw "Could not refresh the lockfile for the declared Playwright dependency." }
+      - name: Commit refreshed dependency lockfile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git add -- pnpm-lock.yaml
+          if ($LASTEXITCODE -ne 0) { throw "Could not stage refreshed pnpm lockfile." }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "build(deps): lock Playwright browser automation dependency"
+            if ($LASTEXITCODE -ne 0) { throw "Could not commit refreshed pnpm lockfile." }
+          }
       - name: Install locked workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Build every workspace package
