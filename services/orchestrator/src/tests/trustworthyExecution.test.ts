@@ -126,6 +126,31 @@ test("runPlan rejects a task omitted from the reviewed action catalog before exe
   assert.match(results[0].error || "", /reviewed, selectable agent catalog/i);
 });
 
+test("runPlan blocks a high-risk action when task metadata attempts to downgrade its catalog risk", async () => {
+  const taskId = `risk-downgrade-${randomUUID()}`;
+  const plan: any = {
+    id: `risk-plan-${randomUUID()}`,
+    command: "exercise risk binding",
+    tasks: [{
+      id: taskId,
+      agent: "windows",
+      action: "app.close",
+      params: { name: "notepad" },
+      dependsOn: [],
+      status: "pending",
+      risk: "low",
+      allowedTools: ["process_control"],
+      acceptanceCriteria: [],
+    }],
+  };
+
+  const results = await runPlan(plan);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "blocked");
+  assert.equal(results[0].verification?.outcome, "blocked");
+  assert.match(results[0].error || "", /reviewed, selectable agent catalog/i);
+});
+
 test("managed actions without evidence cannot turn a positive flag into success", () => {
   const task: Task = {
     id: "trust-contract",
