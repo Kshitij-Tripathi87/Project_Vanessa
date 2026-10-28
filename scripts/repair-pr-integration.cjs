@@ -42,6 +42,8 @@ restoreTarget([
   "apps/desktop/src/renderer/vanessa.d.ts",
   "apps/desktop/src/renderer/index.css",
   "services/orchestrator/src/agents/windows.agent.ts",
+  "services/orchestrator/src/agents/agentCatalog.ts",
+  "services/orchestrator/src/tests/agentCatalog.test.ts",
   "services/orchestrator/src/core/planner.ts",
   "services/orchestrator/src/core/taskRunner.ts",
   "services/orchestrator/src/core/permissionGuard.ts"
@@ -112,7 +114,7 @@ const uiCases = [
 '            processId: result.processId,',
 '            controls,',
 '            truncated: result.truncated === true,',
-'            valuesRead: result.valuesRead === false,',
+'            valuesRead: result.valuesRead,',
 '            actionsAttempted: ["Inspect foreground UI Automation Control View"],',
 '            actualObservations: summary,',
 '            failures: verified ? [] : [result.error || "UI Automation inspection was not verified"],',
@@ -161,6 +163,28 @@ const uiCases = [
 const switchAnchor = '    switch (action) {';
 agent = replaceOnce(agent, switchAnchor, switchAnchor + "\n" + uiCases.join("\n"), "WindowsAgent UI action cases");
 write(agentPath, agent);
+
+// Keep the reviewed target catalog as the source of truth; add only the two bounded UI Automation
+// operations introduced by this integration, so stale branch catalog changes cannot replace it.
+const catalogPath = "services/orchestrator/src/agents/agentCatalog.ts";
+let catalog = read(catalogPath);
+const screenshotAction = '      action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),';
+const uiActions = [
+  '      action("ui.inspect", "Inspect the foreground window and bounded accessible control metadata without reading input-field values.", {}, "Verified window identity and at most 120 control descriptors; input values are not read.", "low", true, ["windows_ui_automation"]),',
+  '      action("ui.click", "Invoke a uniquely identified accessible foreground-window control only when its inspected window identity still matches.", {',
+  '        windowHandle: p("string", "Handle from a recent ui.inspect result.", true),',
+  '        expectedWindowTitle: p("string", "Exact inspected foreground-window title.", true),',
+  '        expectedProcessId: p("number", "Process ID from the same inspection.", true),',
+  '        automationId: p("string", "Exact inspected AutomationId when available."),',
+  '        name: p("string", "Exact inspected accessible control name when no AutomationId is available."),',
+  '        controlType: p("string", "Exact inspected control type."),',
+  '      }, "Reports whether InvokePattern was accepted; does not claim a visual postcondition without independent verification.", "high", true, ["windows_ui_automation"]),'
+].join("\n");
+if (!catalog.includes(screenshotAction)) throw new Error("Reviewed Windows catalog screenshot action anchor missing");
+if (!catalog.includes('action("ui.inspect"')) {
+  catalog = replaceOnce(catalog, screenshotAction, screenshotAction + "\n" + uiActions, "Windows UI Automation catalog actions");
+  write(catalogPath, catalog);
+}
 
 // Keep the Control Deck component's standalone type contract without restoring its old app shell.
 const dtsPath = "apps/desktop/src/renderer/vanessa.d.ts";
