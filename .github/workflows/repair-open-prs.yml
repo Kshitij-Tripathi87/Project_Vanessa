@@ -7,6 +7,7 @@ name: Repair and integrate open Vanessa PRs # [integrate-open-prs]
 # Run desktop docking tests with the workspace's available tsx binary; the desktop manifest has no test:docking script.
 # Ollama-backed end-to-end scenarios run only when a local service is reachable; hosted CI still enforces deterministic gates.
 # Windows Job Object tests allow for PowerShell Add-Type compilation before timing the supervised process.
+# Skills tests skip only the Ollama-backed integration cases when the optional local service is absent.
 on:
   push:
     branches: [Vanessa-Prototype-1-MAIN]
