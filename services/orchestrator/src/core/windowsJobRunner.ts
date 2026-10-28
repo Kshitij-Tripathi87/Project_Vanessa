@@ -33,7 +33,6 @@ public static class VanessaWindowsJobRunner
     private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
     private const uint WAIT_OBJECT_0 = 0;
     private const uint WAIT_FAILED = 0xFFFFFFFF;
-    private const uint INFINITE = 0xFFFFFFFF;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SECURITY_ATTRIBUTES
