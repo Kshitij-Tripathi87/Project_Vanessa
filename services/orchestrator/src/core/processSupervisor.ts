@@ -387,132 +387,136 @@ export class ProcessSupervisor {
       if (!request.executable?.trim() || !Array.isArray(request.args) || request.args.some((arg) => typeof arg !== "string")) {
         throw new Error("Managed execution requires an executable and a string argument array.");
       }
-    const actionPolicy = resolveManagedAction(request.actionId, request.actionParams || {});
-    if (!actionPolicy.managed || actionPolicy.blocked || actionPolicy.canonicalId !== request.actionId) {
-      throw new Error(actionPolicy.reason || "The process supervisor only accepts canonical registered actions.");
-    }
-    if (request.actionId !== "testing.run_incident_lab") {
-      throw new Error(`No process executor is registered for action '${request.actionId}'.`);
-    }
-    const workspaceId = request.actionParams?.workspaceId;
-    const expectedDiffHash = request.actionParams?.expectedDiffHash;
-    const workspace = typeof workspaceId === "string" ? this.workspaceService.getWorkspace(workspaceId) : undefined;
-    if (!workspace || typeof expectedDiffHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedDiffHash)) {
-      throw new Error("The registered test runner requires a known worktree and expected SHA-256 patch digest.");
-    }
-    if (!path.isAbsolute(request.cwd) || !fs.existsSync(request.cwd) || !fs.statSync(request.cwd).isDirectory()) {
-      throw new Error("Managed execution cwd must be an existing absolute directory.");
-    }
-    const cwd = fs.realpathSync(path.resolve(request.cwd));
-    if (!path.isAbsolute(cwd)) throw new Error("Invalid canonical working directory.");
-    if (cwd !== path.resolve(workspace.worktreePath) || fs.realpathSync(workspace.worktreePath) !== cwd) {
-      throw new Error("Process cwd does not match the registered repair worktree.");
-    }
-    const [rootResult, headResult, branchResult, diffResult, namesResult] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5000, encoding: "utf8" }),
-      execFileAsync("git", ["rev-parse", "HEAD"], { cwd, timeout: 5000, encoding: "utf8" }),
-      execFileAsync("git", ["branch", "--show-current"], { cwd, timeout: 5000, encoding: "utf8" }),
-      execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd, timeout: 5000, encoding: "utf8" }),
-      execFileAsync("git", ["diff", "--name-only"], { cwd, timeout: 5000, encoding: "utf8" }),
-    ]);
-    const actualDiffHash = createHash("sha256").update(diffResult.stdout).digest("hex");
-    const changedFiles = namesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-    if (
-      path.resolve(rootResult.stdout.trim()) !== cwd ||
-      headResult.stdout.trim() !== workspace.baseCommit ||
-      branchResult.stdout.trim() !== workspace.branchName ||
-      !diffResult.stdout.trim() ||
-      changedFiles.length !== 1 ||
-      changedFiles[0] !== "packages/incident-lab/src/checkout.ts" ||
-      actualDiffHash !== expectedDiffHash ||
-      !(await this.workspaceService.isBaseCheckoutUnchanged(workspace))
-    ) {
-      throw new Error("The target worktree, base commit, changed-file scope, patch digest, or base-checkout invariant failed revalidation.");
-    }
-    const expectedInvocation = getIncidentLabTestInvocation(workspace.worktreePath);
-    if (request.executable !== expectedInvocation.executable || JSON.stringify(request.args) !== JSON.stringify(expectedInvocation.args)) {
-      throw new Error("Executable and argv do not match the registered incident-lab test runner.");
-    }
-    if (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 10 * 60 * 1000) {
-      throw new Error("Managed execution timeout must be between 1 ms and 10 minutes.");
-    }
-    if (this.active.has(request.taskId)) throw new Error(`Task ${request.taskId} already owns a running process.`);
-    // The checks above include asynchronous Git reads. Cancellation may have
-    // arrived while they were in flight; never cross the spawn boundary then.
-    if (reservation.cancelled || reservation.result) {
-      return this.finishBeforeStart(reservation, "Cancellation was confirmed before process launch; no managed process was started.");
-    }
-
-    const normalizedRequest = {
-      ...request,
-      args: [...request.args],
-      cwd,
-      maxOutputBytes: Math.min(Math.max(1024, request.maxOutputBytes ?? 256 * 1024), 2 * 1024 * 1024),
-    };
-    const startedMs = Date.now();
-    const startedAt = new Date(startedMs).toISOString();
-    const runId = randomUUID();
-
-    let resolveCompletion!: (result: ManagedProcessResult) => void;
-    const completion = new Promise<ManagedProcessResult>((resolve) => { resolveCompletion = resolve; });
-    let child: ChildProcess;
-    try {
-      child = spawn(normalizedRequest.executable, normalizedRequest.args, {
-        cwd: normalizedRequest.cwd,
-        env: { ...minimalEnvironment(), VANESSA_EXECUTION_RUN_ID: runId },
-        shell: false,
-        windowsHide: true,
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (error: any) {
-      const now = Date.now();
-      const result: ManagedProcessResult = {
-        runId, taskId: normalizedRequest.taskId, actionId: normalizedRequest.actionId,
-        status: "spawn_failed", executable: normalizedRequest.executable, args: normalizedRequest.args,
-        cwd: normalizedRequest.cwd, processStarted: false, startedAt, finishedAt: new Date(now).toISOString(),
-        durationMs: now - startedMs, exitCode: null, signal: null, timedOut: false,
-        cancellationRequested: false, terminationVerified: null, stdout: "", stderr: "",
-        stdoutTruncated: false, stderrTruncated: false,
-        outputDigest: createHash("sha256").update("").digest("hex"),
-        error: error?.message || "Process spawn failed.",
-      };
-      return result;
-    }
-
-    const entry: ManagedEntry = {
-      request: normalizedRequest, child, runId, startedMs, startedAt, stdout: [], stderr: [],
-      stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false,
-      timedOut: false, cancellationRequested: false, completion, resolveCompletion,
-    };
-    // Register immediately after spawn and before yielding to any async work.
-    // No await occurs between the last cancellation check and this hand-off.
-    this.active.set(normalizedRequest.taskId, entry);
-    this.starting.delete(normalizedRequest.taskId);
-
-    child.stdout?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stdout", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
-    child.stderr?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stderr", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
-    child.once("error", (error) => { entry.spawnError = error; });
-    let timer: NodeJS.Timeout | undefined;
-    child.once("close", (exitCode, signal) => {
-      if (timer) clearTimeout(timer);
-      void this.finish(entry, exitCode, signal);
-    });
-
-    timer = setTimeout(() => {
-      if (!entry.result) {
-        entry.timedOut = true;
-        void this.terminate(entry).then(async () => {
-          // Return a bounded, explicit result even if the OS never emits close.
-          // The entry remains registered when the OS cannot prove termination.
-          if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
-        }).catch(async () => {
-          if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
-        });
+      const actionPolicy = resolveManagedAction(request.actionId, request.actionParams || {});
+      if (!actionPolicy.managed || actionPolicy.blocked || actionPolicy.canonicalId !== request.actionId) {
+        throw new Error(actionPolicy.reason || "The process supervisor only accepts canonical registered actions.");
       }
-    }, normalizedRequest.timeoutMs);
-    void completion.finally(() => { if (timer) clearTimeout(timer); });
-    return completion;
+      if (request.actionId !== "testing.run_incident_lab") {
+        throw new Error(`No process executor is registered for action '${request.actionId}'.`);
+      }
+      const workspaceId = request.actionParams?.workspaceId;
+      const expectedDiffHash = request.actionParams?.expectedDiffHash;
+      const workspace = typeof workspaceId === "string" ? this.workspaceService.getWorkspace(workspaceId) : undefined;
+      if (!workspace || typeof expectedDiffHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedDiffHash)) {
+        throw new Error("The registered test runner requires a known worktree and expected SHA-256 patch digest.");
+      }
+      if (!path.isAbsolute(request.cwd) || !fs.existsSync(request.cwd) || !fs.statSync(request.cwd).isDirectory()) {
+        throw new Error("Managed execution cwd must be an existing absolute directory.");
+      }
+      const cwd = fs.realpathSync(path.resolve(request.cwd));
+      if (!path.isAbsolute(cwd)) throw new Error("Invalid canonical working directory.");
+      if (cwd !== path.resolve(workspace.worktreePath) || fs.realpathSync(workspace.worktreePath) !== cwd) {
+        throw new Error("Process cwd does not match the registered repair worktree.");
+      }
+      const [rootResult, headResult, branchResult, diffResult, namesResult] = await Promise.all([
+        execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["rev-parse", "HEAD"], { cwd, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["branch", "--show-current"], { cwd, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd, timeout: 5000, encoding: "utf8" }),
+        execFileAsync("git", ["diff", "--name-only"], { cwd, timeout: 5000, encoding: "utf8" }),
+      ]);
+      const actualDiffHash = createHash("sha256").update(diffResult.stdout).digest("hex");
+      const changedFiles = namesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+      if (
+        path.resolve(rootResult.stdout.trim()) !== cwd ||
+        headResult.stdout.trim() !== workspace.baseCommit ||
+        branchResult.stdout.trim() !== workspace.branchName ||
+        !diffResult.stdout.trim() ||
+        changedFiles.length !== 1 ||
+        changedFiles[0] !== "packages/incident-lab/src/checkout.ts" ||
+        actualDiffHash !== expectedDiffHash ||
+        !(await this.workspaceService.isBaseCheckoutUnchanged(workspace))
+      ) {
+        throw new Error("The target worktree, base commit, changed-file scope, patch digest, or base-checkout invariant failed revalidation.");
+      }
+      const expectedInvocation = getIncidentLabTestInvocation(workspace.worktreePath);
+      if (request.executable !== expectedInvocation.executable || JSON.stringify(request.args) !== JSON.stringify(expectedInvocation.args)) {
+        throw new Error("Executable and argv do not match the registered incident-lab test runner.");
+      }
+      if (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 10 * 60 * 1000) {
+        throw new Error("Managed execution timeout must be between 1 ms and 10 minutes.");
+      }
+      if (this.active.has(request.taskId)) throw new Error(`Task ${request.taskId} already owns a running process.`);
+      // The checks above include asynchronous Git reads. Cancellation may have
+      // arrived while they were in flight; never cross the spawn boundary then.
+      if (reservation.cancelled || reservation.result) {
+        return this.finishBeforeStart(reservation, "Cancellation was confirmed before process launch; no managed process was started.");
+      }
+  
+      const normalizedRequest = {
+        ...request,
+        args: [...request.args],
+        cwd,
+        maxOutputBytes: Math.min(Math.max(1024, request.maxOutputBytes ?? 256 * 1024), 2 * 1024 * 1024),
+      };
+      const startedMs = Date.now();
+      const startedAt = new Date(startedMs).toISOString();
+      const runId = randomUUID();
+  
+      let resolveCompletion!: (result: ManagedProcessResult) => void;
+      const completion = new Promise<ManagedProcessResult>((resolve) => { resolveCompletion = resolve; });
+      let child: ChildProcess;
+      try {
+        child = spawn(normalizedRequest.executable, normalizedRequest.args, {
+          cwd: normalizedRequest.cwd,
+          env: { ...minimalEnvironment(), VANESSA_EXECUTION_RUN_ID: runId },
+          shell: false,
+          windowsHide: true,
+          detached: process.platform !== "win32",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (error: any) {
+        const now = Date.now();
+        const result: ManagedProcessResult = {
+          runId, taskId: normalizedRequest.taskId, actionId: normalizedRequest.actionId,
+          status: "spawn_failed", executable: normalizedRequest.executable, args: normalizedRequest.args,
+          cwd: normalizedRequest.cwd, processStarted: false, startedAt, finishedAt: new Date(now).toISOString(),
+          durationMs: now - startedMs, exitCode: null, signal: null, timedOut: false,
+          cancellationRequested: false, terminationVerified: true, stdout: "", stderr: "",
+          stdoutTruncated: false, stderrTruncated: false,
+          outputDigest: createHash("sha256").update("").digest("hex"),
+          error: error?.message || "Process spawn failed.",
+        };
+        reservation.result = result;
+        this.starting.delete(normalizedRequest.taskId);
+        this.completed.set(normalizedRequest.taskId, result);
+        reservation.resolveCompletion(result);
+        return result;
+      }
+  
+      const entry: ManagedEntry = {
+        request: normalizedRequest, child, runId, startedMs, startedAt, stdout: [], stderr: [],
+        stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false,
+        timedOut: false, cancellationRequested: false, completion, resolveCompletion,
+      };
+      // Register immediately after spawn and before yielding to any async work.
+      // No await occurs between the last cancellation check and this hand-off.
+      this.active.set(normalizedRequest.taskId, entry);
+      this.starting.delete(normalizedRequest.taskId);
+  
+      child.stdout?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stdout", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
+      child.stderr?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stderr", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
+      child.once("error", (error) => { entry.spawnError = error; });
+      let timer: NodeJS.Timeout | undefined;
+      child.once("close", (exitCode, signal) => {
+        if (timer) clearTimeout(timer);
+        void this.finish(entry, exitCode, signal);
+      });
+  
+      timer = setTimeout(() => {
+        if (!entry.result) {
+          entry.timedOut = true;
+          void this.terminate(entry).then(async () => {
+            // Return a bounded, explicit result even if the OS never emits close.
+            // The entry remains registered when the OS cannot prove termination.
+            if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
+          }).catch(async () => {
+            if (!entry.result) await this.finish(entry, entry.child.exitCode ?? null, entry.child.signalCode ?? null);
+          });
+        }
+      }, normalizedRequest.timeoutMs);
+      void completion.finally(() => { if (timer) clearTimeout(timer); });
+      return completion;
     } catch (error: any) {
       if (this.starting.get(request.taskId) === reservation && !this.active.has(request.taskId)) {
         this.finishBeforeStart(
