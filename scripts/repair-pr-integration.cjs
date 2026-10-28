@@ -278,5 +278,5 @@ if (browserTests.includes(acceptedBrowserAssertion)) {
 } else if (!browserTests.includes(partialBrowserAssertion)) {
   throw new Error("Browser handoff test has an unexpected assertion shape");
 }
-git(["add", "--", packagePath, agentPath, testPath, catalogPath, browserTestPath]);
+git(["add", "--", packagePath, agentPath, testPath, dtsPath, catalogPath, browserTestPath]);
 console.log("[OK] Restored current desktop/agent contracts, declared Playwright, wired safe foreground UI actions, and staged focused tests.");
