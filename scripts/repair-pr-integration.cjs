@@ -62,108 +62,117 @@ write(packagePath, JSON.stringify(packageJson, null, 2) + "\n");
 // The UI module never reads text-field values and validates window identity and unique visible controls.
 const agentPath = "services/orchestrator/src/agents/windows.agent.ts";
 let agent = read(agentPath);
-agent = replaceOnce(
-  agent,
-  'import { runPowerShell } from "./powershell.js";',
-  'import { runPowerShell } from "./powershell.js";\nimport { inspectForegroundWindow, invokeForegroundControl, type ForegroundWindowInspection, type UiAutomationClickRequest, type UiAutomationClickResult } from "./windows-ui-automation.js";',
-  "WindowsAgent UI Automation import"
-);
-agent = replaceOnce(
-  agent,
-  '    private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,\n  ) {}',
-  '    private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,\n' +
-  '    private readonly inspectForeground: () => Promise<ForegroundWindowInspection> = () => inspectForegroundWindow(runPowerShell),\n' +
-  '    private readonly invokeForeground: (request: UiAutomationClickRequest) => Promise<UiAutomationClickResult> = (request) => invokeForegroundControl(runPowerShell, request),\n' +
-  '  ) {}',
-  "WindowsAgent injectable UI Automation adapters"
-);
-agent = replaceOnce(
-  agent,
-  '    "screenshot_capture",\n  ];',
-  '    "screenshot_capture",\n    "ui_inspection",\n    "ui_control_invocation",\n  ];',
-  "WindowsAgent UI capabilities"
-);
-agent = replaceOnce(
-  agent,
-  '    "process_control",\n  ];',
-  '    "process_control",\n    "windows_ui_automation",\n  ];',
-  "WindowsAgent UI tool permission"
-);
-const uiCases = [
-'      case "ui.inspect":',
-'      case "windows.ui_inspect": {',
-'        const result = await this.inspectForeground();',
-'        const controls = Array.isArray(result.controls) ? result.controls : [];',
-'        const verified = result.success === true && result.valuesRead === false;',
-'        const title = typeof result.windowTitle === "string" && result.windowTitle ? result.windowTitle : "the foreground window";',
-'        const summary = verified',
-'          ? "Inspected " + title + " and found " + controls.length + " accessible controls. Input-field values were not read."',
-'          : "Foreground-window inspection was not verified: " + (result.error || "Windows returned incomplete inspection data") + ".";',
-'        return {',
-'          agentId: this.id,',
-'          status: verified ? "completed" : "failed",',
-'          success: verified,',
-'          summary,',
-'          spokenSummary: summary,',
-'          evidence: verified ? [{ description: summary, source: "windows-ui-automation.inspect", timestamp: startTime, confidence: 1, data: result }] : [],',
-'          artifacts: [],',
-'          verification: { passed: verified, details: summary },',
-'          data: {',
-'            outcome: verified ? "succeeded" : "failed",',
-'            windowTitle: result.windowTitle,',
-'            windowHandle: result.windowHandle,',
-'            processId: result.processId,',
-'            controls,',
-'            truncated: result.truncated === true,',
-'            valuesRead: result.valuesRead,',
-'            actionsAttempted: ["Inspect foreground UI Automation Control View"],',
-'            actualObservations: summary,',
-'            failures: verified ? [] : [result.error || "UI Automation inspection was not verified"],',
-'          },',
-'        };',
-'      }',
-'',
-'      case "ui.click":',
-'      case "windows.ui_click": {',
-'        const request: UiAutomationClickRequest = {',
-'          windowHandle: typeof params.windowHandle === "string" ? params.windowHandle : "",',
-'          expectedWindowTitle: typeof params.expectedWindowTitle === "string" ? params.expectedWindowTitle : "",',
-'          expectedProcessId: Number(params.expectedProcessId),',
-'          ...(typeof params.automationId === "string" && params.automationId ? { automationId: params.automationId } : {}),',
-'          ...(typeof params.name === "string" && params.name ? { name: params.name } : {}),',
-'          ...(typeof params.controlType === "string" && params.controlType ? { controlType: params.controlType } : {}),',
-'        };',
-'        const result = await this.invokeForeground(request);',
-'        const accepted = result.success === true && result.invocationAccepted === true;',
-'        const summary = accepted',
-'          ? "Windows accepted the UI Automation invoke request. The resulting visual state was not independently verified."',
-'          : "UI Automation invocation failed: " + (result.error || result.message || "the target control was not uniquely and safely invokable") + ".";',
-'        return {',
-'          agentId: this.id,',
-'          status: accepted ? "completed" : "failed",',
-'          success: accepted,',
-'          summary,',
-'          spokenSummary: summary,',
-'          evidence: [{ description: summary, source: "windows-ui-automation.invoke", timestamp: startTime, confidence: accepted ? 1 : 0, data: { request, result } }],',
-'          artifacts: [],',
-'          verification: { passed: accepted && result.postClickStateVerified === true, details: summary },',
-'          data: {',
-'            outcome: accepted ? "invocation_accepted" : "failed",',
-'            invocationAccepted: accepted,',
-'            postClickStateVerified: result.postClickStateVerified === true,',
-'            actionsAttempted: ["Invoke UI Automation control"],',
-'            actualObservations: summary,',
-'            failures: accepted ? [] : [result.error || result.message || "UI Automation invocation was not accepted"],',
-'            control: result.control,',
-'            matches: result.matches,',
-'          },',
-'        };',
-'      }',
-'',
-];
-const switchAnchor = '    switch (action) {';
-agent = replaceOnce(agent, switchAnchor, switchAnchor + "\n" + uiCases.join("\n"), "WindowsAgent UI action cases");
-write(agentPath, agent);
+const hasUiAutomation =
+  agent.includes("private readonly inspectForeground:") &&
+  agent.includes('case "windows.ui_click"') &&
+  agent.includes('"ui_inspection"') &&
+  agent.includes('"windows_ui_automation"');
+if (!hasUiAutomation) {
+  agent = replaceOnce(
+    agent,
+    'import { runPowerShell } from "./powershell.js";',
+    'import { runPowerShell } from "./powershell.js";\nimport { inspectForegroundWindow, invokeForegroundControl, type ForegroundWindowInspection, type UiAutomationClickRequest, type UiAutomationClickResult } from "./windows-ui-automation.js";',
+    "WindowsAgent UI Automation import"
+  );
+  agent = replaceOnce(
+    agent,
+    '    private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,\n  ) {}',
+    '    private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,\n' +
+    '    private readonly inspectForeground: () => Promise<ForegroundWindowInspection> = () => inspectForegroundWindow(runPowerShell),\n' +
+    '    private readonly invokeForeground: (request: UiAutomationClickRequest) => Promise<UiAutomationClickResult> = (request) => invokeForegroundControl(runPowerShell, request),\n' +
+    '  ) {}',
+    "WindowsAgent injectable UI Automation adapters"
+  );
+  agent = replaceOnce(
+    agent,
+    '    "screenshot_capture",\n  ];',
+    '    "screenshot_capture",\n    "ui_inspection",\n    "ui_control_invocation",\n  ];',
+    "WindowsAgent UI capabilities"
+  );
+  agent = replaceOnce(
+    agent,
+    '    "process_control",\n  ];',
+    '    "process_control",\n    "windows_ui_automation",\n  ];',
+    "WindowsAgent UI tool permission"
+  );
+  const uiCases = [
+  '      case "ui.inspect":',
+  '      case "windows.ui_inspect": {',
+  '        const result = await this.inspectForeground();',
+  '        const controls = Array.isArray(result.controls) ? result.controls : [];',
+  '        const verified = result.success === true && result.valuesRead === false;',
+  '        const title = typeof result.windowTitle === "string" && result.windowTitle ? result.windowTitle : "the foreground window";',
+  '        const summary = verified',
+  '          ? "Inspected " + title + " and found " + controls.length + " accessible controls. Input-field values were not read."',
+  '          : "Foreground-window inspection was not verified: " + (result.error || "Windows returned incomplete inspection data") + ".";',
+  '        return {',
+  '          agentId: this.id,',
+  '          status: verified ? "completed" : "failed",',
+  '          success: verified,',
+  '          summary,',
+  '          spokenSummary: summary,',
+  '          evidence: verified ? [{ description: summary, source: "windows-ui-automation.inspect", timestamp: startTime, confidence: 1, data: result }] : [],',
+  '          artifacts: [],',
+  '          verification: { passed: verified, details: summary },',
+  '          data: {',
+  '            outcome: verified ? "succeeded" : "failed",',
+  '            windowTitle: result.windowTitle,',
+  '            windowHandle: result.windowHandle,',
+  '            processId: result.processId,',
+  '            controls,',
+  '            truncated: result.truncated === true,',
+  '            valuesRead: result.valuesRead,',
+  '            actionsAttempted: ["Inspect foreground UI Automation Control View"],',
+  '            actualObservations: summary,',
+  '            failures: verified ? [] : [result.error || "UI Automation inspection was not verified"],',
+  '          },',
+  '        };',
+  '      }',
+  '',
+  '      case "ui.click":',
+  '      case "windows.ui_click": {',
+  '        const request: UiAutomationClickRequest = {',
+  '          windowHandle: typeof params.windowHandle === "string" ? params.windowHandle : "",',
+  '          expectedWindowTitle: typeof params.expectedWindowTitle === "string" ? params.expectedWindowTitle : "",',
+  '          expectedProcessId: Number(params.expectedProcessId),',
+  '          ...(typeof params.automationId === "string" && params.automationId ? { automationId: params.automationId } : {}),',
+  '          ...(typeof params.name === "string" && params.name ? { name: params.name } : {}),',
+  '          ...(typeof params.controlType === "string" && params.controlType ? { controlType: params.controlType } : {}),',
+  '        };',
+  '        const result = await this.invokeForeground(request);',
+  '        const accepted = result.success === true && result.invocationAccepted === true;',
+  '        const summary = accepted',
+  '          ? "Windows accepted the UI Automation invoke request. The resulting visual state was not independently verified."',
+  '          : "UI Automation invocation failed: " + (result.error || result.message || "the target control was not uniquely and safely invokable") + ".";',
+  '        return {',
+  '          agentId: this.id,',
+  '          status: accepted ? "completed" : "failed",',
+  '          success: accepted,',
+  '          summary,',
+  '          spokenSummary: summary,',
+  '          evidence: [{ description: summary, source: "windows-ui-automation.invoke", timestamp: startTime, confidence: accepted ? 1 : 0, data: { request, result } }],',
+  '          artifacts: [],',
+  '          verification: { passed: accepted && result.postClickStateVerified === true, details: summary },',
+  '          data: {',
+  '            outcome: accepted ? "invocation_accepted" : "failed",',
+  '            invocationAccepted: accepted,',
+  '            postClickStateVerified: result.postClickStateVerified === true,',
+  '            actionsAttempted: ["Invoke UI Automation control"],',
+  '            actualObservations: summary,',
+  '            failures: accepted ? [] : [result.error || result.message || "UI Automation invocation was not accepted"],',
+  '            control: result.control,',
+  '            matches: result.matches,',
+  '          },',
+  '        };',
+  '      }',
+  '',
+  ];
+  const switchAnchor = '    switch (action) {';
+  agent = replaceOnce(agent, switchAnchor, switchAnchor + "\n" + uiCases.join("\n"), "WindowsAgent UI action cases");
+  write(agentPath, agent);
+} else {
+  console.log("[OK] WindowsAgent already contains the foreground UI Automation integration; skipping duplicate patch.");
+}
 
 // Keep the reviewed target catalog as the source of truth; add only the two bounded UI Automation
 // operations introduced by this integration, so stale branch catalog changes cannot replace it.
@@ -256,12 +265,18 @@ write(testPath, testLines.join("\n"));
 // reports browser search/playback as partial until playback itself is independently verified.
 const browserTestPath = "services/orchestrator/src/tests/browserAgent.unit.test.ts";
 let browserTests = read(browserTestPath);
-browserTests = replaceOnce(
-  browserTests,
-  '  assert.equal(result.success, true);\n  assert.equal(launched.length, 1);',
-  '  assert.equal(result.success, false);\n  assert.equal(result.status, "partial");\n  assert.equal(launched.length, 1);',
-  "Browser handoff remains partial until playback is verified"
-);
-write(browserTestPath, browserTests);
+const acceptedBrowserAssertion = '  assert.equal(result.success, true);\n  assert.equal(launched.length, 1);';
+const partialBrowserAssertion = '  assert.equal(result.success, false);\n  assert.equal(result.status, "partial");\n  assert.equal(launched.length, 1);';
+if (browserTests.includes(acceptedBrowserAssertion)) {
+  browserTests = replaceOnce(
+    browserTests,
+    acceptedBrowserAssertion,
+    partialBrowserAssertion,
+    "Browser handoff remains partial until playback is verified"
+  );
+  write(browserTestPath, browserTests);
+} else if (!browserTests.includes(partialBrowserAssertion)) {
+  throw new Error("Browser handoff test has an unexpected assertion shape");
+}
 git(["add", "--", packagePath, agentPath, testPath, catalogPath, browserTestPath]);
 console.log("[OK] Restored current desktop/agent contracts, declared Playwright, wired safe foreground UI actions, and staged focused tests.");
