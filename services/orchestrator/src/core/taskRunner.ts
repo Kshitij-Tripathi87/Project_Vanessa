@@ -900,6 +900,13 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       return;
     }
 
+    // Snapshot the exact authorized operation before asynchronous lock waits.
+    // Any mutation while queued invalidates this execution attempt.
+    const executionActionId = task.action;
+    const executionParamsJson = stableJson(resolvedParams);
+    const executionRisk = task.risk;
+    const executionAllowedToolsJson = stableJson(task.allowedTools || []);
+
     await resourceLockManager.acquireSlot();
     const locks = resolveTaskLocks(task);
     for (const l of locks) {
@@ -913,8 +920,18 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         (task.lifecycleState as string) === "cancel_requested"
       ) return;
       const finalPermission = permissionGuard.check(task, false);
-      if (finalPermission === "blocked" || !matchesReviewedActionContract(task, resolvedParams)) {
-        throw new Error("Execution was blocked because the action policy or reviewed parameter contract changed before launch.");
+      const operationBindingChanged =
+        task.action !== executionActionId ||
+        stableJson(task.params || {}) !== executionParamsJson ||
+        task.risk !== executionRisk ||
+        stableJson(task.allowedTools || []) !== executionAllowedToolsJson;
+      if (
+        finalPermission === "blocked" ||
+        finalPermission === "confirm" ||
+        operationBindingChanged ||
+        !matchesReviewedActionContract(task, resolvedParams)
+      ) {
+        throw new Error("Execution was blocked because authorization, arguments, target action, risk, or allowed tools changed before launch.");
       }
       const agent = agentRegistry[task.agent];
       if (!agent) {
