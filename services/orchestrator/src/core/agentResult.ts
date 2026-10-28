@@ -43,6 +43,20 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
     };
     return "partial";
   }
+  if (structured?.status === "partial") {
+    const detail = verificationDetails || structured?.error || structured?.summary ||
+      "The action completed partially, and its resulting state was not verified.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: undefined,
+      artifacts: task.artifacts,
+      outcome: "partial",
+      details: detail,
+    };
+    if (typeof structured?.error === "string") task.error = structured.error;
+    return "partial";
+  }
 
   // Opening an interactive coding terminal is a handoff, not proof that code was
   // written or tested. Keep that distinction even if the launcher itself worked.
