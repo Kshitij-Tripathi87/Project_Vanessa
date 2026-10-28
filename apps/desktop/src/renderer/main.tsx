@@ -28,6 +28,63 @@ if (typeof window !== "undefined" && !window.vanessa) {
   connectWebSocket();
 
   window.vanessa = {
+    getControlStatus: async () => {
+      const baseUrl = "http://127.0.0.1:4139";
+      const readJson = async (route: string) => {
+        try {
+          const response = await fetch(baseUrl + route, { signal: AbortSignal.timeout(1500) });
+          return { ok: response.ok, data: await response.json().catch(() => ({})) };
+        } catch {
+          return { ok: false, data: {} };
+        }
+      };
+      const [health, privacy, mode] = await Promise.all([
+        readJson("/health"),
+        readJson("/api/privacy"),
+        readJson("/api/mode"),
+      ]);
+      const system = health.data?.system || {};
+      const orchestratorOnline = health.ok &&
+        health.data?.status === "online" &&
+        health.data?.service === "vanessa-orchestrator";
+      const errors: string[] = [];
+      if (!orchestratorOnline) errors.push("The Vanessa orchestrator health check did not pass.");
+      if (!privacy.ok) errors.push("Folder authorization status could not be loaded.");
+      if (!mode.ok || typeof mode.data?.autonomous !== "boolean") errors.push("Execution policy mode could not be confirmed.");
+      return {
+        success: orchestratorOnline,
+        orchestratorOnline,
+        orchestratorPort: 4139,
+        activeTasksCount: Number.isFinite(system.activeTasksCount) ? system.activeTasksCount : 0,
+        platform: typeof system.platform === "string" ? system.platform : "unknown",
+        autonomousMode: typeof mode.data?.autonomous === "boolean" ? mode.data.autonomous : undefined,
+        allowedFolders: Array.isArray(privacy.data?.allowedFolders)
+          ? privacy.data.allowedFolders.filter((item: unknown): item is string => typeof item === "string")
+          : [],
+        checkedAt: Date.now(),
+        errors,
+      };
+    },
+    addAllowedFolder: async (folderPath) => {
+      try {
+        const response = await fetch("http://127.0.0.1:4139/api/privacy/folders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderPath }),
+          signal: AbortSignal.timeout(2500),
+        });
+        const data = await response.json().catch(() => ({}));
+        const allowedFolders = Array.isArray(data?.allowedFolders)
+          ? data.allowedFolders.filter((item: unknown): item is string => typeof item === "string")
+          : [];
+        if (!response.ok || data?.success !== true) {
+          return { success: false, allowedFolders, error: "The folder was not added. Confirm it exists and is a directory." };
+        }
+        return { success: true, allowedFolders };
+      } catch {
+        return { success: false, error: "Could not reach Vanessa to update the approved folder list." };
+      }
+    },
     executeCommand: async (payload) => {
       return submitCommandRequest("http://127.0.0.1:4319", {
         ...payload,

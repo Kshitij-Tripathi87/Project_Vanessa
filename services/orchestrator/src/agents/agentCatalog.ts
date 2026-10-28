@@ -67,10 +67,10 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "windows",
-    purpose: "Perform bounded Windows settings, application, and screenshot actions through PowerShell.",
-    limitations: "Windows only; radio actions may need hardware/admin rights. Wi-Fi, Bluetooth, volume, and close-app handlers have success-returning failure paths, so their success flags do not independently prove the requested state. No arbitrary desktop clicking.",
+    purpose: "Perform bounded Windows settings, application, screenshot, and accessibility-based foreground-window interactions.",
+    limitations: "Windows only. Wi-Fi/Bluetooth depend on hardware and permissions; WMI brightness may be unsupported on external displays. UI Automation is limited to a bounded foreground-window accessibility tree; it never reads field values or uses coordinate clicks. UI clicks require high-risk approval and exact window identity plus a unique, enabled, onscreen control.",
     actions: [
-      action("wifi.restart_adapter", "Attempt Wi-Fi adapter restart; temporarily interrupts connectivity.", {}, "AgentResult with data.adapter and data.connected; reported connectivity can be optimistic.", "high", true, ["net_adapter_control"]),
+      action("wifi.restart_adapter", "Restart the detected Wi-Fi adapter; temporarily interrupts connectivity.", {}, "AgentResult succeeds only when the adapter is found and its observed post-restart state is Up; internet reachability is not independently verified.", "high", true, ["net_adapter_control"]),
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
       action("brightness.list", "List active displays that expose brightness control and their observed levels.", {}, "Verified discovery snapshot with display IDs, names and supported levels.", "low", true, ["windows_setting_toggle"]),
       action("brightness.get", "Read the observed brightness of one display, selected by ID or friendly name.", {
@@ -95,16 +95,25 @@ export const AGENT_CATALOG: CatalogAgent[] = [
       action("app.open", "Launch an application by executable name; use browser actions for URLs.", { name: p("string", "Executable or supported name such as notepad, calculator, edge, or terminal.", true) }, "AgentResult indicating whether Windows accepted the launch request.", "low", true, ["windows_app_launch"]),
       action("app.close", "Attempt to stop an application process.", { name: p("string", "Process name to close.", true) }, "AgentResult with process operation output; fallback can overstate success.", "high", true, ["process_control"]),
       action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),
+      action("ui.inspect", "Inspect the bounded UI Automation Control View tree of the current foreground window. Do not read input-field values.", {}, "Returns data.windowTitle, data.windowHandle, data.processId, up to 120 control descriptors, truncation status, and valuesRead=false. The window identity can be used by a dependent ui.click task.", "low", true, ["windows_ui_automation"]),
+      action("ui.click", "Invoke exactly one enabled, onscreen UI Automation control in a previously inspected window. Must depend on ui.inspect and use its exact window identity.", {
+        windowHandle: p("string", "Reference to the prior ui.inspect result windowHandle.", true),
+        expectedWindowTitle: p("string", "Reference to the prior ui.inspect result windowTitle.", true),
+        expectedProcessId: p("number", "Reference to the prior ui.inspect result processId.", true),
+        automationId: p("string", "Optional exact AutomationId selector. If omitted, exact name and ControlType are required."),
+        name: p("string", "Exact case-sensitive control name selector."),
+        controlType: p("string", "Exact UI Automation type such as ControlType.Button, ControlType.Link, or ControlType.TabItem."),
+      }, "High-risk and requires user approval. Returns success only if window handle/title/process still match, exactly one enabled onscreen control matches, and InvokePattern.Invoke returns. This does not prove that the app visual state changed.", "high", true, ["windows_ui_automation"]),
     ],
   },
   {
     id: "browser",
     purpose: "Open URLs or search results, including YouTube searches. Delegate limited web research to the Python bridge.",
-    limitations: "Playwright uses a persistent page session. Remote navigation is HTTP(S)-only; local/private hosts are denied by default, local HTML must be approved, and consequential clicks require confirmation.",
+    limitations: "Browser open/search actions launch the system default browser unless Chrome or Edge is explicitly requested. Page inspection/clicks use Vanessa’s separate Playwright browser context, which is not automatically signed into the user’s profile. HTTP(S) navigation uses DNS-aware private/reserved-host checks; local HTML must be approved, and consequential clicks require confirmation.",
     actions: [
-      action("browser.open_url", "Open a URL in the browser.", { url: p("string", "Complete http(s) URL.", true) }, "AgentResult with data.url, artifacts, and navigation claims; page contents are not returned.", "low", true, ["browser_navigate"]),
-      action("browser.search", "Open Google search results for a query.", { query: p("string", "Search terms.", true) }, "AgentResult with query/search URL; not extracted search facts.", "low", true, ["browser_navigate"]),
-      action("youtube.search_and_play", "Open YouTube search results. Retained action name does not imply actual playback.", { query: p("string", "Video or music search terms.", true) }, "AgentResult with data.query and data.url; do not claim playback was verified.", "low", true, ["browser_navigate"]),
+      action("browser.open_url", "Open a URL in the user’s default browser or an explicitly selected supported browser.", { url: p("string", "Complete HTTP(S) URL; embedded credentials and local/private destinations are denied by default.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; page load and user-visible state are not verified. Use browser.inspect_page for isolated Playwright inspection.", "low", true, ["browser_navigate"]),
+      action("browser.search", "Open Google search results in the user’s default browser or an explicitly selected supported browser.", { query: p("string", "Non-empty search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; search result contents are not extracted or verified.", "low", true, ["browser_navigate"]),
+      action("youtube.search_and_play", "Open YouTube search results in the default browser or an explicitly selected supported browser.", { query: p("string", "Video or music search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "AgentResult with data.query and data.url; playback is not performed or verified.", "low", true, ["browser_navigate"]),
       action("browser.research", "Invoke a limited Python web-search goal branch.", { goal: p("string", "Research request.", true) }, "AgentResult wrapping bridge steps/final_answer; bridge synthesis and success reports are limited and require Python dependencies.", "medium"),
       action("browser.read_title", "Read the title from a requested URL or the active browser page.", { url: p("string", "Optional reference URL.") }, "AgentResult with observed rendered page title and URL.", "low", true, ["browser_navigate"]),
       action("browser.inspect_page", "Inspect rendered page text and up to 50 links at a URL or the active page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with observed title, URL, rendered text and links.", "low", true, ["browser_extract"]),

@@ -54,6 +54,47 @@ test("validates action identity, required parameter types, unsupported placehold
   assert(!catalogAccepts("files", "drive.upload", { file: "report.pdf" }));
   assert(!catalogAccepts("testing", "testing.run_checks", { command: "test", autoDeploy: true }));
   assert(!catalogAccepts("windows", "volume.set", { level: 101 }));
+  assert(catalogAccepts("windows", "brightness.set", { level: 50 }));
+  assert(!catalogAccepts("windows", "brightness.set", { level: 101 }));
+  assert(!catalogAccepts("windows", "brightness.set", { level: 20.5 }));
+  assert(catalogAccepts("windows", "brightness.adjust", { delta: -10 }));
+  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 0 }));
+  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 150 }));
+  assert(catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "chrome" }));
+  assert(catalogAccepts("browser", "browser.open_url", { url: "https://example.com", browser: "edge" }));
+  assert(!catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "powershell" }));
+  assert(catalogAccepts("windows", "ui.inspect", {}));
+  assert(catalogAccepts("windows", "ui.click", {
+    windowHandle: "$inspect.result.windowHandle",
+    expectedWindowTitle: "$inspect.result.windowTitle",
+    expectedProcessId: "$inspect.result.processId",
+    automationId: "BluetoothToggle",
+  }));
+  assert(catalogAccepts("windows", "ui.click", {
+    windowHandle: "$inspect.result.windowHandle",
+    expectedWindowTitle: "$inspect.result.windowTitle",
+    expectedProcessId: "$inspect.result.processId",
+    name: "Bluetooth",
+    controlType: "ControlType.Button",
+  }));
+  assert(!catalogAccepts("windows", "ui.click", {
+    windowHandle: "123456",
+    expectedWindowTitle: "Settings",
+    expectedProcessId: 3210,
+    automationId: "BluetoothToggle",
+  }));
+  assert(!catalogAccepts("windows", "ui.click", {
+    windowHandle: "$inspect.result.windowHandle",
+    expectedWindowTitle: "$inspect.result.windowTitle",
+    expectedProcessId: "$inspect.result.processId",
+  }));
+  assert(!catalogAccepts("windows", "ui.click", {
+    windowHandle: "$inspect.result.windowHandle",
+    expectedWindowTitle: "$inspect.result.windowTitle",
+    expectedProcessId: "$inspect.result.processId",
+    name: "Bluetooth",
+    controlType: "Button",
+  }));
   assert(catalogAccepts("files", "file.search", { query: "report", path: "$folder.result.path" }));
 });
 
