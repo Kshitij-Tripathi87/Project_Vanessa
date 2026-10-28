@@ -54,7 +54,15 @@ $arguments = @(
 Invoke-Checked 'Compile WiX x64 MSI package' $wixExe $arguments
 if (-not (Test-Path -LiteralPath $msiPath -PathType Leaf)) { throw 'WiX reported success but no MSI was created.' }
 $size = [Math]::Round((Get-Item -LiteralPath $msiPath).Length / 1MB, 2)
-$hash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$stream = [System.IO.File]::OpenRead($msiPath)
+try {
+    $digest = $sha256.ComputeHash($stream)
+    $hash = ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+} finally {
+    $stream.Dispose()
+    $sha256.Dispose()
+}
 Write-Host "[OK] Vanessa MSI created: $msiPath" -ForegroundColor Green
 Write-Host "Size: $size MiB"
 Write-Host "SHA-256: $hash"
