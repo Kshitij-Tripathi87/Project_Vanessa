@@ -134,7 +134,7 @@ jobs:
             @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/tests/agentRouting.test.ts' },
             @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/tests/planner.browser.test.ts' },
             @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/agents/windows-ui-automation.ts' },
-            @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/tests/windowsUiAutomation.test.ts' }
+            @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/tests/windowsUiAutomation.test.ts src/tests/windowsAgentUiAutomation.test.ts' }
           )
           foreach ($entry in $featureFiles) {
             git restore --source "origin/$($entry.Source)" --staged --worktree -- $entry.Path
@@ -156,9 +156,12 @@ jobs:
             git rm -f -- services/voice-agent/src/tests/wakeWord.test.ts
             if ($LASTEXITCODE -ne 0) { throw "Could not remove obsolete Porcupine-only test." }
           }
+          node scripts/repair-pr-integration.cjs $targetSnapshot
+          if ($LASTEXITCODE -ne 0) { throw "Compatibility integration patch failed." }
+
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "fix(voice): preserve local Whisper wake-word pipeline during PR integration"
+            git commit -m "fix(integration): align stacked PRs with current voice and desktop contracts"
             if ($LASTEXITCODE -ne 0) { throw "Could not commit local voice preservation." }
           }
 
@@ -183,6 +186,11 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.24.0
+      - name: Refresh lockfile for Playwright browser automation
+        shell: pwsh
+        run: |
+          pnpm install --lockfile-only
+          if ($LASTEXITCODE -ne 0) { throw "Could not refresh the lockfile for the declared Playwright dependency." }
       - name: Install locked workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Build every workspace package
