@@ -1,5 +1,6 @@
 name: Repair and integrate open Vanessa PRs # [integrate-open-prs]
 # The integration patch is tested against the target branch before any push; do not bypass build gates.
+# UI Automation test assertions explicitly narrow AgentResult.data before checking result evidence.
 on:
   push:
     branches: [Vanessa-Prototype-1-MAIN]
