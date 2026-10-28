@@ -207,7 +207,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Agent routing/UI Automation tests failed." }
           pnpm --filter @vanessa/orchestrator test:trustworthy-execution
           if ($LASTEXITCODE -ne 0) { throw "Trustworthy-execution tests failed." }
-          pnpm --filter @vanessa/desktop test:docking
+          pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts
           if ($LASTEXITCODE -ne 0) { throw "Desktop docking tests failed." }
       - name: Test voice, launcher, and microphone contracts
         shell: pwsh
