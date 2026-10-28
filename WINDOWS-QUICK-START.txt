@@ -36,9 +36,9 @@ Node/Python/Ollama and downloads local speech/language models. The installer is 
 currently code-signed or fully offline. Never package or share a .env with provider
 credentials.
 
-7. Release/build validation: the Windows installer CI workflow now performs a silent install/uninstall test and checks the installed file set. This validates installer mechanics only; it does not prove that a physical microphone works.
+7. The Windows installer workflow now builds both Vanessa-Setup-x64.exe and Vanessa-Setup-x64.msi. The MSI creates a Start Menu shortcut and supports standard Windows Installer install/uninstall operations. Both installer formats are tested in CI with install/uninstall smoke tests. This validates installer mechanics only; it does not prove that a physical microphone works.
 
-8. Installer signing: version-tag releases require an Authenticode signature. The repository must have the trusted publisher PFX and password configured as GitHub Actions secrets named WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD before a version tag is pushed. Ordinary branch CI may emit an unsigned test artifact.
+8. Installer signing: version-tag releases require an Authenticode signature for both EXE and MSI. The repository must have the trusted publisher PFX and password configured as GitHub Actions secrets named WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD before a version tag is pushed. Ordinary branch CI may emit unsigned test artifacts.
 
 9. This Setup EXE is an online bootstrap, not a fully offline installer. First-run setup downloads dependencies and models. Hosted Sarvam still requires BYOK until a secure server-side gateway is deployed; never embed a shared key in the EXE or bootstrap ZIP.
 
