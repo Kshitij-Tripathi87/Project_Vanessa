@@ -199,7 +199,7 @@ export const AGENT_CATALOG: CatalogAgent[] = [
         suiteId: p("string", "Must be incident-lab.regression.", true),
         workspaceId: p("string", "Whole-string reference to the successful coding.prepare_patch workspaceId, e.g. $t2.result.workspaceId.", true),
         expectedDiffHash: p("string", "Whole-string reference to the successful coding.prepare_patch SHA-256 diffHash, e.g. $t2.result.diffHash.", true),
-      }, "AgentResult with process status, exit code, structured test counts, output digest, truncation metadata, termination proof and base-checkout preservation. Success requires exit 0 and all tests passed.", "high", true, ["test_run", "regression_check"]),
+      }, "AgentResult with process status, exit code, structured test counts, diff digest and output digest, truncation metadata, termination proof and base-checkout preservation. Success requires exit 0 and all tests passed.", "high", true, ["test_run", "regression_check"]),
     ],
   },
   {
