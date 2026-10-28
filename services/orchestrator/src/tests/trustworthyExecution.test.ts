@@ -442,8 +442,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       'import { fileURLToPath } from "node:url";',
       'const __dirname = path.dirname(fileURLToPath(import.meta.url));',
       'const checkout = fs.readFileSync(path.join(__dirname, "..", "src", "checkout.ts"), "utf8");',
-      `if (checkout.includes("HANG_TEST_MARKER")) { const { spawn } = await import("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(childCode)}], { stdio: "ignore" }); setInterval(() => {}, 1000); }`,
-      'else { console.log("api_key=supersecret-token-value"); console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({ schema: "vanessa.regression-report", version: 1, suiteId: "incident-lab.regression", runId: process.env.VANESSA_EXECUTION_RUN_ID, passed: 2, total: 2, failed: 0 })); }',
+      `if (checkout.includes("EXIT_71_TEST_MARKER")) { process.exit(71); } else if (checkout.includes("HANG_TEST_MARKER")) { const { spawn } = await import("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(childCode)}], { stdio: "ignore" }); setInterval(() => {}, 1000); } else { console.log("api_key=supersecret-token-value"); console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({ schema: "vanessa.regression-report", version: 1, suiteId: "incident-lab.regression", runId: process.env.VANESSA_EXECUTION_RUN_ID, passed: 2, total: 2, failed: 0 })); }`,
       "",
     ].join("\n");
     await fs.writeFile(path.join(packageRoot, "tests", "checkout.test.ts"), fixtureTestScript);
@@ -536,18 +535,28 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     assert.match(processResult.stdout + processResult.stderr, /api_key=\[REDACTED\]/);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
 
-    // Exit code 71 is a legitimate child result. Supervisor-uncertainty must be
-    // signalled by private evidence, not inferred from a numeric exit code.
+    // Exit code 71 is a legitimate child result. Exercise it through the exact
+    // registered runner rather than injecting an unregistered executable/argv.
+    // The fixture switch lives in checkout.ts so the allowed changed-file scope
+    // remains one repair target, and the runner contract stays enforced.
+    const exit71Patch = patched.replace("const discount", "/* EXIT_71_TEST_MARKER */\\nconst discount");
+    await fs.writeFile(target, exit71Patch, "utf8");
+    const exit71Diff = execFileSync("git", ["diff", "--no-ext-diff", "--", relativeFile], {
+      cwd: workspace.worktreePath,
+      encoding: "utf8",
+    });
+    const exit71DiffHash = createHash("sha256").update(exit71Diff).digest("hex");
+    const exit71Invocation = getIncidentLabTestInvocation(workspace.worktreePath);
     const ordinaryExit71 = await supervisor.run({
       taskId: `exit-71-${randomUUID()}`,
       actionId: "testing.run_incident_lab",
       actionParams: {
         suiteId: "incident-lab.regression",
         workspaceId: workspace.taskId,
-        expectedDiffHash,
+        expectedDiffHash: exit71DiffHash,
       },
-      executable: process.execPath,
-      args: ["-e", "process.exit(71)"],
+      executable: exit71Invocation.executable,
+      args: exit71Invocation.args,
       cwd: workspace.worktreePath,
       timeoutMs: 5000,
       maxOutputBytes: 64 * 1024,
