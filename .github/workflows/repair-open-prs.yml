@@ -156,7 +156,7 @@ jobs:
             git rm -f -- services/voice-agent/src/tests/wakeWord.test.ts
             if ($LASTEXITCODE -ne 0) { throw "Could not remove obsolete Porcupine-only test." }
           }
-          # The integration helper normalizes Windows checkout newlines before exact code edits.
+          # The integration helper normalizes Windows checkout newlines and keeps renderer typings compatible.
           node scripts/repair-pr-integration.cjs $targetSnapshot
           if ($LASTEXITCODE -ne 0) { throw "Compatibility integration patch failed." }
 
