@@ -111,7 +111,9 @@ export function getIncidentLabTestInvocation(worktreePath: string): { executable
   if (!path.isAbsolute(loaderPath) || !path.isAbsolute(testPath)) {
     throw new Error("The registered incident-lab runner paths could not be resolved safely.");
   }
-  return { executable: process.execPath, args: ["--import", loaderPath, testPath] };
+  // Use the explicit equals form so Windows argument parsing cannot
+  // ambiguously bind the loader path as part of the option token.
+  return { executable: process.execPath, args: [`--import=${loaderPath}`, testPath] };
 }
 
 const ENV_ALLOWLIST = [
