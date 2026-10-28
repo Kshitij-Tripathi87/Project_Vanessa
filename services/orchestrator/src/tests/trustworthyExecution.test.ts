@@ -19,10 +19,11 @@ import { WindowsAgent } from "../agents/windows.agent.js";
 import { FolderAgent } from "../agents/folder.agent.js";
 import { buildPowerShellEnvironment } from "../agents/powershell.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
+import { catalogAccepts } from "../agents/agentCatalog.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
 import { RepairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
-import { cancelTaskWithProof } from "../core/taskRunner.js";
+import { cancelTaskWithProof, runPlan } from "../core/taskRunner.js";
 import { resourceLockManager } from "../core/resourceLocks.js";
 
 const validTestParams = {
@@ -90,6 +91,39 @@ test("action registry canonicalizes legacy names and fails closed on unknown or 
   });
   assert.equal(autonomousCoding.managed, true);
   assert.equal(autonomousCoding.blocked, true);
+});
+
+test("reviewed action catalog rejects non-selectable and unknown actions", () => {
+  assert.equal(catalogAccepts("testing", "testing.run_incident_lab", validTestParams), true);
+  assert.equal(catalogAccepts("developer", "terminal.run_command", { command: "echo unsafe" }), false);
+  assert.equal(catalogAccepts("developer", "codex.run_task", { projectPath: "/repo", prompt: "edit" }), false);
+  assert.equal(catalogAccepts("windows", "windows.unregistered_operation", {}), false);
+  assert.equal(catalogAccepts("testing", "testing.run_incident_lab", { ...validTestParams, command: "echo pass" }), false);
+});
+
+test("runPlan rejects a task omitted from the reviewed action catalog before executor dispatch", async () => {
+  const taskId = `catalog-deny-${randomUUID()}`;
+  const plan: any = {
+    id: `catalog-plan-${randomUUID()}`,
+    command: "exercise unknown action gate",
+    tasks: [{
+      id: taskId,
+      agent: "windows",
+      action: "windows.unregistered_operation",
+      params: {},
+      dependsOn: [],
+      status: "pending",
+      risk: "low",
+      allowedTools: [],
+      acceptanceCriteria: [],
+    }],
+  };
+
+  const results = await runPlan(plan);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "blocked");
+  assert.equal(results[0].verification?.outcome, "blocked");
+  assert.match(results[0].error || "", /reviewed, selectable agent catalog/i);
 });
 
 test("managed actions without evidence cannot turn a positive flag into success", () => {
