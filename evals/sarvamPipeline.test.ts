@@ -55,7 +55,13 @@ test("cancelling an executing request blocks its dependent tasks", async () => {
     const cancelled = await result;
     assert.equal(calls, 1);
     assert.equal(cancelled.status, "partial");
-    assert(cancelled.plan?.tasks.every(task => task.status === "cancelled"));
+    // A generic active agent has no process-tree proof in this fixture. Vanessa
+    // must not call it cancelled merely because the UI requested cancellation;
+    // it remains termination_unconfirmed, while dependent work is cancelled.
+    assert.equal(cancelled.plan?.tasks[0]?.status, "termination_unconfirmed");
+    assert.equal(cancelled.plan?.tasks[0]?.verification?.outcome, "termination_unconfirmed");
+    assert.equal(cancelled.plan?.tasks[1]?.status, "cancelled");
+    assert(cancelled.plan?.tasks.every(task => task.status !== "success"));
   } finally { modelRouter.callLLM = originalLLM; agentRegistry.it_ops.execute = originalExecute; }
 });
 
