@@ -400,7 +400,8 @@ public static class VanessaWindowsJobRunner
                 return JobIsEmpty(job, 3000) ? Fail("ResumeThread failed.", 126) : Fail("ResumeThread failed and job emptiness could not be verified.", 71);
             }
 
-            Console.Error.WriteLine("VANESSA_JOB_RUNNER_STARTED:" + runId);
+            string verificationToken = Environment.GetEnvironmentVariable("VANESSA_JOBRUNNER_VERIFICATION_TOKEN") ?? "";
+            Console.Error.WriteLine("VANESSA_JOB_RUNNER_STARTED:" + verificationToken);
             while (true)
             {
                 lock (cancelLock)
