@@ -67,7 +67,9 @@ export class MemoryAgent implements SpecialistAgent {
     const runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
 
     const policy = resolveManagedAction(action, params);
-    if (!policy.managed || policy.blocked) {
+    // Keep the explicitly registered delete operation routable to its hard-deny handler.
+    // This provides a deterministic policy result without enabling deletion.
+    if (action !== "memory.delete" && (!policy.managed || policy.blocked)) {
       return this.blocked(action, policy.reason || ("Unregistered memory action '" + action + "' is blocked."));
     }
     const canonicalAction = policy.canonicalId || action;
@@ -79,6 +81,8 @@ export class MemoryAgent implements SpecialistAgent {
         return this.store(String(params.content ?? params.text ?? ""), params.metadata, runCtx);
       case "memory.list":
         return this.list(params.limit ?? 10, runCtx);
+      case "memory.delete":
+        return this.blocked("memory.delete", "Manual memory deletion is disabled; records expire according to the configured retention policy.");
       default:
         return this.blocked(action, "No executor is registered for memory action '" + canonicalAction + "'.");
     }
