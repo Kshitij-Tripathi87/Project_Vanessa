@@ -44,8 +44,8 @@ jobs:
       - name: Install Inno Setup 6
         shell: pwsh
         run: choco install innosetup --yes --no-progress
-      - name: Build installer EXE
-        run: pnpm run package:windows-installer
+      - name: Build installer EXE and MSI
+        run: pnpm run package:windows-msi
       - name: Sign installer (required for version-tag releases)
         shell: pwsh
         env:
@@ -54,15 +54,20 @@ jobs:
         run: |
           $requireSignature = $env:GITHUB_REF -like 'refs/tags/v*'
           ./scripts/sign-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.exe' -RequireSignature:$requireSignature
-      - name: Install and uninstall smoke test
+          ./scripts/sign-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.msi' -RequireSignature:$requireSignature
+      - name: EXE install and uninstall smoke test
         shell: pwsh
         run: ./scripts/test-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.exe'
+      - name: MSI install and uninstall smoke test
+        shell: pwsh
+        run: ./scripts/test-windows-msi.ps1 -MsiPath 'artifacts/windows-installer/Vanessa-Setup-x64.msi'
       - name: Upload installer and bootstrap ZIP
         uses: actions/upload-artifact@v4
         with:
           name: Vanessa-Windows-Installers-${{ github.sha }}
           path: |
             artifacts/windows-installer/Vanessa-Setup-x64.exe
+            artifacts/windows-installer/Vanessa-Setup-x64.msi
             artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
           if-no-files-found: error
           retention-days: 14
@@ -72,5 +77,6 @@ jobs:
         with:
           files: |
             artifacts/windows-installer/Vanessa-Setup-x64.exe
+            artifacts/windows-installer/Vanessa-Setup-x64.msi
             artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
           generate_release_notes: true
