@@ -352,6 +352,8 @@ test("browser active-tab read is inconclusive until a real observation provider 
 test("real worktree runner binds to the patch digest, redacts output, and kills timed-out process trees", async () => {
   const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-trust-test-"));
   const repositoryRoot = path.join(tempRoot, "fixture-repo");
+  const childPidPath = path.join(tempRoot, "supervised-descendant.pid");
+  const childCode = `require("node:fs").writeFileSync(${JSON.stringify(childPidPath)}, String(process.pid)); setInterval(() => {}, 1000);`;
   await fs.mkdir(repositoryRoot, { recursive: true });
 
   let workspace: RepairWorkspace | undefined;
@@ -379,7 +381,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       'import { fileURLToPath } from "node:url";',
       'const __dirname = path.dirname(fileURLToPath(import.meta.url));',
       'const checkout = fs.readFileSync(path.join(__dirname, "..", "src", "checkout.ts"), "utf8");',
-      'if (checkout.includes("HANG_TEST_MARKER")) { setInterval(() => {}, 1000); }',
+      `if (checkout.includes("HANG_TEST_MARKER")) { const { spawn } = await import("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(childCode)}], { stdio: "ignore" }); setInterval(() => {}, 1000); }`,
       'else { console.log("api_key=supersecret-token-value"); console.log("VANESSA_REGRESSION_REPORT " + JSON.stringify({ schema: "vanessa.regression-report", version: 1, suiteId: "incident-lab.regression", runId: process.env.VANESSA_EXECUTION_RUN_ID, passed: 2, total: 2, failed: 0 })); }',
       "",
     ].join("\n");
@@ -439,6 +441,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
 
     assert.equal(processResult.status, "exited");
     assert.equal(processResult.exitCode, 0);
+    assert.equal(processResult.processStarted, true);
     assert.equal(processResult.terminationVerified, true);
     assert.deepEqual(parseRegressionSummary(processResult.stdout + processResult.stderr, processResult.runId), { passed: 2, total: 2 });
     assert.doesNotMatch(processResult.stdout + processResult.stderr, /supersecret-token-value/);
@@ -463,11 +466,21 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       executable,
       args,
       cwd: workspace.worktreePath,
-      timeoutMs: 1000,
+      // Windows must allow time for the fixed Job Object wrapper to initialize
+      // before exercising cancellation of a live root + grandchild process tree.
+      timeoutMs: process.platform === "win32" ? 12000 : 1000,
       maxOutputBytes: 64 * 1024,
     });
     assert.equal(timeoutResult.status, "timed_out");
+    assert.equal(timeoutResult.processStarted, true);
     assert.equal(timeoutResult.terminationVerified, true);
+    const childPidText = await fs.readFile(childPidPath, "utf8");
+    const childPid = Number(childPidText.trim());
+    assert.ok(Number.isSafeInteger(childPid) && childPid > 0, "the fixture grandchild must have started");
+    let childStillAlive = false;
+    try { process.kill(childPid, 0); childStillAlive = true; }
+    catch (error: any) { if (error?.code !== "ESRCH") throw error; }
+    assert.equal(childStillAlive, false, "the supervisor must terminate the test runner's grandchild");
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
   } finally {
     if (workspace) {
