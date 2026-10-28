@@ -79,6 +79,9 @@ jobs:
           # the current local Whisper wake-word pipeline.
           $preserve = @(
             '.env.example',
+            # Keep the current compact orb app shell. The stacked PR's older App.tsx
+            # expects a Porcupine-era audio API and a full legacy dashboard layout.
+            'apps/desktop/src/renderer/App.tsx',
             'apps/desktop/src/renderer/hooks/useAudioCapture.ts',
             'services/voice-agent/src/server.ts',
             'services/voice-agent/src/session/voiceSession.ts',
@@ -91,6 +94,30 @@ jobs:
               git restore --source $targetSnapshot --staged --worktree -- $path
               if ($LASTEXITCODE -ne 0) { throw "Could not preserve target voice implementation for $path." }
             }
+          }
+          # Type-only compatibility for the retained ChatPanel component added by the
+          # Control Deck PR. Runtime wake-word state remains the target's local Whisper contract.
+          $hookPath = 'apps/desktop/src/renderer/hooks/useAudioCapture.ts'
+          $hookContent = Get-Content -Raw -LiteralPath $hookPath
+          if (-not $hookContent.Contains('export interface WakeWordStatus')) {
+            $voiceStatusAnchor = 'export interface VoiceProviderStatus {'
+            $wakeStatusType = @'
+export interface WakeWordStatus {
+  available: boolean;
+  ready: boolean;
+  listening: boolean;
+  keyword: string;
+  reason?: string;
+  state?: string;
+}
+
+export interface VoiceProviderStatus {
+'@
+            if (-not $hookContent.Contains($voiceStatusAnchor)) { throw "Cannot locate VoiceProviderStatus anchor for compatibility type." }
+            $hookContent = $hookContent.Replace($voiceStatusAnchor, $wakeStatusType)
+            Set-Content -LiteralPath $hookPath -Value $hookContent -NoNewline -Encoding utf8
+            git add -- $hookPath
+            if ($LASTEXITCODE -ne 0) { throw "Could not stage wake-word type compatibility." }
           }
           # The source branch also carried an obsolete Porcupine-only test in a separate
           # test directory. Current wake-word coverage lives beside the local Whisper detector.
