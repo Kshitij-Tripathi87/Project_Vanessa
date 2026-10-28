@@ -226,7 +226,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Microphone diagnostics tests failed." }
           node --test scripts/security.test.cjs
           if ($LASTEXITCODE -ne 0) { throw "Security regression tests failed." }
-      - name: Test orchestrator scenarios when Ollama is available, plus deterministic skills and failure drills
+      - name: Test Ollama-backed scenarios and failure drills when available; always run deterministic skills tests
         shell: pwsh
         run: |
           $ollamaAvailable = $false
@@ -239,15 +239,15 @@ jobs:
           if ($ollamaAvailable) {
             pnpm run test:scenarios
             if ($LASTEXITCODE -ne 0) { throw "Ollama-backed scenario regression suite failed." }
+            pnpm run test:drills
+            if ($LASTEXITCODE -ne 0) { throw "Ollama-backed failure drills failed." }
+            pnpm run test:drills:process
+            if ($LASTEXITCODE -ne 0) { throw "Ollama-backed process failure drills failed." }
           } else {
-            Write-Host "::notice::Skipped test:scenarios because hosted CI has no Ollama service on 127.0.0.1:11434; deterministic agent, security, voice, launcher, and failure-drill gates still run."
+            Write-Host "::notice::Skipped test:scenarios, test:drills, and test:drills:process because these integration drills call the local Ollama planner, which is not available on this hosted runner. Deterministic agent-routing, UI-automation, voice, launcher, microphone, security, task-runner, and skills gates still run."
           }
           pnpm run test:skills
           if ($LASTEXITCODE -ne 0) { throw "Skills regression suite failed." }
-          pnpm run test:drills
-          if ($LASTEXITCODE -ne 0) { throw "Failure drills failed." }
-          pnpm run test:drills:process
-          if ($LASTEXITCODE -ne 0) { throw "Process failure drills failed." }
       - name: Push only after all integration checks pass
         shell: pwsh
         run: |
