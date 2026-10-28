@@ -257,8 +257,25 @@ public static class VanessaWindowsJobRunner
         return false;
     }
 
-    public static int Run(string executable, string[] args, string workingDirectory, string runId)
+    private static string[] ReadArguments()
     {
+        string countText = Environment.GetEnvironmentVariable("VANESSA_JOBRUNNER_ARG_COUNT");
+        int count;
+        if (!Int32.TryParse(countText, out count) || count < 0 || count > 64)
+            throw new InvalidOperationException("Invalid registered argument count.");
+        string[] args = new string[count];
+        for (int i = 0; i < count; i++)
+        {
+            string encoded = Environment.GetEnvironmentVariable("VANESSA_JOBRUNNER_ARG_" + i.ToString());
+            if (encoded == null) throw new InvalidOperationException("A registered argument is missing.");
+            args[i] = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+        }
+        return args;
+    }
+
+    public static int Run(string executable, string workingDirectory, string runId)
+    {
+        string[] args = ReadArguments();
         IntPtr job = IntPtr.Zero;
         IntPtr environment = IntPtr.Zero;
         IntPtr nullInput = IntPtr.Zero;
@@ -428,11 +445,8 @@ public static class VanessaWindowsJobRunner
     }
 }
 '@
-$rawArgs = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:VANESSA_JOBRUNNER_ARGS_B64))
-$childArgs = @(ConvertFrom-Json -InputObject $rawArgs)
 $exitCode = [VanessaWindowsJobRunner]::Run(
   $env:VANESSA_JOBRUNNER_EXECUTABLE,
-  [string[]]$childArgs,
   $env:VANESSA_JOBRUNNER_CWD,
   $env:VANESSA_JOBRUNNER_RUN_ID
 )
@@ -451,10 +465,16 @@ export function buildWindowsJobRunnerEnvironment(
   }
   if (!cwd || !path.isAbsolute(cwd)) throw new Error("Windows Job Object runner cwd must be absolute.");
   if (!runId || !/^[a-zA-Z0-9-]{1,80}$/.test(runId)) throw new Error("Invalid managed run ID.");
-  return {
+  const result: Record<string, string> = {
     VANESSA_JOBRUNNER_EXECUTABLE: executable,
-    VANESSA_JOBRUNNER_ARGS_B64: Buffer.from(JSON.stringify(args), "utf8").toString("base64"),
+    VANESSA_JOBRUNNER_ARG_COUNT: String(args.length),
     VANESSA_JOBRUNNER_CWD: cwd,
     VANESSA_JOBRUNNER_RUN_ID: runId,
   };
+  // Pass every argument as its own base64 value. PowerShell/.NET overload
+  // binding never gets to flatten or rejoin the registered argv array.
+  args.forEach((arg, index) => {
+    result[`VANESSA_JOBRUNNER_ARG_${index}`] = Buffer.from(arg, "utf8").toString("base64");
+  });
+  return result;
 }
