@@ -71,6 +71,29 @@ jobs:
             artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
           if-no-files-found: error
           retention-days: 14
+      - name: Publish stable preview download for installer handoff
+        if: github.ref == 'refs/heads/Vanessa-Prototype-1-MAIN' && contains(github.event.head_commit.message, '[publish-installer]')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-installer-preview
+          target_commitish: ${{ github.sha }}
+          name: Vanessa Windows Installer (Preview)
+          body: |
+            Downloadable Vanessa Windows installer preview built from the Vanessa-Prototype-1-MAIN branch.
+            
+            Assets:
+            - Vanessa-Setup-x64.msi: standard Windows Installer package.
+            - Vanessa-Setup-x64.exe: companion setup executable.
+            - Vanessa-Windows-Bootstrap-*.zip: developer/bootstrap fallback.
+            
+            This preview is currently unsigned. First-run setup requires internet access to download runtime dependencies and local AI models. Do not treat it as an offline or production-signed release.
+          draft: false
+          prerelease: true
+          make_latest: false
+          files: |
+            artifacts/windows-installer/Vanessa-Setup-x64.msi
+            artifacts/windows-installer/Vanessa-Setup-x64.exe
+            artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
       - name: Publish installer for version tags
         if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
