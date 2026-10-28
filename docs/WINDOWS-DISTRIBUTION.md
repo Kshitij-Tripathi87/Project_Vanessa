@@ -2,9 +2,9 @@
 
 ## What CI now verifies
 
-The `Windows installer` workflow builds `Vanessa-Setup-x64.exe`, runs the installer silently into an isolated temporary directory, verifies the expected launch/repair files and safe `.env.example` template, checks that a real `.env` was not packaged, and silently uninstalls it again.
+The `Windows installer` workflow builds both `Vanessa-Setup-x64.exe` and `Vanessa-Setup-x64.msi`. It installs each package silently into an isolated temporary directory, verifies the expected launch/repair files and safe `.env.example` template, checks that a real `.env` was not packaged, verifies the MSI Start Menu shortcut, and silently uninstalls each package.
 
-The workflow can Authenticode-sign the EXE when both signing secrets are configured. A `v*` version-tag release fails closed if those secrets are absent or the signature cannot be verified.
+The workflow Authenticode-signs both EXE and MSI when both signing secrets are configured. A `v*` version-tag release fails closed if those secrets are absent or either signature cannot be verified.
 
 ## Configure trusted installer signing
 
@@ -17,7 +17,7 @@ A valid publicly trusted Windows code-signing certificate is required; a self-si
 3. Encode the PFX locally without printing the result in a terminal or committing it. For example, in PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes('publisher.pfx')) | Set-Clipboard`. Paste the clipboard value directly into the Actions secret. Do not commit the PFX or a base64 copy.
 4. Trigger the Windows installer workflow and verify its signing step reports a valid Authenticode signature before creating a version tag.
 
-Normal branch/PR CI can still produce an unsigned test artifact when signing secrets are absent. Such an artifact must not be represented as a signed release.
+Normal branch/PR CI can still produce unsigned test artifacts when signing secrets are absent. Such artifacts must not be represented as signed releases. Both EXE and MSI are listed in the release assets along with the sanitized bootstrap ZIP.
 
 ## Fresh-device and microphone acceptance
 
