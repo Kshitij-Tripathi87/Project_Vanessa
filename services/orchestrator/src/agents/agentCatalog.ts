@@ -100,13 +100,35 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   {
     id: "browser",
     purpose: "Open URLs or search results, including YouTube searches. Delegate limited web research to the Python bridge.",
-    limitations: "Navigation prefers Edge then the default URL handler; it does not verify page loading. YouTube opens search results, not verified playback. The handler does not implement general click/fill/extract automation despite those declared tool names.",
+    limitations: "Playwright uses a persistent page session. Remote navigation is HTTP(S)-only; local/private hosts are denied by default, local HTML must be approved, and consequential clicks require confirmation.",
     actions: [
       action("browser.open_url", "Open a URL in the browser.", { url: p("string", "Complete http(s) URL.", true) }, "AgentResult with data.url, artifacts, and navigation claims; page contents are not returned.", "low", true, ["browser_navigate"]),
       action("browser.search", "Open Google search results for a query.", { query: p("string", "Search terms.", true) }, "AgentResult with query/search URL; not extracted search facts.", "low", true, ["browser_navigate"]),
       action("youtube.search_and_play", "Open YouTube search results. Retained action name does not imply actual playback.", { query: p("string", "Video or music search terms.", true) }, "AgentResult with data.query and data.url; do not claim playback was verified.", "low", true, ["browser_navigate"]),
       action("browser.research", "Invoke a limited Python web-search goal branch.", { goal: p("string", "Research request.", true) }, "AgentResult wrapping bridge steps/final_answer; bridge synthesis and success reports are limited and require Python dependencies.", "medium"),
-      action("browser.read_title", "Placeholder tab-title inspection.", { url: p("string", "Optional reference URL.") }, "Fixed title Browser Active Tab; no actual tab inspection.", "low", false),
+      action("browser.read_title", "Read the title from a requested URL or the active browser page.", { url: p("string", "Optional reference URL.") }, "AgentResult with observed rendered page title and URL.", "low", true, ["browser_navigate"]),
+      action("browser.inspect_page", "Inspect rendered page text and up to 50 links at a URL or the active page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with observed title, URL, rendered text and links.", "low", true, ["browser_extract"]),
+      action("browser.extract", "Extract readable rendered text and links from a URL or active browser page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with bounded page text and link metadata.", "low", true, ["browser_extract"]),
+      action("browser.verify_page_state", "Verify expected text against rendered page text, not page source markup.", { url: p("string", "HTTP(S) URL to inspect.", true), expectedText: p("string", "Text that must be visible in the rendered page.", true) }, "AgentResult succeeds only when navigation succeeds and expected text is found.", "low", true, ["browser_extract"]),
+      action("browser.open_file", "Open an approved local HTML/XHTML file in the Playwright browser session.", { path: p("string", "Path to an existing HTML file inside an approved folder.", true) }, "AgentResult with observed title and file URL; target must be inside an approved folder.", "medium", true, ["browser_open_file"]),
+      action("browser.click", "Click a page locator, optionally navigating to a URL first. Requires explicit confirmation because clicks can submit or mutate data.", { selector: p("string", "CSS or Playwright locator selector.", true), url: p("string", "Optional HTTP(S) URL; omit to use the active page.") }, "AgentResult with resulting URL/title/text or an explicit error.", "high", true, ["browser_click"]),
+    ],
+  },
+  {
+    id: "folder",
+    purpose: "Resolve a mentioned file, folder or project inside approved roots, classify it, discover its project root and optionally open it in the desktop.",
+    limitations: "Only approved folders are searchable. Bare-name search is bounded by depth and entry count; multiple matches require a more specific path. An OS launch acknowledgement is not proof that a person viewed a resource.",
+    actions: [
+      action("folder.resolve", "Resolve a path or filename within approved folders and return its canonical path, resource type, and project root. Optionally show it in Explorer.", {
+        target: p("string", "Path or unambiguous file/folder name from the current request.", true),
+        basePath: p("string", "Optional approved directory."),
+        openExplorer: p("boolean", "Whether to open Explorer and select the resolved resource."),
+      }, "AgentResult with data.targetPath, projectRoot, kind, extension, fileName and verified path provenance.", "low", true, ["folder_resolve"]),
+      action("folder.open", "Resolve and open a folder in Explorer or a file with its associated desktop application.", {
+        target: p("string", "Path or unambiguous file/folder name from the current request.", true),
+        basePath: p("string", "Optional approved directory."),
+        mode: p("string", "explorer to show/select the target, or default to use its associated application."),
+      }, "AgentResult records the OS launch result; simulated/failed desktop operations are not reported as opened.", "low", true, ["folder_open"]),
     ],
   },
   {

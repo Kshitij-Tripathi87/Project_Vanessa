@@ -3,14 +3,13 @@ export interface WakeWordResult {
   cleanedText: string;
 }
 
+const WAKE_PREFIX = /^\s*(?:(?:hey|hi|hello|okay|ok)\s+vanessa|vanessa)\b[\s,.:;!?—-]*/i;
+
+/** Transcript-level fallback/parser. The production background detector is the local Porcupine engine. */
 export class WakeWordDetector {
-  private wakeWords = ["hey vanessa", "vanessa", "ok vanessa", "okay vanessa"];
   private isActiveSession = false;
   private sessionTimeout: NodeJS.Timeout | null = null;
 
-  /**
-   * Check if transcript contains the wake word "Hey Vanessa"
-   */
   processTranscript(text: string): WakeWordResult {
     const lower = text.toLowerCase().trim();
 
@@ -32,24 +31,24 @@ export class WakeWordDetector {
       // Already in an active conversation turn, no need to repeat "Hey Vanessa"
       return {
         detected: true,
-        cleanedText: text,
+        cleanedText: input.slice(prefix[0].length).replace(/^[,\s.!?;:—-]+/, "").replace(/[.!?]+$/, "").trim(),
       };
     }
 
-    return {
-      detected: false,
-      cleanedText: text,
-    };
+    if (this.isActiveSession) {
+      return { detected: true, cleanedText: input };
+    }
+    return { detected: false, cleanedText: input };
   }
 
   touchActiveSession(durationMs = 15000): void {
     this.isActiveSession = true;
-    if (this.sessionTimeout) {
-      clearTimeout(this.sessionTimeout);
-    }
+    if (this.sessionTimeout) clearTimeout(this.sessionTimeout);
     this.sessionTimeout = setTimeout(() => {
       this.isActiveSession = false;
-    }, durationMs);
+      this.sessionTimeout = null;
+    }, Math.max(0, durationMs));
+    this.sessionTimeout.unref?.();
   }
 
   resetSession(): void {

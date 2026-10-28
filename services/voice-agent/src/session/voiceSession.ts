@@ -333,6 +333,8 @@ export class VanessaVoiceSession {
     this.wakeWord.resetSession();
     this.asr.deactivateStream?.();
 
+    // A wake phrase on its own should open the listening window, not greet and
+    // immediately shut the microphone off. The user can say the command next.
     if (!command.trim()) {
       if (wakeCheck.detected) {
         // User woke up Vanessa with "Hey Vanessa"
@@ -351,6 +353,10 @@ export class VanessaVoiceSession {
       return;
     }
 
+    // A committed command ends the capture window before planning/execution,
+    // avoiding unnecessary ASR streaming while specialist agents do their work.
+    this.wakeWord.resetSession();
+    this.asr.deactivateStream?.();
     this.partialTranscript = "";
     this.setState("thinking");
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });

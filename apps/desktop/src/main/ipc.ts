@@ -52,13 +52,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
     try {
       const { submitCommandRequest } = await commandClient;
-      return await submitCommandRequest(ORCHESTRATOR_URL, {
+      return await submitCommandRequest(getOrchestratorUrl(), {
         ...payload,
         source: "desktop",
         originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
       });
     } catch (err: any) {
-      return { status: "failed", spokenSummary: `Connection to orchestrator failed: ${err.message}` };
+      return { status: "failed", spokenSummary: "Connection to orchestrator failed: " + err.message };
     }
   });
 
@@ -67,30 +67,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
-      const res = await fetch(`${ORCHESTRATOR_URL}/api/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }),
+      const res = await fetch(getOrchestratorUrl() + "/api/approve", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId }),
       });
       return await res.json();
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
+    } catch (err: any) { return { success: false, error: err.message }; }
   });
 
   ipcMain.handle("vanessa:reject-task", async (event, taskId: string) => {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
-      const res = await fetch(`${ORCHESTRATOR_URL}/api/reject`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }),
+      const res = await fetch(getOrchestratorUrl() + "/api/reject", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId }),
       });
       return await res.json();
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
+    } catch (err: any) { return { success: false, error: err.message }; }
   });
 
   // 3. Cancel Task / Emergency Kill-Switch
@@ -105,9 +97,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         body: taskId ? JSON.stringify({ requestId: taskId }) : undefined,
       });
       return await res.json();
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
+    } catch (err: any) { return { success: false, error: err.message }; }
   });
 
   // 4. Resize and dock the floating window. Reposition immediately after
@@ -145,8 +135,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { success: true };
   });
 
-  // Connect to WebSocket stream and forward to Renderer
   function initWebSocket() {
+    if (mainWindow.isDestroyed()) return;
     try {
       const eventsUrl = new URL(WS_URL);
       eventsUrl.searchParams.set("since", String(lastEventSequence));
@@ -171,18 +161,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           // Ignore malformed
         }
       });
-
       wsClient.on("close", () => {
-        setTimeout(initWebSocket, 2000);
+        if (!mainWindow.isDestroyed()) setTimeout(initWebSocket, 2000);
       });
-
-      wsClient.on("error", () => {
-        wsClient?.close();
-      });
+      wsClient.on("error", () => { wsClient?.close(); });
     } catch {
-      setTimeout(initWebSocket, 3000);
+      if (!mainWindow.isDestroyed()) setTimeout(initWebSocket, 3000);
     }
   }
-
   initWebSocket();
 }

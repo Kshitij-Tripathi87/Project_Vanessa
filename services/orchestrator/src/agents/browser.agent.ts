@@ -48,13 +48,11 @@ export class BrowserAgent implements SpecialistAgent {
   async execute(
     actionOrTask: string | AgentTask,
     paramsOrContext?: Record<string, any> | AgentRunContext,
-    context?: AgentRunContext
+    _context?: AgentRunContext,
   ): Promise<AgentResult> {
     const action = typeof actionOrTask === "string" ? actionOrTask : actionOrTask.action || actionOrTask.objective;
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
-    const _runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
-
-    const startTime = new Date().toISOString();
+    const timestamp = new Date().toISOString();
 
     switch (action) {
       case "browser.open_url": {
@@ -193,7 +191,7 @@ export class BrowserAgent implements SpecialistAgent {
       }
 
       default:
-        throw new Error(`BrowserAgent: Unknown action '${action}'`);
+        throw new Error("BrowserAgent: Unknown action '" + action + "'");
     }
   }
 

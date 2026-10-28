@@ -25,6 +25,14 @@ export function App() {
     setTaskStage,
   } = useVanessaStore();
 
+  useEffect(() => {
+    let mounted = true;
+    void window.vanessa?.getDockPosition?.().then((result) => {
+      if (mounted && result?.success && result.dockPosition) setCurrentCorner(result.dockPosition);
+    }).catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
+
   useTaskStream();
   const {
     isMicActive,
@@ -44,6 +52,9 @@ export function App() {
     wakeWordActive,
     toggleRecording,
     resumeAudio,
+    wakeWordStatus,
+    wakeWordActivationId,
+    lastFinalTranscript,
   } = useAudioCapture();
   const [expanded, setExpanded] = useState(false);
   const [dockCorner, setDockCorner] = useState<DockCorner>("bottom-right");

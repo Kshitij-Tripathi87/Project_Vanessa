@@ -278,6 +278,8 @@ export function useAudioCapture() {
       setVoiceConnectionState("disconnected");
       setMicError("Vanessa voice service is unavailable. Start the voice agent and try again.");
       pttActiveRef.current = false;
+      wakeMonitoringActiveRef.current = false;
+      setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: "The local voice service connection failed." }));
       setVoiceState("error");
     };
 
@@ -338,6 +340,7 @@ export function useAudioCapture() {
             stopCaptureRef.current?.();
             setMicError(msg.message || "Speech recognition could not start.");
             setVoiceState("error");
+            // Keep the local wake listener running after a transient ASR failure.
             return;
           }
 
@@ -785,6 +788,10 @@ export function useAudioCapture() {
   // Stop microphone capture
   const stopRecording = useCallback((preservePlaybackContext = false) => {
     pttActiveRef.current = false;
+    wakeMonitoringActiveRef.current = false;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "wake_monitor_stop" }));
+    }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -851,11 +858,10 @@ export function useAudioCapture() {
     if (pttActiveRef.current) {
       pttActiveRef.current = false;
       activatedSocketRef.current = null;
+      setIsMicActive(false);
       finalizeListening();
-      // Keep audio local while Vanessa responds so onset detection can support
-      // barge-in; PCM is sent to ASR only while PTT is active.
+      // The always-on local wake monitor keeps the microphone session alive if configured.
     } else {
-      // Acquire the microphone only after an explicit PTT action.
       await startRecording();
       if (!mediaStreamRef.current) return;
       if (voiceStateRef.current === "speaking") {
@@ -866,17 +872,38 @@ export function useAudioCapture() {
       pendingBargeAudioRef.current = [];
       bargeResumePendingRef.current = false;
       pttActiveRef.current = true;
+      setIsMicActive(true);
       setVoiceState("listening");
       setPartialTranscript("");
       if (wsRef.current) activateConnectedSocket(wsRef.current);
     }
-  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
+  }, [startRecording, setVoiceState, finalizeListening, activateConnectedSocket, triggerBargeIn]);
+
+  const startWakeMonitoring = useCallback(async () => {
+    if (wakeMonitoringActiveRef.current || import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") return;
+    try {
+      await startRecording();
+      if (!mediaStreamRef.current || wsRef.current?.readyState !== WebSocket.OPEN) {
+        setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: "Microphone or local voice service is unavailable." }));
+        return;
+      }
+      wakeMonitoringActiveRef.current = true;
+      setIsMicActive(pttActiveRef.current);
+      wsRef.current.send(JSON.stringify({ type: "wake_monitor_start" }));
+      setWakeWordStatus((current) => ({ ...current, available: true, ready: true, listening: true, state: "listening" }));
+    } catch (error) {
+      setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: error instanceof Error ? error.message : String(error) }));
+    }
+  }, [startRecording]);
+
+  startWakeMonitoringRef.current = startWakeMonitoring;
 
   useEffect(() => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false") connectVoiceWs();
     else setVoiceConnectionState("disabled");
     return () => {
       pttActiveRef.current = false;
+      wakeMonitoringActiveRef.current = false;
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       processorRef.current?.disconnect();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());

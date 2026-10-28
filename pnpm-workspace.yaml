@@ -3,6 +3,8 @@ packages:
   - 'services/*'
   - 'packages/*'
 
+injectWorkspacePackages: true
+
 allowBuilds:
   electron: true
   esbuild: true
