@@ -22,51 +22,93 @@ jobs:
       - name: Configure git identity and fetch existing PR branches
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin +refs/heads/*:refs/remotes/origin/*
           git checkout --force -B Vanessa-Prototype-1-MAIN origin/Vanessa-Prototype-1-MAIN
-      - name: Integrate the descendant browser/folder handoff branch (#19, includes #38)
+      - name: Merge descendant PR branches and resolve intentional delete/modify conflicts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $source = 'feat/issue-18-browser-folder-handoff'
-          & git merge --no-edit --no-ff -X ours "origin/$source" -m "merge: integrate browser launch and operation-first handoff (#19, #38)"
-          if ($LASTEXITCODE -ne 0) {
-            $conflicts = & git diff --name-only --diff-filter=U
-            Write-Host "::error::Unresolved conflicts while integrating $source"
-            $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
-            & git merge --abort
-            throw "Integration stopped before tests/push because conflicts were unresolved."
+          $targetSnapshot = (git rev-parse HEAD).Trim()
+
+          function Invoke-FeatureMerge([string]$Source, [string]$Message) {
+            Write-Host "[MERGE] $Source"
+            git merge --no-edit --no-ff -X ours "origin/$Source" -m $Message
+            if ($LASTEXITCODE -eq 0) { return }
+
+            $conflicts = @(git diff --name-only --diff-filter=U)
+            Write-Host "::warning::Resolving known delete/modify conflicts for $Source"
+            foreach ($path in $conflicts) {
+              switch ($path) {
+                'apps/desktop/forge.config.ts' {
+                  # Current target intentionally uses the checked Setup/MSI scripts,
+                  # not the stale Forge maker configuration from the feature branch.
+                  git rm -f -- $path
+                }
+                'services/orchestrator/src/agents/browser-playwright.agent.ts' {
+                  # Keep the feature's implementation because its updated BrowserAgent imports it.
+                  git checkout --theirs -- $path
+                  git add -- $path
+                }
+                'services/voice-agent/src/session/porcupineWakeWord.ts' {
+                  # The target uses local Whisper transcript standby and does not require a
+                  # Picovoice .ppn file/API key to enable the default local wake-word profile.
+                  git rm -f -- $path
+                }
+                default {
+                  # For any unexpected conflict, preserve the target tree; do not guess.
+                  git checkout $targetSnapshot -- $path
+                  git add -- $path
+                }
+              }
+              if ($LASTEXITCODE -ne 0) { throw "Could not resolve conflict for $path." }
+            }
+            $remaining = @(git diff --name-only --diff-filter=U)
+            if ($remaining.Count -gt 0) { throw "Unresolved merge conflicts remain: $($remaining -join ', ')" }
+            git commit --no-edit
+            if ($LASTEXITCODE -ne 0) { throw "Could not finish merge commit for $Source." }
           }
-          & git merge-base --is-ancestor origin/feat/agent-routing-folder-browser-ci HEAD
-          if ($LASTEXITCODE -ne 0) { throw "The #38 source branch is not contained in the #19 integration result." }
-          Write-Host "[OK] Browser/folder routing branch merged. Candidate: $(git rev-parse HEAD)"
-      - name: Integrate Windows UI Automation branch (#23, includes main/#37 ancestry)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $source = 'feat/windows-ui-automation-agent'
-          & git merge --no-edit --no-ff -X ours "origin/$source" -m "merge: integrate safe Windows UI Automation (#23, #37)"
-          if ($LASTEXITCODE -ne 0) {
-            $conflicts = & git diff --name-only --diff-filter=U
-            Write-Host "::error::Unresolved conflicts while integrating $source"
-            $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
-            & git merge --abort
-            throw "Integration stopped before tests/push because conflicts were unresolved."
-          }
-          & git merge-base --is-ancestor origin/main HEAD
-          if ($LASTEXITCODE -ne 0) {
-            & git merge --no-edit --no-ff -X ours origin/main -m "merge: preserve main branch integration history (#37)"
-            if ($LASTEXITCODE -ne 0) {
-              $conflicts = & git diff --name-only --diff-filter=U
-              Write-Host "::error::Unresolved conflicts while integrating origin/main"
-              $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
-              & git merge --abort
-              throw "Main-branch integration stopped before tests/push."
+
+          Invoke-FeatureMerge 'feat/issue-18-browser-folder-handoff' 'merge: integrate browser launch and operation-first handoff (#19, #38)'
+          Invoke-FeatureMerge 'feat/windows-ui-automation-agent' 'merge: integrate safe Windows UI Automation (#23, #37)'
+
+          # Keep the verified target's local-first voice configuration/implementation.
+          # These PR branches were cut from an older Porcupine default and must not replace
+          # the current local Whisper wake-word pipeline.
+          $preserve = @(
+            '.env.example',
+            'apps/desktop/src/renderer/hooks/useAudioCapture.ts',
+            'services/voice-agent/src/server.ts',
+            'services/voice-agent/src/session/voiceSession.ts',
+            'services/voice-agent/src/session/wakeWord.ts',
+            'services/voice-agent/src/tests/wakeWord.test.ts'
+          )
+          foreach ($path in $preserve) {
+            git cat-file -e "$($targetSnapshot):$path" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              git restore --source $targetSnapshot --staged --worktree -- $path
+              if ($LASTEXITCODE -ne 0) { throw "Could not preserve target voice implementation for $path." }
             }
           }
-          Write-Host "[OK] Windows UI Automation and main-branch history integrated. Candidate: $(git rev-parse HEAD)"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "fix(voice): preserve local Whisper wake-word pipeline during PR integration"
+            if ($LASTEXITCODE -ne 0) { throw "Could not commit local voice preservation." }
+          }
+
+          foreach ($branch in @(
+            'feat/issue-18-browser-folder-handoff',
+            'feat/agent-routing-folder-browser-ci',
+            'feat/windows-ui-automation-agent',
+            'main'
+          )) {
+            git merge-base --is-ancestor "origin/$branch" HEAD
+            if ($LASTEXITCODE -ne 0) { throw "Expected ancestry missing after integration: $branch" }
+          }
+          Write-Host "[OK] Integrated candidate: $(git rev-parse HEAD)"
+          git status --short
       - name: Set up Node.js and Python
         uses: actions/setup-node@v4
         with:
@@ -88,6 +130,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Agent routing/UI Automation tests failed." }
           pnpm --filter @vanessa/orchestrator test:trustworthy-execution
           if ($LASTEXITCODE -ne 0) { throw "Trustworthy-execution tests failed." }
+          pnpm --filter @vanessa/desktop test:docking
+          if ($LASTEXITCODE -ne 0) { throw "Desktop docking tests failed." }
       - name: Test voice, launcher, and microphone contracts
         shell: pwsh
         run: |
@@ -99,6 +143,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Desktop layout tests failed." }
           pnpm run test:desktop:microphone
           if ($LASTEXITCODE -ne 0) { throw "Microphone diagnostics tests failed." }
+          node --test scripts/security.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Security regression tests failed." }
       - name: Test orchestrator scenarios, skills, and failure drills
         shell: pwsh
         run: |
@@ -115,5 +161,5 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "Verified integration commit: $(git rev-parse HEAD)"
-          git log -4 --oneline
+          git log -5 --oneline
           git push origin HEAD:refs/heads/Vanessa-Prototype-1-MAIN
