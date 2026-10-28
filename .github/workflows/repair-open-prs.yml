@@ -92,6 +92,12 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Could not preserve target voice implementation for $path." }
             }
           }
+          # The source branch also carried an obsolete Porcupine-only test in a separate
+          # test directory. Current wake-word coverage lives beside the local Whisper detector.
+          if (Test-Path -LiteralPath 'services/voice-agent/src/tests/wakeWord.test.ts') {
+            git rm -f -- services/voice-agent/src/tests/wakeWord.test.ts
+            if ($LASTEXITCODE -ne 0) { throw "Could not remove obsolete Porcupine-only test." }
+          }
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
             git commit -m "fix(voice): preserve local Whisper wake-word pipeline during PR integration"
