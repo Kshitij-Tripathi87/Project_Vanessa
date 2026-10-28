@@ -164,67 +164,35 @@ interface WindowsProcessSnapshotEntry {
 }
 
 async function getWindowsProcessSnapshot(): Promise<WindowsProcessSnapshotEntry[] | null> {
-  // Use Toolhelp32 directly instead of WMI/CIM. WMI startup is slow or
-  // unavailable on some Windows hosts; inability to enumerate is still a
-  // verification failure, but should not be caused by querying full process
-  // objects when only PID and parent PID are required.
+  // Query only PID/parent PID. The previous Toolhelp32 + Add-Type path
+  // compiled a P/Invoke wrapper on every snapshot and timed out on CI, which
+  // correctly forced every normal Windows run to termination_unconfirmed.
+  // This fixed, data-only query is bounded; failure remains fail-closed.
   const script = `$ErrorActionPreference = "Stop"
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class VanessaProcessSnapshotNative {
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-  public struct PROCESSENTRY32 {
-    public uint dwSize;
-    public uint cntUsage;
-    public uint th32ProcessID;
-    public IntPtr th32DefaultHeapID;
-    public uint th32ModuleID;
-    public uint cntThreads;
-    public uint th32ParentProcessID;
-    public int pcPriClassBase;
-    public uint dwFlags;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-    public string szExeFile;
-  }
-  [DllImport("kernel32.dll", SetLastError = true)]
-  public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
-  [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-  public static extern bool Process32First(IntPtr snapshot, ref PROCESSENTRY32 entry);
-  [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-  public static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
-  [DllImport("kernel32.dll", SetLastError = true)]
-  public static extern bool CloseHandle(IntPtr handle);
-}
-'@
-$handle = [VanessaProcessSnapshotNative]::CreateToolhelp32Snapshot([uint32]2, [uint32]0)
-if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { throw "CreateToolhelp32Snapshot failed." }
-$items = New-Object System.Collections.Generic.List[object]
-try {
-  $entry = New-Object -TypeName 'VanessaProcessSnapshotNative+PROCESSENTRY32'
-  $entry.dwSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf($entry)
-  if ([VanessaProcessSnapshotNative]::Process32First($handle, [ref]$entry)) {
-    do {
-      $items.Add([pscustomobject]@{ pid = [int]$entry.th32ProcessID; parentPid = [int]$entry.th32ParentProcessID })
-      $entry.dwSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf($entry)
-    } while ([VanessaProcessSnapshotNative]::Process32Next($handle, [ref]$entry))
-  }
-} finally {
-  [VanessaProcessSnapshotNative]::CloseHandle($handle) | Out-Null
-}
-ConvertTo-Json -InputObject @($items.ToArray()) -Depth 3 -Compress`;
+$items = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId | ForEach-Object {
+  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId }
+})
+ConvertTo-Json -InputObject $items -Depth 3 -Compress`;
   try {
-    const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    const result = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
       env: minimalEnvironment(),
-      timeout: 10000, maxBuffer: 128 * 1024, windowsHide: true, encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 256 * 1024,
+      windowsHide: true,
+      encoding: "utf8",
     });
-    const parsed = JSON.parse(result.stdout.trim());
+    const output = result.stdout.trim();
+    if (!output) return null;
+    const parsed = JSON.parse(output);
     const rows = Array.isArray(parsed) ? parsed : [parsed];
     const entries = rows.map((row: any) => ({ pid: Number(row?.pid), parentPid: Number(row?.parentPid) }));
-    if (!entries.length || !entries.every((row: WindowsProcessSnapshotEntry) =>
-      Number.isSafeInteger(row.pid) && row.pid > 0 &&
-      Number.isSafeInteger(row.parentPid) && row.parentPid >= 0
-    )) return null;
+    if (
+      !entries.length ||
+      !entries.every((row: WindowsProcessSnapshotEntry) =>
+        Number.isSafeInteger(row.pid) && row.pid > 0 &&
+        Number.isSafeInteger(row.parentPid) && row.parentPid >= 0
+      )
+    ) return null;
     return entries;
   } catch {
     return null;
