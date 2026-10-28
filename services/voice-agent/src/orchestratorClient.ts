@@ -3,7 +3,7 @@ import { submitCommandRequest, type ExecuteCommandPayload, type ExecuteCommandRe
 export type OrchestratorCommandResult = ExecuteCommandResult;
 
 export class OrchestratorClient {
-  constructor(private baseUrl = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4139") {}
+  constructor(private baseUrl = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319") {}
 
   /**
    * Execute voice command directly through Vanessa Orchestrator
@@ -15,13 +15,22 @@ export class OrchestratorClient {
     requestId?: string;
     idempotencyKey?: string;
     conversationContext?: Array<{ role: "user" | "assistant"; content: string }>;
-  }): Promise<OrchestratorCommandResult> {
-    const source = input.source || (input.idempotencyKey?.startsWith("voice:") ? "voice" : (process.env.VOICE_COMMAND_SOURCE as any) || "desktop");
+  }, signal?: AbortSignal): Promise<OrchestratorCommandResult> {
     return submitCommandRequest(this.baseUrl, {
       ...input,
-      source,
+      source: input.source || "voice",
       originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
+    }, signal);
+  }
+
+  async cancelRequest(requestId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/cancel/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId }),
+      signal: AbortSignal.timeout(3000),
     });
+    if (!response.ok) throw new Error("Could not confirm request cancellation. Check the task timeline.");
   }
 
   /**
@@ -40,8 +49,11 @@ export class OrchestratorClient {
    * Execute existing plan
    */
   async executePlan(input: { planId: string }): Promise<{ spokenResponse: string }> {
+    const planId = input.planId.trim();
     return {
-      spokenResponse: "Tasks completed successfully.",
+      spokenResponse: planId
+        ? `Direct execution of plan ${planId} is not implemented; submit the original command so the orchestrator can validate and execute it.`
+        : "A plan ID is required. No task was executed.",
     };
   }
 }

@@ -30,6 +30,8 @@ export type TaskLifecycleState =
   | "queued"
   | "running"
   | "awaiting_approval"
+  | "cancel_requested"
+  | "termination_unconfirmed"
   | "verifying"
   | "succeeded"
   | "partial"
@@ -47,6 +49,7 @@ export type TaskStatus =
   | "success"
   | "failed"
   | "cancelled"
+  | "termination_unconfirmed"
   | "received"
   | "accepted"
   | "planning"
@@ -81,7 +84,7 @@ export interface TaskVerificationResult {
   postconditions: string[];
   exitCode?: number;
   artifacts?: string[];
-  outcome: "succeeded" | "partial" | "failed" | "blocked";
+  outcome: "succeeded" | "partial" | "failed" | "blocked" | "inconclusive" | "timed_out" | "cancelled" | "termination_unconfirmed" | "simulated";
   details?: string;
 }
 
@@ -148,18 +151,30 @@ export interface Task {
   startedAt?: number;
   completedAt?: number;
   approvalExpiresAt?: number;
+  /** SHA-256 binding of the exact one-use approved operation. */
+  approvalDigest?: string;
+  approvalPolicyVersion?: string;
+  approvalConsumedAt?: number;
+  /** Immutable repository snapshot captured when a repair approval is requested. */
+  approvalRepositoryRoot?: string;
+  approvalBranch?: string;
+  approvalBaseCommit?: string;
+  approvalWorkingTreeDigest?: string;
+  approvalTarget?: string;
+  approvalPatchContract?: string;
 }
 
 export interface Plan {
   id: string;
   command: string;
+  /** Correlates plan lifecycle events with the originating user request. */
+  requestId?: string;
   source?: "voice" | "desktop" | "phone";
   intent?: "single_task" | "multi_task" | string;
   risk: RiskLevel;
   tasks: Task[];
   createdAt?: number;
   completedAt?: number;
-  requestId?: string;
 }
 
 export interface AgentMessage {
@@ -217,113 +232,4 @@ export interface CapabilityAgent {
     params: Record<string, any>,
     context?: AgentRunContext
   ) => Promise<AgentResult | any>;
-}
-
-// Shared Task/Event/Result Contracts (per PDF §7)
-export interface TaskRequest {
-  schemaVersion: number;
-  requestId: string;
-  taskId: string;
-  parentTaskId?: string;
-  authenticatedUserId: string;
-  originDeviceId: string;
-  targetDeviceId: string;
-  source: "desktop_voice" | "mobile_voice" | "desktop_text" | "mobile_text" | "shortcut";
-  commandText: string;
-  transcriptRef?: string;
-  createdAt: number;
-  expiresAt: number;
-  idempotencyKey: string;
-  locale: string;
-  privacyFlags: {
-    logRawAudio: boolean;
-    logFullTranscript: boolean;
-  };
-  requestedCapability?: string;
-  workspaceScope?: string;
-  policyDecisionRef?: string;
-}
-
-export type TaskEventType =
-  | "task.accepted"
-  | "task.planned"
-  | "agent.started"
-  | "tool.started"
-  | "tool.completed"
-  | "approval.required"
-  | "verification.started"
-  | "verification.completed"
-  | "task.completed"
-  | "task.failed"
-  | "task.cancelled"
-  | "task.expired"
-  | "task.recovered";
-
-export interface TaskEvent {
-  type: TaskEventType;
-  taskId: string;
-  requestId: string;
-  sequence: number;
-  timestamp: number;
-  schemaVersion: number;
-  payload: Record<string, any>;
-}
-
-export interface ToolCall {
-  toolId: string;
-  args: Record<string, any>;
-  startedAt: number;
-  completedAt?: number;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  artifacts?: string[];
-  error?: { code: string; message: string; retryable: boolean };
-}
-
-export interface PolicyDecision {
-  decision: "allow" | "require_approval" | "deny";
-  reason: string;
-  riskLevel: "low" | "medium" | "high";
-  requiredApprovers?: string[];
-  expiresAt?: number;
-}
-
-export interface VerificationResult {
-  verified: boolean;
-  postconditions: string[];
-  exitCode?: number;
-  artifacts?: string[];
-  outcome: "succeeded" | "partial" | "failed" | "blocked";
-  details?: string;
-  checks: Array<{
-    criterion: string;
-    passed: boolean;
-    evidence: string;
-  }>;
-}
-
-export interface AgentTask {
-  taskId: string;
-  parentTaskId?: string;
-  objective: string;
-  contextRefs: string[];
-  allowedTools: string[];
-  dependsOn: string[];
-  acceptanceCriteria: string[];
-  workspaceId?: string;
-  timeoutMs: number;
-  schemaVersion: number;
-}
-
-export interface StructuredAgentResult {
-  taskId: string;
-  agentId: string;
-  status: TaskStatus;
-  summary: string;
-  evidence: Array<{ description: string; source?: string; timestamp?: string }>;
-  artifacts: string[];
-  verification: VerificationResult;
-  error?: { code: string; message: string; retryable: boolean };
-  toolCalls?: ToolCall[];
 }

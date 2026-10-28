@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { Task, PermissionStatus } from "@vanessa/shared";
 import { eventBus } from "./eventBus.js";
 import { privacyGuard } from "./privacy.js";
+import { resolveManagedAction } from "./actionRegistry.js";
 
 export class PermissionGuard {
   // High-risk actions require confirmation unless autonomy is explicitly enabled.
@@ -10,7 +11,18 @@ export class PermissionGuard {
   // Actions that require explicit user confirmation before executing
   private confirmActions = new Set<string>([
     "codex.open",
+    "codex.run_task",
     "wifi.restart_adapter",
+    "brightness.set",
+    "windows.brightness_set",
+    "bluetooth.set",
+    "bluetooth.enable",
+    "bluetooth.disable",
+    "windows.bluetooth_toggle",
+    "volume.set",
+    "windows.volume_set",
+    "volume.mute",
+    "windows.volume_mute",
     "drive.upload",
     "gmail.send",
     "system.shutdown",
@@ -35,6 +47,25 @@ export class PermissionGuard {
   ];
 
   check(task: Task, emitAudit = true): PermissionStatus {
+    const managed = resolveManagedAction(task.action, task.params || {});
+    if (managed.managed) {
+      if (managed.blocked) {
+        if (emitAudit) eventBus.emitEvent("audit:log", {
+          id: `policy-block-${Date.now()}`,
+          timestamp: Date.now(),
+          taskId: task.id,
+          agent: task.agent,
+          action: task.action,
+          resource: task.params?.path || task.params?.resource || "managed-execution",
+          risk: task.risk || "high",
+          permission: "blocked",
+          status: "blocked",
+          details: managed.reason || "Managed execution policy rejected the request.",
+        });
+        return "blocked";
+      }
+      if (managed.canonicalId) task.action = managed.canonicalId;
+    }
     const actionKey = task.action;
 
     // Match dangerous command text in both the action and parameters.
@@ -61,14 +92,10 @@ export class PermissionGuard {
     // Enforce the approved-folder policy on filesystem and cloud-file actions.
     const isFileAccess = task.agent === "files" || /^(file|folder|directory)\./i.test(actionKey) || actionKey === "drive.upload";
     if (isFileAccess) {
-      const pathKeys = ["path", "targetPath", "filePath", "basePath", "sourceDir", "oldPath", "newPath", "file", "target"];
-      const filePaths = pathKeys.flatMap((key) => {
-        const value = task.params?.[key];
-        if (typeof value !== "string" || value.trim().length === 0) return [];
-        // Folder Agent resolves bare names only inside approved roots; check absolute and path-like targets here.
-        if (key === "target" && !path.isAbsolute(value) && !/[\\/]/.test(value)) return [];
-        return [value];
-      });
+      const pathKeys = ["path", "targetPath", "filePath", "basePath", "sourceDir", "oldPath", "newPath", "file"];
+      const filePaths = pathKeys
+        .map((key) => task.params?.[key])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
       if (actionKey === "folder.create") {
         const folderName = task.params?.name || task.params?.path;
         if (typeof folderName === "string" && folderName.trim()) {
@@ -114,7 +141,7 @@ export class PermissionGuard {
 
     // Explicitly sensitive actions and any high-risk task always require a
     // fresh, per-task human approval. Global autonomy never overrides this.
-    if (this.confirmActions.has(actionKey) || task.risk === "high") {
+    if (managed.approvalRequired || this.confirmActions.has(actionKey) || task.risk === "high") {
       if (emitAudit) eventBus.emitEvent("audit:log", {
         id: `audit-${Date.now()}`,
         timestamp: Date.now(),

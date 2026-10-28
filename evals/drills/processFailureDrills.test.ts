@@ -16,16 +16,13 @@ import { spawn } from "node:child_process";
 import * as net from "node:net";
 import { orchestrator } from "../../services/orchestrator/src/core/orchestrator.js";
 import { memoryPalace } from "../../services/orchestrator/src/memory/memoryPalace.js";
-import { triggerKillSwitch, activeTasks, runPlan, rejectTask } from "../../services/orchestrator/src/core/taskRunner.js";
+import { triggerKillSwitch, runPlan, rejectTask } from "../../services/orchestrator/src/core/taskRunner.js";
 import { resourceLockManager } from "../../services/orchestrator/src/core/resourceLocks.js";
 import { planner } from "../../services/orchestrator/src/core/planner.js";
 import { permissionGuard } from "../../services/orchestrator/src/core/permissionGuard.js";
 import { testingAgent } from "../../services/orchestrator/src/agents/testing.agent.js";
 import { eventBus } from "../../services/orchestrator/src/core/eventBus.js";
 import { Task } from "@vanessa/shared";
-import * as fs from "fs";
-import * as path from "path";
-import { spawn as spawnPromise } from "node:child_process";
 
 async function runProcessFailureDrills() {
   // Ensure real execution mode, NOT FAKE logic simulation
@@ -123,24 +120,28 @@ async function runProcessFailureDrills() {
   // Drill 4: Emergency Escape Kill-Switch (All active tasks cancelled, resource locks released)
   await assertDrill(4, "Emergency Escape: All parallel tasks cancelled, resource locks freed, task.cancelled emitted", async () => {
     let cancelledEventReceived = false;
-    const unsub = eventBus.onEvent("task.cancelled", (evt) => {
+    const cancelledListener = () => {
       cancelledEventReceived = true;
-    });
+    };
+    eventBus.onEvent("task.cancelled", cancelledListener);
+    try {
+      const plan = await planner.createPlan("Turn on Bluetooth, open Chrome, and create a Buildathon Demo folder");
+      const runPromise = runPlan(plan);
 
-    const plan = await planner.createPlan("Turn on Bluetooth, open Chrome, and create a Buildathon Demo folder");
-    const runPromise = runPlan(plan);
+      // Fire emergency kill switch
+      triggerKillSwitch();
+      const tasks = await runPromise;
 
-    // Fire emergency kill switch
-    triggerKillSwitch();
-    const tasks = await runPromise;
+      const allCancelledOrFinished = tasks.every(
+        (t) => t.status === "cancelled" || t.status === "success" || t.status === "failed"
+      );
+      const hasCancelled = tasks.some((t) => t.status === "cancelled");
+      const activeSlots = resourceLockManager.getActiveSlotCount();
 
-    const allCancelledOrFinished = tasks.every(
-      (t) => t.status === "cancelled" || t.status === "success" || t.status === "failed"
-    );
-    const hasCancelled = tasks.some((t) => t.status === "cancelled");
-    const activeSlots = resourceLockManager.getActiveSlotCount();
-
-    return Boolean(allCancelledOrFinished && (hasCancelled || cancelledEventReceived) && activeSlots === 0);
+      return Boolean(allCancelledOrFinished && (hasCancelled || cancelledEventReceived) && activeSlots === 0);
+    } finally {
+      eventBus.removeListener("task.cancelled", cancelledListener);
+    }
   });
 
   // Drill 5: Remote Envelope Idempotency and Expiration

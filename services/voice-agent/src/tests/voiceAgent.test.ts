@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { once } from "node:events";
 import { decode, encode } from "@msgpack/msgpack";
 import { WebSocketServer } from "ws";
-import { AudioCapture, AudioChunk } from "../audio/capture.js";
+import { PcmFrameAccumulator } from "../audio/capture.js";
 import { SileroVadDetector } from "../audio/vad.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { BargeInDetector } from "../session/bargeIn.js";
@@ -21,8 +21,10 @@ async function runTests() {
   console.log("🧪 Test 1: 20ms PCM Audio Framing (320 samples @ 16kHz)...");
   // 640 bytes = 320 samples of 16-bit PCM
   const dummyBuffer = Buffer.alloc(1280); // 2 frames worth
-  const chunks = AudioCapture.framePcmBuffer(dummyBuffer);
-  assert.strictEqual(chunks.length, 2, "Should slice 1280 bytes into two 640-byte 20ms frames");
+  const frameAccumulator = new PcmFrameAccumulator();
+  assert.strictEqual(frameAccumulator.feed(dummyBuffer.subarray(0, 400)).length, 0, "Partial WebSocket frames must be buffered");
+  const chunks = frameAccumulator.feed(dummyBuffer.subarray(400));
+  assert.strictEqual(chunks.length, 2, "Should assemble 1280 bytes into two 640-byte 20ms frames");
   assert.strictEqual(chunks[0].pcm.length, 320, "Each chunk must have 320 samples");
   assert.strictEqual(chunks[0].durationMs, 20, "Each chunk duration must be 20ms");
   console.log("✅ [PASS] 20ms PCM Audio Framing verified.\n");
@@ -181,7 +183,7 @@ async function runTests() {
 
   // 2. VAD Detection test
   console.log("🧪 Test 2: VAD Speech & Energy Detection...");
-  const vad = new SileroVadDetector({ energyThreshold: 500, skipCalibration: true });
+  const vad = new SileroVadDetector({ energyThreshold: 500 });
   const silencePcm = new Int16Array(320); // all zeros
   const speechPcm = new Int16Array(320);
   for (let i = 0; i < 320; i++) {

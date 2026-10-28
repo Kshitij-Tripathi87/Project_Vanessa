@@ -4,7 +4,7 @@ import websocket from "@fastify/websocket";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
 import { VanessaEvent } from "@vanessa/shared";
@@ -12,10 +12,11 @@ import { privacyGuard } from "./core/privacy.js";
 import { permissionGuard } from "./core/permissionGuard.js";
 import { memoryPalace } from "./memory/memoryPalace.js";
 import { getRemotePwaHtml } from "./remotePwa.js";
+import { modelRouter } from "./core/router.js";
 
 // Load .env searching current and parent directories
 let envDir = process.cwd();
-for (let i = 0; i < 4; i++) {
+for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
   const p = path.join(envDir, ".env");
   if (fs.existsSync(p)) {
     dotenv.config({ path: p });
@@ -24,7 +25,8 @@ for (let i = 0; i < 4; i++) {
   envDir = path.dirname(envDir);
 }
 
-const PORT = parseInt(process.env.VANESSA_PORT || "4139", 10);
+const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
+const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
 
 await fastify.register(cors, {
@@ -40,6 +42,13 @@ const connectedClients = new Set<any>();
 
 // Pipe eventBus events directly to WebSocket clients
 const forwardEvent = (event: VanessaEvent) => {
+  // Lifecycle metadata only: event bodies can contain prompts and results.
+  const payload = event.payload as any;
+  if (event.type === "task:update") {
+    console.log(`[Runner] task=${payload.id} agent=${payload.agent} action=${payload.action} status=${payload.status} lifecycle=${payload.lifecycleState || "none"}`);
+  } else if (event.type.startsWith("approval:")) {
+    console.log(`[Approval] event=${event.type} task=${payload.taskId || payload.id || payload.task?.id || "unknown"}`);
+  }
   const message = JSON.stringify(event);
   for (const client of connectedClients) {
     if (client.readyState === 1) {
@@ -53,8 +62,18 @@ eventBus.on("approval:required", forwardEvent);
 eventBus.on("approval:granted", forwardEvent);
 eventBus.on("approval:rejected", forwardEvent);
 eventBus.on("plan:created", forwardEvent);
+eventBus.on("plan:started", forwardEvent);
 eventBus.on("plan:completed", forwardEvent);
 eventBus.on("audit:log", forwardEvent);
+eventBus.on("voice:state", forwardEvent);
+eventBus.on("codex:progress", forwardEvent);
+eventBus.on("agent.started", forwardEvent);
+eventBus.on("tool.started", forwardEvent);
+eventBus.on("tool.completed", forwardEvent);
+eventBus.on("agent.completed", forwardEvent);
+eventBus.on("verification.completed", forwardEvent);
+eventBus.on("task.failed", forwardEvent);
+eventBus.on("task.cancelled", forwardEvent);
 
 // WebSocket endpoint for real-time HUD streaming
 fastify.get("/events", { websocket: true }, (socket, req) => {
@@ -65,14 +84,25 @@ fastify.get("/events", { websocket: true }, (socket, req) => {
   }
   connectedClients.add(socket);
 
+  const query = req.query as any;
+  const since = Number(query?.since || 0);
+  const clientStreamId = typeof query?.streamId === "string" ? query.streamId : null;
+  const replayAfter = clientStreamId === EVENT_STREAM_ID && Number.isFinite(since) ? since : 0;
+
   // Send current status immediately
   socket.send(
     JSON.stringify({
       type: "system:status",
-      payload: orchestrator.getSystemStatus(),
+      payload: { ...orchestrator.getSystemStatus(), eventStreamId: EVENT_STREAM_ID },
       timestamp: Date.now(),
     })
   );
+
+  // Replay the bounded in-memory stream so a short desktop reconnect does not
+  // erase the task currently shown in the HUD.
+  for (const event of eventBus.getEventsAfter(replayAfter)) {
+    socket.send(JSON.stringify(event));
+  }
 
   socket.on("close", () => {
     connectedClients.delete(socket);
@@ -87,6 +117,13 @@ fastify.get("/health", async () => {
     version: "0.3.0",
     system: orchestrator.getSystemStatus(),
     timestamp: Date.now(),
+  };
+});
+
+fastify.get("/api/usage", async () => {
+  return {
+    provider: modelRouter.activeProvider,
+    usage: modelRouter.getUsageSnapshot(),
   };
 });
 
@@ -129,9 +166,29 @@ fastify.post("/api/reject", async (request, reply) => {
   return reply.send({ success: !!task, task });
 });
 
-fastify.post("/api/cancel", async (request, reply) => {
-  orchestrator.cancelAll();
-  return reply.send({ success: true, message: "Emergency kill switch engaged." });
+fastify.post("/api/cancel", async (_request, reply) => {
+  await orchestrator.cancelAll();
+  return reply.send({
+    success: true,
+    message: "Emergency cancellation processed. Inspect task statuses for any termination_unconfirmed operations; their conflicting locks remain held.",
+  });
+});
+
+fastify.post("/api/cancel/request", async (request, reply) => {
+  const body = request.body as { requestId?: unknown };
+  if (typeof body?.requestId !== "string" || !/^[a-zA-Z0-9:_-]{1,160}$/.test(body.requestId)) {
+    return reply.status(400).send({ error: "Invalid requestId" });
+  }
+  const result = await orchestrator.cancelRequest(body.requestId);
+  return {
+    success: true,
+    ...result,
+    message: result.terminationUnconfirmed > 0
+      ? "Cancellation processed, but one or more process trees could not be verified stopped. Conflicting locks remain held."
+      : result.planningOnly
+        ? "Cancellation recorded before task execution; late planning results will not be allowed to start work."
+        : "Cancellation processed using process termination evidence.",
+  };
 });
 
 fastify.get("/api/status", async () => {
@@ -348,14 +405,14 @@ fastify.post("/api/remote/reject", async (request, reply) => {
 });
 
 // Serve Mobile Companion Phone PWA
-fastify.get("/remote", async (request, reply) => {
+fastify.get("/remote", async (_request, reply) => {
   const html = getRemotePwaHtml(PORT);
   return reply.type("text/html").send(html);
 });
 
 // Voice service status - delegates to voice-agent service on port 4500
-// Fish Audio is the selected provider; all voice configuration validated in voice-agent
-fastify.get("/voice/session", async (request, reply) => {
+// Fish Audio is the selected provider; ElevenLabs integration moved to voice-agent
+fastify.get("/voice/session", async (_request, reply) => {
   const voiceAgentUrl = process.env.VOICE_AGENT_URL || "http://127.0.0.1:4500";
 
   try {

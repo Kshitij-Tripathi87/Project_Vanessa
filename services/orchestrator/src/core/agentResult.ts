@@ -1,36 +1,92 @@
 import type { Task } from "@vanessa/shared";
+import { resolveManagedAction } from "./actionRegistry.js";
 
-/** Normalize a specialist result into the authoritative task result/verification contract. */
-export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" {
+export function recordAgentResult(task: Task, result: any): "success" | "partial" | "failed" | "blocked" {
   const structured = result && typeof result === "object" ? result : undefined;
   task.result = structured?.data !== undefined ? structured.data : result;
   if (structured?.spokenSummary) task.spokenSummary = structured.spokenSummary;
-  if (task.action === "codex.open" && structured?.success === true && structured?.status === "started") {
-    task.spokenSummary = "I started a Codex terminal with your request. Coding completion is not yet reported to Vanessa.";
-  }
   const evidence = Array.isArray(structured?.evidence) ? structured.evidence : [];
   task.evidence = evidence;
   task.artifacts = Array.isArray(structured?.artifacts) ? structured.artifacts : [];
 
   const verification = structured?.verification;
   const verificationDetails = typeof verification?.details === "string" ? verification.details.trim() : "";
+  const resultData = structured?.data && typeof structured.data === "object" ? structured.data as Record<string, any> : {};
+  const managedAction = resolveManagedAction(task.action, task.params || {});
 
-  // Partial is an explicit task outcome, not success with an imperfect verification field.
-  if (structured?.status === "partial") {
-    const detail = verificationDetails || String(structured?.summary || structured?.spokenSummary || "Operation was only partially completed or could not be fully verified.");
+  // Explicit non-success states are handled before the generic success:false
+  // branch so "blocked" and "inconclusive" are not collapsed into a test failure.
+  if (structured?.status === "blocked" || resultData.outcome === "blocked") {
+    const detail = verificationDetails || structured?.error || structured?.summary || "Execution was blocked by policy.";
     task.verification = {
       verified: false,
       postconditions: [detail],
       exitCode: 1,
+      artifacts: task.artifacts,
+      outcome: "blocked",
+      details: detail,
+    };
+    task.error = typeof structured?.error === "string" ? structured.error : detail;
+    return "blocked";
+  }
+
+  if (resultData.outcome === "inconclusive" || resultData.outcome === "simulated") {
+    const detail = verificationDetails || structured?.error || structured?.summary ||
+      (resultData.outcome === "simulated" ? "Simulated output is not evidence of a real execution." : "Required verification evidence was not established.");
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: undefined,
+      artifacts: task.artifacts,
+      outcome: resultData.outcome === "simulated" ? "simulated" : "inconclusive",
+      details: detail,
+    };
+    return "partial";
+  }
+  if (structured?.status === "partial") {
+    const detail = verificationDetails || structured?.error || structured?.summary ||
+      "The action completed partially, and its resulting state was not verified.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: undefined,
+      artifacts: task.artifacts,
+      outcome: "partial",
+      details: detail,
+    };
+    if (typeof structured?.error === "string") task.error = structured.error;
+    return "partial";
+  }
+
+  // Opening an interactive coding terminal is a handoff, not proof that code was
+  // written or tested. Keep that distinction even if the launcher itself worked.
+  if ((task.action === "codex.open" || task.action === "claude_code.open") && structured?.success === true && structured?.status === "started") {
+    const detail = "Interactive coding session started; patch creation and test completion have not been reported.";
+    task.spokenSummary = "I opened the coding session. I have not yet verified a code change or test result.";
+    task.verification = {
+      verified: false,
+      postconditions: [detail],
+      exitCode: 0,
       artifacts: task.artifacts,
       outcome: "partial",
       details: detail,
     };
     return "partial";
   }
-
-  if (verification?.passed === true && verificationDetails) {
+  if (verification?.passed === true && verificationDetails && !["failed", "blocked", "partial", "awaiting_approval"].includes(structured?.status)) {
     const successReported = structured.success !== false;
+    if (successReported && managedAction.managed && evidence.length === 0) {
+      const detail = "Managed execution returned a positive flag without source-linked execution evidence.";
+      task.verification = {
+        verified: false,
+        postconditions: [detail],
+        exitCode: undefined,
+        artifacts: task.artifacts,
+        outcome: "inconclusive",
+        details: detail,
+      };
+      return "partial";
+    }
     task.verification = {
       verified: successReported,
       postconditions: [verificationDetails],
@@ -38,7 +94,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
       artifacts: task.artifacts,
       outcome: successReported ? "succeeded" : "failed",
     };
-    if (evidence.length === 0) {
+    if (evidence.length === 0 && !managedAction.managed) {
       evidence.push({
         description: verificationDetails,
         source: "agent_verification",
@@ -49,7 +105,7 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
     return successReported ? "success" : "failed";
   }
 
-  if (structured?.success === false || structured?.status === "failed") {
+  if (structured?.success === false || ["failed", "blocked"].includes(structured?.status)) {
     task.verification = {
       verified: false,
       postconditions: [verificationDetails || "Agent reported execution failure."],
@@ -72,45 +128,27 @@ export function recordAgentResult(task: Task, result: any): "success" | "partial
   }
 
   if (structured?.success === true || verification?.passed === true) {
-    const detail = verificationDetails || (typeof structured?.output === "string" ? structured.output : (typeof structured?.spokenSummary === "string" ? structured.spokenSummary : "Operation completed successfully"));
+    const detail = verificationDetails || (typeof structured?.output === "string" ? structured.output : (typeof structured?.spokenSummary === "string" ? structured.spokenSummary : ""));
     task.verification = {
-      verified: true,
-      postconditions: [detail],
+      verified: false,
+      postconditions: [detail
+        ? `Agent reported success, but did not provide a passing verification result: ${detail}`
+        : "Agent reported success, but did not provide a passing verification result."],
       exitCode: 0,
       artifacts: task.artifacts,
-      outcome: "succeeded",
-      details: detail,
+      outcome: "partial",
+      details: detail || undefined,
     };
-    if (evidence.length === 0) {
-      evidence.push({
-        description: detail,
-        source: "agent_execution",
-        timestamp: new Date().toISOString(),
-        confidence: 0.9,
-      });
-    }
-    return "success";
+    return "partial";
   }
 
-  if (result !== undefined && result !== null && result !== false && structured?.success !== false && structured?.status !== "failed" && structured?.status !== "partial" && structured?.status !== "blocked") {
-    task.verification = {
-      verified: true,
-      postconditions: [verificationDetails || "Task completed without error."],
-      exitCode: 0,
-      artifacts: task.artifacts,
-      outcome: "succeeded",
-    };
-    return "success";
-  }
-
-  const reportedFailure = structured?.success === false || structured?.status === "failed" || structured?.status === "blocked";
   task.verification = {
     verified: false,
-    postconditions: [reportedFailure ? "The agent reported that the requested action failed or was blocked." : "No explicit passing verification result was returned by the agent."],
+    postconditions: ["No explicit passing verification result was returned by the agent."],
     exitCode: 1,
     artifacts: task.artifacts,
-    outcome: reportedFailure ? "failed" : "partial",
-    details: verificationDetails || (typeof structured?.error === "string" ? structured.error : undefined),
+    outcome: "partial",
+    details: verificationDetails || undefined,
   };
-  return reportedFailure ? "failed" : "partial";
+  return "partial";
 }

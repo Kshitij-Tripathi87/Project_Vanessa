@@ -1,249 +1,229 @@
-import { validateRemoteBrowserUrl, playwrightBrowserAgent } from "./browser-playwright.agent.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import type { AgentEvidence, AgentResult, AgentRunContext, AgentTask, SpecialistAgent } from "@vanessa/shared";
+import { runPowerShell } from "./powershell.js";
+import {
+  AgentEvidence,
+  AgentResult,
+  AgentRunContext,
+  AgentTask,
+  SpecialistAgent,
+} from "@vanessa/shared";
 
-const execFileAsync = promisify(execFile);
+export interface BrowserAgentOptions {
+  /** Injected external-browser launcher for deterministic launch success/failure tests. */
+  openExternalBrowser?: (url: string) => Promise<void>;
+}
 
 export function buildYouTubeSearchUrl(query: string): string {
-  const normalized = query.trim();
-  if (!normalized) throw new Error("A non-empty YouTube search query is required.");
-  if (normalized.length > 500) throw new Error("YouTube search queries must be 500 characters or shorter.");
+  const normalized = typeof query === "string" ? query.trim() : "";
+  if (!normalized) throw new Error("YouTube query must be non-empty.");
+  if (normalized.length > 500) throw new Error("YouTube query must be 500 characters or fewer.");
   const url = new URL("https://www.youtube.com/results");
   url.searchParams.set("search_query", normalized);
   return url.toString();
 }
 
-function normalizeBrowserTarget(value: unknown): "chrome" | "edge" | undefined {
-  if (value === undefined || value === null || String(value).trim() === "") return undefined;
-  const normalized = String(value).trim().toLowerCase();
-  if (normalized !== "chrome" && normalized !== "edge") {
-    throw new Error("Unsupported browser target. Supported explicit targets are Chrome and Edge.");
-  }
-  return normalized;
-}
-
-async function openDefaultBrowser(url: string, browserName?: string): Promise<void> {
-  const browser = normalizeBrowserTarget(browserName);
-  const windowsExecutable = browser === "chrome" ? "chrome.exe" : browser === "edge" ? "msedge.exe" : undefined;
-  const macApplication = browser === "chrome" ? "Google Chrome" : browser === "edge" ? "Microsoft Edge" : undefined;
-  const linuxExecutable = browser === "chrome" ? "google-chrome" : browser === "edge" ? "microsoft-edge" : undefined;
-
-  if (process.platform === "win32") {
-    // Both values are passed through environment variables, never interpolated
-    // into PowerShell source. An explicit browser target is selected by a static
-    // alias map so user-controlled text cannot choose an arbitrary executable.
-    const script = windowsExecutable
-      ? "Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList @($env:VANESSA_TARGET_URL)"
-      : "Start-Process -FilePath $env:VANESSA_TARGET_URL";
-    await execFileAsync("powershell.exe", [
-      "-NoProfile", "-NonInteractive", "-Command", script,
-    ], {
-      windowsHide: true,
-      timeout: 5000,
-      env: {
-        ...process.env,
-        VANESSA_TARGET_URL: url,
-        ...(windowsExecutable ? { VANESSA_BROWSER: windowsExecutable } : {}),
-      },
-    });
-    return;
-  }
-  if (process.platform === "darwin") {
-    if (macApplication) await execFileAsync("open", ["-a", macApplication, url], { timeout: 5000 });
-    else await execFileAsync("open", [url], { timeout: 5000 });
-    return;
-  }
-  if (process.platform === "linux") {
-    if (linuxExecutable) await execFileAsync(linuxExecutable, [url], { timeout: 5000 });
-    else await execFileAsync("xdg-open", [url], { timeout: 5000 });
-    return;
-  }
-  throw new Error("Opening the browser is not supported on " + process.platform + ".");
-}
-
-export interface BrowserAgentOptions {
-  openExternalBrowser?: (url: string, browserName?: string) => Promise<void>;
-  validateExternalUrl?: (url: string) => Promise<string>;
-}
-
-/** System-browser handoff stays distinct from Vanessa's isolated Playwright session. */
 export class BrowserAgent implements SpecialistAgent {
-  private readonly openExternalBrowser: (url: string, browserName?: string) => Promise<void>;
-  private readonly validateExternalUrl: (url: string) => Promise<string>;
+  private readonly openExternalBrowser: (url: string) => Promise<void>;
 
   constructor(options: BrowserAgentOptions = {}) {
-    this.openExternalBrowser = options.openExternalBrowser || openDefaultBrowser;
-    this.validateExternalUrl = options.validateExternalUrl || validateRemoteBrowserUrl;
+    this.openExternalBrowser = options.openExternalBrowser || ((url) => this.launchExternalBrowser(url));
   }
 
   id = "browser";
-  capabilities = ["browser_navigation", "web_search", "page_inspection", "local_html_preview", "playwright_automation"];
-  allowedTools = ["browser_navigate", "browser_extract", "browser_click", "browser_open_file"];
+  capabilities = [
+    "browser_navigation",
+    "web_search",
+    "youtube_playback",
+    "page_inspection",
+  ];
+  allowedTools = [
+    "browser_navigate",
+    "browser_screenshot",
+    "browser_click",
+    "browser_fill",
+    "browser_extract",
+  ];
+
+  private edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 
   async execute(
     actionOrTask: string | AgentTask,
     paramsOrContext?: Record<string, any> | AgentRunContext,
-    _context?: AgentRunContext,
+    context?: AgentRunContext
   ): Promise<AgentResult> {
     const action = typeof actionOrTask === "string" ? actionOrTask : actionOrTask.action || actionOrTask.objective;
     const params = typeof actionOrTask === "string" ? (paramsOrContext as Record<string, any>) || {} : actionOrTask.params || {};
-    const timestamp = new Date().toISOString();
+    const _runCtx = typeof actionOrTask === "string" ? context : (paramsOrContext as AgentRunContext);
+
+    const startTime = new Date().toISOString();
 
     switch (action) {
       case "browser.open_url": {
-        const requestedUrl = String(params.url || "");
-        let url: string;
-        let browserName: "chrome" | "edge" | undefined;
-        try {
-          url = await this.validateExternalUrl(requestedUrl);
-          browserName = normalizeBrowserTarget(params.browser);
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Browser URL or browser target was rejected by safety validation.", "I could not open that URL or browser target because it did not pass safety checks.", [], [], { url: requestedUrl, error: detail, externalBrowser: false });
-        }
-        try {
-          await this.openExternalBrowser(url, browserName);
-          return this.result(
-            true,
-            "The operating system accepted the " + (browserName || "default-browser") + " launch request for " + url + ".",
-            "I sent the page to " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not verified that it loaded.",
-            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { url, browser: browserName || "default", pageLoadVerified: false } }],
-            [url],
-            { url, browser: browserName || "default", externalBrowser: true, pageLoadVerified: false },
-          );
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Could not open the requested URL in " + (browserName || "the default browser") + ".", "I could not open that page in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { url, browser: browserName || "default", externalBrowser: false, error: detail, pageLoadVerified: false });
-        }
+        const url = typeof params.url === "string" && params.url.trim() ? params.url.trim() : "https://google.com";
+        const res = await this.openUrl(url);
+        const detail = res.simulated
+          ? "Simulation only: browser navigation was not attempted or verified."
+          : res.success
+            ? "Windows accepted a browser launch request for " + url + "; the destination page load was not verified."
+            : "Browser launch request failed for " + url + ".";
+        return {
+          agentId: this.id,
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No browser navigation occurred."
+            : res.success
+              ? "I requested that Windows open the destination. I could not verify that the page loaded."
+              : "I could not launch the requested browser destination.",
+          evidence: [{
+            description: detail,
+            source: "browser.launch-request",
+            timestamp: startTime,
+            confidence: res.simulated ? 1 : 0.6,
+            data: { url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, pageLoadVerified: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: {
+            outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed",
+            simulated: res.simulated === true,
+            launchRequestAccepted: res.success && !res.simulated,
+            pageLoadVerified: false,
+            url: res.url,
+          },
+        };
       }
 
       case "browser.search": {
-        const query = String(params.query || "").trim();
-        if (!query) return this.result(false, "A non-empty search query is required.", "Tell me what you want me to search for.", [], [], { query, error: "A non-empty search query is required." });
-        const search = new URL("https://www.google.com/search");
-        search.searchParams.set("q", query);
-        const url = search.toString();
-        let browserName: "chrome" | "edge" | undefined;
-        try {
-          browserName = normalizeBrowserTarget(params.browser);
-          await this.openExternalBrowser(url, browserName);
-          return this.result(
-            true,
-            "The operating system accepted a " + (browserName || "default-browser") + " search launch for " + query + ".",
-            "I opened search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ". I have not independently inspected the results.",
-            [{ description: "Operating system accepted the browser launch request for search query: " + query, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default", resultsExtracted: false } }],
-            [url],
-            { query, url, browser: browserName || "default", externalBrowser: true, resultsExtracted: false },
-          );
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          return this.result(false, "Could not open search results in " + (browserName || "the default browser") + ".", "I could not open those search results in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your default browser") + ".", [], [], { query, url, browser: browserName || "default", externalBrowser: false, resultsExtracted: false, error: detail });
-        }
+        const query = typeof params.query === "string" ? params.query : "";
+        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        const res = await this.openUrl(url);
+        const detail = res.simulated
+          ? "Simulation only: web search was not attempted or verified."
+          : res.success
+            ? "Windows accepted a search-page launch request; search results were not inspected."
+            : "Search-page launch failed.";
+        return {
+          agentId: this.id,
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No web search occurred."
+            : res.success
+              ? "I requested the search page, but I could not verify the results."
+              : "I could not open the search page.",
+          evidence: [{
+            description: detail, source: "browser.search-launch", timestamp: startTime, confidence: res.simulated ? 1 : 0.6,
+            data: { query, url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, resultsInspected: false },
+          }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, resultsInspected: false, query, url },
+        };
       }
 
-            case "browser.research": {
-        const query = String(params.goal || params.query || params.prompt || "");
-        const result = await (await import("./openjarvis.agent.js")).vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
-        const success = result.success === true;
-        const steps = Array.isArray(result.steps) ? result.steps : [];
-        return this.result(success,
-          success ? String(result.final_answer || ("Research completed for " + query)) : "Research did not complete successfully.",
-          success ? "Finished the requested web research." : "The web research task did not complete successfully.",
-          steps.map((step: any) => ({ description: String(step.thought || "") + ": " + String(step.action || ""), source: "Vanessa research bridge", timestamp })),
-          [], result);
+      case "browser.research":
+      case "vanessa.run_goal": {
+        const query = params.goal || params.query || params.prompt || "web research";
+        const { vanessaAgent } = await import("./openjarvis.agent.js");
+        const goalRes = await vanessaAgent.runGoal(query, ["web_search", "browser_navigate"]);
+        const succeeded = goalRes?.success === true && goalRes?.status !== "blocked" && goalRes?.status !== "failed";
+        const detail = succeeded
+          ? "Research returned a result, but source verification remains subject to the evidence attached to that result."
+          : (typeof goalRes?.summary === "string" ? goalRes.summary : "The research executor is unavailable; no research result was verified.");
+        const evidence = Array.isArray(goalRes?.steps)
+          ? goalRes.steps.map((step: any) => ({ description: String(step?.thought || "Research step") + ": " + String(step?.action || "No action detail"), source: "research-executor", timestamp: startTime, confidence: 0.5 }))
+          : [{ description: detail, source: "research-executor", timestamp: startTime, confidence: 1, data: { outcome: "inconclusive", processStarted: false } }];
+        return {
+          agentId: this.id,
+          status: succeeded ? "completed" : goalRes?.status === "blocked" ? "blocked" : "partial",
+          success: succeeded,
+          summary: detail,
+          spokenSummary: succeeded ? "Research returned a result; its sources need to be reviewed." : "I could not complete or verify the research request.",
+          evidence,
+          artifacts: [],
+          verification: { passed: succeeded, details: detail },
+          data: { outcome: succeeded ? "succeeded" : goalRes?.status === "blocked" ? "blocked" : "inconclusive", query, research: goalRes, processStarted: goalRes?.data?.processStarted ?? false },
+        };
       }
 
       case "youtube.search_and_play": {
-        const query = String(params.query || "").trim();
+        const query = typeof params.query === "string" && params.query.trim() ? params.query.trim().slice(0, 500) : "Bolna Buildathon";
         const url = buildYouTubeSearchUrl(query);
-        let browserName: "chrome" | "edge" | undefined;
-        try {
-          browserName = normalizeBrowserTarget(params.browser);
-          await this.openExternalBrowser(url, browserName);
-          return this.result(
-            true,
-            "Opened YouTube search results for " + query + " in " + (browserName || "the default browser") + ".",
-            "YouTube search results are open. Video playback has not been verified.",
-            [{ description: "Operating system accepted the " + (browserName || "default-browser") + " launch request for " + url, source: "Desktop browser handoff", timestamp, confidence: 0.95, data: { query, url, browser: browserName || "default" } }],
-            [url],
-            { query, url, browser: browserName || "default", externalBrowser: true, playbackVerified: false },
-          );
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          return this.result(
-            false,
-            "Could not open YouTube search results in " + (browserName || "the default browser") + ".",
-            "I could not open YouTube in " + (browserName ? (browserName === "chrome" ? "Chrome" : "Edge") : "your browser") + ".",
-            [],
-            [],
-            { query, url, externalBrowser: false, error: detail },
-          );
-        }
-      }
-
-      case "browser.verify_page_state": {
-        const url = String(params.url || "");
-        const expectedText = String(params.expectedText || "");
-        const result = await playwrightBrowserAgent.verifyPageState(url, expectedText);
-        const verified = result.success && result.found;
-        return this.result(verified,
-          verified ? "Verified expected text on " + url : result.success ? "Expected text was not found on " + url : "Page verification could not run.",
-          verified ? "The expected text was found." : result.success ? "I could not find the expected text on the page." : "I could not verify the page.",
-          result.success ? [{ description: "Expected text " + (result.found ? "was found" : "was not found") + " on " + url, source: "Rendered page text", timestamp, confidence: 1, data: { expectedText, found: result.found } }] : [],
-          result.success ? [url] : [], { url, expectedText, found: result.found, error: result.error });
-      }
-
-      case "browser.inspect_page":
-      case "browser.extract": {
-        const result = await playwrightBrowserAgent.inspectPage(typeof params.url === "string" && params.url ? params.url : undefined);
-        return this.result(result.success,
-          result.success ? "Inspected " + result.url + "; extracted " + result.links.length + " link(s)." : "Could not inspect the browser page.",
-          result.success ? "The page inspection is ready." : "I could not inspect that page.",
-          result.success ? [{ description: "Rendered page content inspected at " + result.url, source: "Playwright rendered DOM", timestamp, confidence: 1, data: { title: result.title, links: result.links.length } }] : [],
-          result.success ? [result.url] : [], { title: result.title, url: result.url, text: result.text, links: result.links, error: result.error });
-      }
-
-      case "browser.open_file": {
-        const filePath = String(params.path || "");
-        const result = await playwrightBrowserAgent.openLocalFile(filePath);
-        return this.result(result.success,
-          result.success ? "Opened local HTML preview at " + result.url : "Local HTML preview failed.",
-          result.success ? "The local page is open in Vanessa’s isolated browser session." : "I could not open that local page in Vanessa’s browser session.",
-          result.success ? [{ description: "Opened approved local HTML file in browser session", source: filePath, timestamp, confidence: 1, data: { title: result.title, url: result.url } }] : [],
-          result.success ? [filePath] : [], { path: filePath, title: result.title, url: result.url, error: result.error });
-      }
-
-      case "browser.click": {
-        const result = await playwrightBrowserAgent.click(typeof params.url === "string" ? params.url : undefined, String(params.selector || ""));
-        return this.result(result.success,
-          result.success ? "Clicked the requested page element at " + result.url : "The requested browser click failed.",
-          result.success ? "The page element was clicked." : "I could not click that page element.",
-          result.success ? [{ description: "Clicked requested locator and inspected resulting page", source: "Playwright", timestamp, confidence: 0.9, data: { selector: params.selector, url: result.url } }] : [],
-          result.success ? [result.url] : [], { selector: params.selector, url: result.url, title: result.title, text: result.text, error: result.error });
+        const res = await this.openUrl(url);
+        const detail = res.simulated
+          ? "Simulation only: YouTube navigation and playback were not attempted or verified."
+          : res.success
+            ? "Windows accepted a YouTube search-page launch request; video playback was not verified."
+            : "The YouTube search-page launch request failed.";
+        return {
+          agentId: this.id,
+          status: res.simulated || res.success ? "partial" : "failed",
+          success: false,
+          summary: detail,
+          spokenSummary: res.simulated
+            ? "This was a simulation. No YouTube navigation or playback occurred."
+            : res.success
+              ? "I opened the YouTube search page; playback has not been verified."
+              : "I could not open the YouTube search page.",
+          evidence: res.success || res.simulated ? [{
+            description: detail, source: "youtube.launch-request", timestamp: startTime, confidence: res.simulated ? 1 : 0.6,
+            data: { query, url, simulated: res.simulated === true, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false },
+          }] : [],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: res.simulated ? "simulated" : res.success ? "inconclusive" : "failed", simulated: res.simulated === true, externalBrowser: res.success && !res.simulated, launchRequestAccepted: res.success && !res.simulated, playbackVerified: false, query, url, ...(res.error ? { error: res.error } : {}) },
+        };
       }
 
       case "browser.read_title": {
-        const url = String(params.url || "");
-        const result = url ? await playwrightBrowserAgent.navigate(url) : await playwrightBrowserAgent.inspectPage();
-        return this.result(result.success,
-          result.success ? "Page title: " + result.title : "Could not read the page title.",
-          result.success ? "Read the page title." : "I could not read the page title.",
-          result.success ? [{ description: "Read browser page title", source: "Playwright", timestamp, confidence: 1 }] : [],
-          result.success ? [result.url] : [], { title: result.title, url: result.url, error: result.error });
+        const detail = "Active-tab title inspection is not connected to a real browser observation provider.";
+        return {
+          agentId: this.id,
+          status: "partial",
+          success: false,
+          summary: detail,
+          spokenSummary: "I cannot verify the active browser tab with the current integration.",
+          evidence: [{ description: detail, source: "browser.read_title", timestamp: startTime, confidence: 1, data: { outcome: "inconclusive", processStarted: false } }],
+          artifacts: [],
+          verification: { passed: false, details: detail },
+          data: { outcome: "inconclusive", pageLoadVerified: false, titleRead: false },
+        };
       }
 
       default:
-        throw new Error("BrowserAgent: Unknown action '" + action + "'");
+        throw new Error(`BrowserAgent: Unknown action '${action}'`);
     }
   }
 
-  private result(success: boolean, summary: string, spokenSummary: string, evidence: AgentEvidence[], artifacts: string[], data: unknown): AgentResult {
-    return {
-      agentId: this.id, status: success ? "completed" : "failed", success, summary, spokenSummary, evidence, artifacts,
-      verification: { passed: success, details: summary }, data,
-      ...(success ? {} : { error: summary }),
-    };
+  private async openUrl(url: string): Promise<{ success: boolean; url: string; simulated?: boolean; error?: string }> {
+    if (typeof url !== "string" || !url.trim() || url.length > 4096) {
+      return { success: false, url: typeof url === "string" ? url.slice(0, 4096) : "" };
+    }
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return { success: false, url }; }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      return { success: false, url };
+    }
+    if (process.env.FAKE === "1") {
+      return { success: false, url, simulated: true };
+    }
+    try {
+      await this.openExternalBrowser(url);
+      return { success: true, url };
+    } catch (error: any) {
+      return { success: false, url, error: typeof error?.message === "string" ? error.message : "External browser launch failed." };
+    }
+  }
+
+  private async launchExternalBrowser(url: string): Promise<void> {
+    const psCommand = "$url = $env:VANESSA_URL; Start-Process -FilePath $env:VANESSA_BROWSER -ArgumentList $url";
+    try {
+      await runPowerShell(psCommand, { VANESSA_BROWSER: this.edgePath, VANESSA_URL: url }, 10000);
+    } catch {
+      await runPowerShell("Start-Process -FilePath $env:VANESSA_URL", { VANESSA_URL: url }, 10000);
+    }
   }
 }
 

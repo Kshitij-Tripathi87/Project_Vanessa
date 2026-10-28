@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
+import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 
 export interface SentimentData {
@@ -22,19 +24,23 @@ export interface ProviderStatus {
   detail?: string;
 }
 
-export interface VoiceProviderStatus {
-  asr: ProviderStatus;
-  tts: ProviderStatus;
-}
-
 export interface WakeWordStatus {
   available: boolean;
   ready: boolean;
   listening: boolean;
-  keyword?: string;
+  keyword: string;
   reason?: string;
   state?: string;
 }
+
+export interface VoiceProviderStatus {
+
+  asr: ProviderStatus;
+  tts: ProviderStatus;
+}
+
+export type MicrophoneTestState = "idle" | "testing" | "passed" | "silent" | "error";
+export type SpeechOutputTestState = "idle" | "testing" | "finished" | "error";
 
 function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Float32Array {
   if (inputSampleRate === 16000) return audioBuffer;
@@ -52,37 +58,35 @@ function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Floa
 }
 
 export function useAudioCapture() {
-  const { voiceState, setVoiceState, setLastResponse, setActivePlan } = useVanessaStore();
+  const { voiceState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, setTaskStage, setPendingApproval } = useVanessaStore();
 
   const [isMicActive, setIsMicActive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0); // 0.0 to 1.0 for VoiceOrb scaling
   const [liveSentiment, setLiveSentiment] = useState<SentimentData | null>(null);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [microphoneTestState, setMicrophoneTestState] = useState<MicrophoneTestState>("idle");
+  const [microphoneTestMessage, setMicrophoneTestMessage] = useState("");
+  const [speechOutputTestState, setSpeechOutputTestState] = useState<SpeechOutputTestState>("idle");
+  const [speechOutputTestMessage, setSpeechOutputTestMessage] = useState("");
   const [providerStatus, setProviderStatus] = useState<VoiceProviderStatus | null>(null);
-  const [wakeWordStatus, setWakeWordStatus] = useState<WakeWordStatus>({
-    available: false,
-    ready: false,
-    listening: false,
-    keyword: "Hey Vanessa",
-    reason: "Checking local wake-word configuration.",
-    state: "starting",
-  });
-  const [wakeWordActivationId, setWakeWordActivationId] = useState(0);
-  const [lastFinalTranscript, setLastFinalTranscript] = useState("");
+  const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
+  const [wakeWordModeAvailable, setWakeWordModeAvailable] = useState(false);
+  const [wakeWordActive, setWakeWordActive] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const recognitionRef = useRef<any>(null);
+  const pendingTextCommandRef = useRef<{ type: "transcript_final"; text: string; language: string; turnId: string } | null>(null);
+  const activeTextOnlyRequestRef = useRef<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
   const pttActiveRef = useRef(false);
-  const wakeMonitoringActiveRef = useRef(false);
-  const startWakeMonitoringRef = useRef<(() => Promise<void>) | null>(null);
+  const wakeWordModeRef = useRef(false);
+  const wakeWordStartupAttemptedRef = useRef(false);
   const activatedSocketRef = useRef<WebSocket | null>(null);
   const preRollRef = useRef<ArrayBuffer[]>([]);
   const pendingBargeAudioRef = useRef<ArrayBuffer[]>([]);
@@ -93,7 +97,7 @@ export function useAudioCapture() {
   const audioQueueRef = useRef<Array<{
     text: string;
     audioBase64?: string;
-    format?: "mp3" | "pcm_s16le";
+    format?: "mp3" | "wav" | "pcm_s16le";
     sampleRate?: number;
     fallbackSpeech?: boolean;
     speechRate: number;
@@ -139,6 +143,7 @@ export function useAudioCapture() {
         } else {
           audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
         }
+        if (playbackGeneration !== playbackGenerationRef.current) return;
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
         activeSourceNodeRef.current = source;
@@ -150,14 +155,15 @@ export function useAudioCapture() {
           activeSourceNodeRef.current = null;
           if (item.isFinal) {
             setVoiceState("idle");
-            if (!pttActiveRef.current && !wakeMonitoringActiveRef.current) stopCaptureRef.current?.(true)
+            if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
           }
           playNextInQueue();
         };
         source.start(0);
         return;
       } catch (err) {
-        console.warn("[useAudioCapture] AudioBuffer decode/play error, fallback to SpeechSynthesis:", err);
+        if (playbackGeneration !== playbackGenerationRef.current) return;
+        setMicError("Speech audio could not be decoded or played. The response remains available as text.");
       }
     }
 
@@ -172,7 +178,7 @@ export function useAudioCapture() {
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
-          if (!pttActiveRef.current && !wakeMonitoringActiveRef.current) stopCaptureRef.current?.(true);
+          if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
@@ -181,7 +187,7 @@ export function useAudioCapture() {
         isPlayingQueueRef.current = false;
         if (item.isFinal) {
           setVoiceState("idle");
-          if (!pttActiveRef.current && !wakeMonitoringActiveRef.current) stopCaptureRef.current?.(true);
+          if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
         }
         playNextInQueue();
       };
@@ -191,7 +197,7 @@ export function useAudioCapture() {
       isPlayingQueueRef.current = false;
       if (item.isFinal) {
         setVoiceState("idle");
-        if (!pttActiveRef.current && !wakeMonitoringActiveRef.current) stopCaptureRef.current?.(true);
+        if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
       }
       playNextInQueue();
     }
@@ -224,31 +230,64 @@ export function useAudioCapture() {
 
   const activateConnectedSocket = useCallback((socket: WebSocket) => {
     if (pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
+      bargeResumePendingRef.current = true;
       socket.send(JSON.stringify({ type: "activate" }));
       activatedSocketRef.current = socket;
     }
   }, []);
 
-  // Keep the control channel ready, but do not start audio capture or ASR until PTT.
+  const dispatchTextCommand = useCallback((
+    socket: WebSocket,
+    command: { type: "transcript_final"; text: string; language: string; turnId: string },
+  ) => {
+    if (socket.readyState !== WebSocket.OPEN) return false;
+    if (pttActiveRef.current) {
+      pttActiveRef.current = false;
+      activatedSocketRef.current = null;
+      pendingBargeAudioRef.current = [];
+      preRollRef.current = [];
+      bargeResumePendingRef.current = false;
+      stopCaptureRef.current?.(true);
+      socket.send(JSON.stringify({ type: "deactivate" }));
+    }
+    socket.send(JSON.stringify(command));
+    setPartialTranscript(command.text);
+    setLastResponse("");
+    setCurrentRequestId(null);
+    setTaskStage("accepted", "Request received.");
+    setVoiceState("thinking");
+    return true;
+  }, [setCurrentRequestId, setLastResponse, setTaskStage, setVoiceState, setPartialTranscript]);
+
+  // Keep the control channel ready; ASR/capture starts only after explicit PTT.
   const connectVoiceWs = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
-
+    setVoiceConnectionState("connecting");
     const ws = new WebSocket("ws://127.0.0.1:4500/ws");
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("[useAudioCapture] Connected to Vanessa Voice Real-Time WebSocket on port 4500");
       setMicError(null);
-      activateConnectedSocket(ws);
+      setVoiceConnectionState("connected");
+      const pending = pendingTextCommandRef.current;
+      if (pending) {
+        if (!dispatchTextCommand(ws, pending)) return;
+        pendingTextCommandRef.current = null;
+      } else {
+        activateConnectedSocket(ws);
+      }
     };
 
     ws.onerror = () => {
+      wakeWordModeRef.current = false;
+      wakeWordStartupAttemptedRef.current = false;
+      setWakeWordActive(false);
+      setVoiceConnectionState("disconnected");
       setMicError("Vanessa voice service is unavailable. Start the voice agent and try again.");
       pttActiveRef.current = false;
-      wakeMonitoringActiveRef.current = false;
-      setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: "The local voice service connection failed." }));
       setVoiceState("error");
     };
 
@@ -256,45 +295,19 @@ export function useAudioCapture() {
         try {
           const msg = JSON.parse(event.data);
 
-          if (msg.type === "session_ready") {
-            if (msg.providers) setProviderStatus(msg.providers);
-            if (msg.wakeWord) setWakeWordStatus({
-              available: msg.wakeWord.available === true,
-              ready: msg.wakeWord.ready === true,
-              listening: false,
-              keyword: msg.wakeWord.keyword || "Hey Vanessa",
-              reason: msg.wakeWord.reason,
-              state: msg.wakeWord.state || "starting",
-            });
+          if (msg.type === "session_ready" && msg.providers) {
+            setProviderStatus(msg.providers);
+            setWakeWordModeAvailable(msg.wakeWord?.enabled === true && msg.wakeWord?.mode === "local-whisper");
+            if (msg.wakeWord?.enabled !== true || msg.wakeWord?.mode !== "local-whisper") {
+              wakeWordModeRef.current = false;
+              setWakeWordActive(false);
+            }
             return;
           }
 
-          if (msg.type === "wake_status") {
-            const available = msg.available === true && msg.ready === true;
-            if (!available) wakeMonitoringActiveRef.current = false;
-            setWakeWordStatus({
-              available,
-              ready: available,
-              listening: available && (msg.listening === true || wakeMonitoringActiveRef.current),
-              keyword: msg.keyword || "Hey Vanessa",
-              reason: msg.reason,
-              state: available ? (msg.listening ? "listening" : "ready") : "unavailable",
-            });
-            if (available) void startWakeMonitoringRef.current?.();
-            return;
-          }
-
-          if (msg.type === "wake_word_detected") {
-            pttActiveRef.current = true;
-            activatedSocketRef.current = ws;
-            setIsMicActive(true);
-            setVoiceState("listening");
-            setPartialTranscript("");
-            setWakeWordStatus({
-              available: true, ready: true, listening: true,
-              keyword: msg.keyword || "Hey Vanessa", state: "detected",
-            });
-            setWakeWordActivationId((value) => value + 1);
+          if (msg.type === "wake_word_ready" && msg.enabled === true && msg.mode === "local-whisper") {
+            setWakeWordActive(true);
+            setMicError(null);
             return;
           }
 
@@ -316,22 +329,13 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "state_change") {
-            setVoiceState(msg.state);
-            if (msg.state === "listening") {
-              pttActiveRef.current = true;
-              setIsMicActive(true);
-              if (bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
-                for (const frame of pendingBargeAudioRef.current) ws.send(frame);
-                pendingBargeAudioRef.current = [];
-                bargeResumePendingRef.current = false;
-              }
-            } else if (["thinking", "executing", "responding", "idle"].includes(msg.state)) {
-              pttActiveRef.current = false;
-              activatedSocketRef.current = null;
-              setIsMicActive(false);
-              if (msg.state === "idle" && wakeMonitoringActiveRef.current) {
-                setWakeWordStatus((current) => ({ ...current, available: true, ready: true, listening: true, state: "listening" }));
-              }
+            // Synthesis can finish before local playback; do not mark the UI
+            // idle or disable barge-in while the audio queue is still playing.
+            if (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0)) setVoiceState(msg.state);
+            if (msg.state === "listening" && bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
+              for (const frame of pendingBargeAudioRef.current) ws.send(frame);
+              pendingBargeAudioRef.current = [];
+              bargeResumePendingRef.current = false;
             }
             return;
           }
@@ -339,9 +343,11 @@ export function useAudioCapture() {
           if (msg.type === "voice_error") {
             pttActiveRef.current = false;
             activatedSocketRef.current = null;
+            wakeWordModeRef.current = false;
+            setWakeWordActive(false);
+            stopCaptureRef.current?.();
             setMicError(msg.message || "Speech recognition could not start.");
             setVoiceState("error");
-            // Keep the local wake listener running after a transient ASR failure.
             return;
           }
 
@@ -361,7 +367,7 @@ export function useAudioCapture() {
 
           if (msg.type === "transcript_final") {
             setPartialTranscript(msg.text);
-            setLastFinalTranscript(msg.text || "");
+            if (typeof msg.requestId === "string") setCurrentRequestId(msg.requestId);
             // Fish may commit before PTT release. Stop cloud streaming while
             // retaining local capture for an interruption during TTS playback.
             pttActiveRef.current = false;
@@ -370,6 +376,7 @@ export function useAudioCapture() {
 
           // Low-latency streaming TTS sentence chunk
           if (msg.type === "tts_chunk") {
+            if (pttActiveRef.current || bargeResumePendingRef.current) return;
             setVoiceState("speaking");
             audioQueueRef.current.push({
               text: msg.text,
@@ -416,16 +423,219 @@ export function useAudioCapture() {
 
     ws.onclose = () => {
       if (wsRef.current === ws) {
+        wakeWordModeRef.current = false;
+        wakeWordStartupAttemptedRef.current = false;
+        setWakeWordActive(false);
+        stopCaptureRef.current?.();
+        setVoiceConnectionState("disconnected");
+        setMicError("Voice connection closed. Reconnecting; press push-to-talk to start a new turn.");
         activatedSocketRef.current = null;
-        pttActiveRef.current = false;
-        wakeMonitoringActiveRef.current = false;
-        setIsMicActive(false);
-        setWakeWordStatus((current) => ({ ...current, listening: false, state: "reconnecting", reason: "Reconnecting to the local voice service." }));
-        setTimeout(connectVoiceWs, 1500);
+        setTimeout(() => { if (wsRef.current === ws) connectVoiceWs(); }, 3000);
       }
     };
-  }, [activateConnectedSocket, setVoiceState, setLastResponse, setActivePlan, playNextInQueue]);
+  }, [activateConnectedSocket, dispatchTextCommand, setVoiceConnectionState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, playNextInQueue]);
 
+
+  const submitTextCommand = useCallback((rawText: string, language = "en") => {
+    const text = rawText.trim();
+    if (!text || text.length > 16000) {
+      setLastResponse(text ? "That request is too long." : "Enter a request first.");
+      return false;
+    }
+
+    // If voice is explicitly disabled or still disconnected, keep typing independent of
+    // the voice WebSocket and route straight through the trusted desktop IPC/orchestrator.
+    const voiceSocketOpen = wsRef.current?.readyState === WebSocket.OPEN;
+    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false" || !voiceSocketOpen) {
+      pendingTextCommandRef.current = null;
+      const requestId = `desktop-${globalThis.crypto.randomUUID()}`;
+      activeTextOnlyRequestRef.current = requestId;
+      setPartialTranscript(text);
+      setLastResponse("");
+      setCurrentRequestId(requestId);
+      setPendingApproval(null);
+      setTaskStage("accepted", "Request received.");
+      setVoiceState("thinking");
+      void window.vanessa.executeCommand({
+        command: text,
+        language: language.slice(0, 32) || "en",
+        source: "desktop",
+        requestId,
+        idempotencyKey: `desktop-direct:${requestId}`,
+      })
+        .then((result) => {
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
+          if (result.requestId) setCurrentRequestId(result.requestId);
+          if (result.plan) setActivePlan(result.plan);
+          setLastResponse(result.spokenSummary || "The orchestrator returned without a summary.");
+          if (result.status === "awaiting_approval") {
+            setPendingApproval(result.pendingTasks?.[0] || null);
+            setTaskStage("executing", "I need your approval before continuing.");
+          } else if (result.status === "success" && result.verification?.verified === true) {
+            setTaskStage("completed", "Done — result verified.");
+          } else if (result.status === "partial" || result.status === "accepted" || result.status === "success") {
+            setTaskStage("partial", result.status === "accepted"
+              ? "The request is already being processed."
+              : "Execution returned without a fully verified result.");
+          } else {
+            setTaskStage("failed", "The request failed or could not be verified.");
+          }
+          // If the voice service is unavailable, provide an OS/browser speech fallback
+          // while preserving the written result. This does not claim remote TTS was used.
+          const canSpeakFallback =
+            import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
+            Boolean(result.spokenSummary?.trim()) &&
+            "speechSynthesis" in window;
+          if (canSpeakFallback) {
+            audioQueueRef.current.push({
+              text: result.spokenSummary,
+              fallbackSpeech: true,
+              speechRate: 1.05,
+              speechPitch: 1.02,
+              isFinal: true,
+            });
+            setVoiceState("speaking");
+            playNextInQueue();
+          } else {
+            setVoiceState("idle");
+          }
+        })
+        .catch((error: unknown) => {
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
+          const detail = error instanceof Error ? error.message : "Unknown connection error";
+          setLastResponse(`Orchestrator request failed: ${detail}`);
+          setCurrentRequestId(null);
+          setTaskStage("failed", "The request could not be completed.");
+          setVoiceState("error");
+        });
+      return true;
+    }
+
+    const command = {
+      type: "transcript_final" as const,
+      text,
+      language: language.slice(0, 32) || "en",
+      turnId: `desktop-${globalThis.crypto.randomUUID()}`,
+    };
+    const socket = wsRef.current;
+    if (socket && dispatchTextCommand(socket, command)) return true;
+
+    // Only an unsent command is buffered during a close race. It is never replayed
+    // when the direct IPC/orchestrator path has already accepted the request.
+    pendingTextCommandRef.current = command;
+    setPartialTranscript(text);
+    setLastResponse("Voice connection changed while submitting. Reconnecting…");
+    setTaskStage("accepted", "The request has not been sent yet.");
+    connectVoiceWs();
+    return true;
+  }, [connectVoiceWs, dispatchTextCommand, playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+
+  // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
+  const testMicrophone = useCallback(async () => {
+    if (microphoneTestState === "testing") return;
+    if (pttActiveRef.current) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage("Finish the current voice turn before testing the microphone.");
+      return;
+    }
+
+    setMicrophoneTestState("testing");
+    setMicrophoneTestMessage("Speak normally for about two seconds. Test audio stays on this device and is not sent to Vanessa or a speech provider.");
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let silentGain: GainNode | null = null;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        const error = new Error("Microphone capture API is unavailable.");
+        error.name = "NotSupportedError";
+        throw error;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        const error = new Error("Web Audio is unavailable.");
+        error.name = "AudioContextUnavailableError";
+        throw error;
+      }
+      context = new AudioCtx();
+      if (context.state === "suspended") await context.resume();
+
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      silentGain = context.createGain();
+      silentGain.gain.value = 0; // Keep the graph active without monitoring mic audio through speakers.
+      source.connect(analyser);
+      analyser.connect(silentGain);
+      silentGain.connect(context.destination);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      const deadline = Date.now() + 1600;
+      let signalDetected = false;
+      let peak = 0;
+      while (Date.now() < deadline) {
+        analyser.getByteTimeDomainData(samples);
+        const measurement = measureMicrophoneSignal(samples);
+        peak = Math.max(peak, measurement.peak);
+        if (hasMicrophoneSignal(measurement)) signalDetected = true;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+      }
+
+      if (signalDetected) {
+        setMicrophoneTestState("passed");
+        setMicrophoneTestMessage(`Microphone input signal detected (peak ${Math.round(peak * 100)}%). This verifies capture only; speech recognition is checked by a real voice command.`);
+      } else {
+        setMicrophoneTestState("silent");
+        setMicrophoneTestMessage("The microphone opened, but no input signal was detected. Unmute it and check Windows Settings → System → Sound → Input while speaking, then retry.");
+      }
+    } catch (error) {
+      setMicrophoneTestState("error");
+      setMicrophoneTestMessage(explainMicrophoneFailure(error));
+    } finally {
+      try { source?.disconnect(); } catch {}
+      try { analyser?.disconnect(); } catch {}
+      try { silentGain?.disconnect(); } catch {}
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context && context.state !== "closed") await context.close().catch(() => {});
+    }
+  }, [microphoneTestState]);
+
+  // Test the no-key browser/OS speech fallback. "Finished" means the browser
+  // completed its utterance callback; the user still confirms they heard audio.
+  const testSpeechOutput = useCallback(() => {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("This runtime does not expose local speech synthesis. Typed responses remain available; check the Vanessa runtime.");
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      setSpeechOutputTestState("testing");
+      setSpeechOutputTestMessage("Playing a short local test phrase. No speech provider API key is used.");
+      const utterance = new SpeechSynthesisUtterance(
+        "This is Vanessa's local speech output test. If you hear this, local speech playback is working."
+      );
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => {
+        setSpeechOutputTestState("finished");
+        setSpeechOutputTestMessage("The speech engine finished playback. Confirm you heard it; if not, check Windows volume and the selected output device.");
+      };
+      utterance.onerror = () => {
+        setSpeechOutputTestState("error");
+        setSpeechOutputTestMessage("Local speech playback reported an error. Check Windows volume and the selected output device. Written responses remain available.");
+      };
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setSpeechOutputTestState("error");
+      setSpeechOutputTestMessage("Local speech playback could not start. Check Windows volume/output settings; written responses remain available.");
+    }
+  }, []);
 
   // Start live microphone capture
   const startRecording = useCallback(async () => {
@@ -433,72 +643,90 @@ export function useAudioCapture() {
       setMicError("Voice is disabled for this session. Restart Vanessa without --text-only to use the microphone.");
       return;
     }
+
+    let acquiredStream: MediaStream | null = null;
+    let openedContext: AudioContext | null = null;
+    let sourceNode: MediaStreamAudioSourceNode | null = null;
+    let analyserNode: AnalyserNode | null = null;
+    let workletNode: AudioWorkletNode | null = null;
     try {
       if (mediaStreamRef.current) return;
       setMicError(null);
       connectVoiceWs();
 
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices?.getUserMedia) {
+        const error = new Error("Microphone capture API is unavailable.");
+        error.name = "NotSupportedError";
+        throw error;
+      }
+
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+        stream = await mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
-      } catch (err) {
-        console.warn("[useAudioCapture] Advanced media constraints failed, using basic audio:", err);
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (error) {
+        const name = (error as { name?: string } | null)?.name || "";
+        // Only retry without optional processing constraints. Permission/device
+        // failures should be reported directly rather than prompting twice.
+        if (!["OverconstrainedError", "ConstraintNotSatisfiedError", "TypeError"].includes(name)) throw error;
+        stream = await mediaDevices.getUserMedia({ audio: true });
       }
+      acquiredStream = stream;
       mediaStreamRef.current = stream;
 
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        const error = new Error("Web Audio is unavailable.");
+        error.name = "AudioContextUnavailableError";
+        throw error;
+      }
       if (audioContextRef.current) {
         await audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
       }
-      const audioCtx = new AudioCtx();
-      if (audioCtx.state === "suspended") {
-        await audioCtx.resume();
-      }
-      audioContextRef.current = audioCtx;
+      openedContext = new AudioCtx();
+      audioContextRef.current = openedContext;
+      if (openedContext.state === "suspended") await openedContext.resume();
 
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyserRef.current = analyser;
-      source.connect(analyser);
+      sourceNode = openedContext.createMediaStreamSource(stream);
+      analyserNode = openedContext.createAnalyser();
+      analyserNode.fftSize = 256;
+      analyserRef.current = analyserNode;
+      sourceNode.connect(analyserNode);
 
-      // Audio processor node to convert Float32 to 16-bit PCM for real-time streaming
-      const processor = audioCtx.createScriptProcessor(1024, 1, 1);
-      processorRef.current = processor;
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
+      // AudioWorklet keeps PCM conversion away from the renderer's main UI thread.
+      // Compile TypeScript as a separate same-origin JavaScript module, never an inlined asset.
+      await openedContext.audioWorklet.addModule(pcmCaptureWorkletUrl);
+      workletNode = new AudioWorkletNode(openedContext, "vanessa-pcm-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+      });
+      processorRef.current = workletNode;
+      sourceNode.connect(workletNode);
+      workletNode.connect(openedContext.destination);
 
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        // Resample from hardware rate (e.g. 48kHz or 44.1kHz) to exact 16kHz
-        const resampled = resampleTo16k(inputData, audioCtx.sampleRate);
-
-        // Convert to 16-bit linear PCM
+      workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        const inputData = event.data;
+        const resampled = resampleTo16k(inputData, openedContext!.sampleRate);
         const pcmBuffer = new Int16Array(resampled.length);
         for (let i = 0; i < resampled.length; i++) {
-          const s = Math.max(-1, Math.min(1, resampled[i]));
-          pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          const sample = Math.max(-1, Math.min(1, resampled[i]));
+          pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
         }
-
         const audioFrame = pcmBuffer.buffer.slice(pcmBuffer.byteOffset, pcmBuffer.byteOffset + pcmBuffer.byteLength);
-        // Keep a short local-only lead-in during playback so barge-in does not
-        // clip the user's first word. It is sent only after ASR resumes.
-        if ((pttActiveRef.current || wakeMonitoringActiveRef.current) && wsRef.current?.readyState === WebSocket.OPEN) {
-          // Background mode streams only to the local wake-word service; that
-          // service forwards PCM to ASR only after "Hey Vanessa" is detected.
-          wsRef.current.send(audioFrame);
-        }
-
-        if (voiceStateRef.current === "speaking") {
+        const ambientWakeListening = wakeWordModeRef.current && !["thinking", "executing", "responding", "speaking"].includes(voiceStateRef.current);
+        if ((pttActiveRef.current || ambientWakeListening) && wsRef.current?.readyState === WebSocket.OPEN) {
+          if (bargeResumePendingRef.current) {
+            pendingBargeAudioRef.current.push(audioFrame);
+            if (pendingBargeAudioRef.current.length > 80) pendingBargeAudioRef.current.shift();
+          } else {
+            wsRef.current.send(audioFrame);
+          }
+          preRollRef.current = [];
+        } else if (voiceStateRef.current === "speaking") {
           preRollRef.current.push(audioFrame);
           if (preRollRef.current.length > 16) preRollRef.current.shift();
         } else {
@@ -506,46 +734,67 @@ export function useAudioCapture() {
         }
       };
 
-      // Real-time Audio Level visualizer loop for VoiceOrb
       const updateAudioMeter = () => {
         if (!analyserRef.current) return;
         const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(dataArray);
-
         let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / dataArray.length;
-        const normalized = Math.min(1.0, avg / 128.0);
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const normalized = Math.min(1.0, (sum / dataArray.length) / 128.0);
         setAudioLevel(normalized);
-
-        // Barge-In: if user starts speaking (level > 0.35) while Vanessa is speaking, interrupt!
-        if (normalized > 0.35 && voiceStateRef.current === "speaking") {
-          triggerBargeIn();
-        }
-
+        if (normalized > 0.35 && voiceStateRef.current === "speaking") triggerBargeIn();
         animationFrameRef.current = requestAnimationFrame(updateAudioMeter);
       };
       updateAudioMeter();
 
-      setIsMicActive(pttActiveRef.current);
-      setVoiceState(voiceStateRef.current === "speaking" ? "speaking" : "idle");
-    } catch (err: any) {
-      console.error("[useAudioCapture] Failed to access microphone:", err);
-      setMicError(err.message || "Microphone access denied");
+      setIsMicActive(true);
+      setVoiceState("idle");
+    } catch (error: unknown) {
+      const name = (error as { name?: string } | null)?.name || "UnknownError";
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error(`[useAudioCapture] Microphone initialization failed (${name}): ${detail}`);
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      try { if (workletNode) { workletNode.port.onmessage = null; workletNode.disconnect(); } } catch { /* best-effort cleanup */ }
+      try { sourceNode?.disconnect(); } catch { /* best-effort cleanup */ }
+      try { analyserNode?.disconnect(); } catch { /* best-effort cleanup */ }
+      acquiredStream?.getTracks().forEach(track => track.stop());
+      if (processorRef.current === workletNode) processorRef.current = null;
+      if (analyserRef.current === analyserNode) analyserRef.current = null;
+      if (mediaStreamRef.current === acquiredStream) mediaStreamRef.current = null;
+      if (audioContextRef.current === openedContext) audioContextRef.current = null;
+      if (openedContext) await openedContext.close().catch(() => {});
+      pttActiveRef.current = false;
+      activatedSocketRef.current = null;
+      setMicError(explainMicrophoneFailure(error));
       setIsMicActive(false);
+      setAudioLevel(0);
       setVoiceState("idle");
     }
   }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
 
+  useEffect(() => {
+    if (!wakeWordModeAvailable || voiceConnectionState !== "connected" || wakeWordStartupAttemptedRef.current) return;
+    wakeWordStartupAttemptedRef.current = true;
+    wakeWordModeRef.current = true;
+    void startRecording().then(() => {
+      const socket = wsRef.current;
+      if (mediaStreamRef.current && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "enable_wake_word" }));
+      } else {
+        wakeWordModeRef.current = false;
+        setWakeWordActive(false);
+        setMicError("Wake-word listening could not start. Allow microphone access in Windows Settings, then click the orb to retry voice input.");
+        wakeWordStartupAttemptedRef.current = false;
+      }
+    });
+  }, [wakeWordModeAvailable, voiceConnectionState, startRecording]);
+
   // Stop microphone capture
   const stopRecording = useCallback((preservePlaybackContext = false) => {
     pttActiveRef.current = false;
-    wakeMonitoringActiveRef.current = false;
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "wake_monitor_stop" }));
-    }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -571,6 +820,29 @@ export function useAudioCapture() {
   }, []);
   stopCaptureRef.current = stopRecording;
 
+  const cancelVoice = useCallback(() => {
+    pttActiveRef.current = false;
+    activatedSocketRef.current = null;
+    pendingBargeAudioRef.current = [];
+    preRollRef.current = [];
+    bargeResumePendingRef.current = false;
+    pendingTextCommandRef.current = null;
+    activeTextOnlyRequestRef.current = null;
+    playbackGenerationRef.current += 1;
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
+    if (activeSourceNodeRef.current) {
+      try { activeSourceNodeRef.current.stop(); } catch {}
+      activeSourceNodeRef.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "deactivate" }));
+    }
+    if (!wakeWordModeRef.current) stopRecording();
+    setVoiceState("idle");
+  }, [setVoiceState, stopRecording]);
+
   const resumeAudio = useCallback(async () => {
     if (audioContextRef.current && audioContextRef.current.state === "suspended") {
       await audioContextRef.current.resume();
@@ -589,10 +861,11 @@ export function useAudioCapture() {
     if (pttActiveRef.current) {
       pttActiveRef.current = false;
       activatedSocketRef.current = null;
-      setIsMicActive(false);
       finalizeListening();
-      // The always-on local wake monitor keeps the microphone session alive if configured.
+      // Keep audio local while Vanessa responds so onset detection can support
+      // barge-in; PCM is sent to ASR only while PTT is active.
     } else {
+      // Acquire the microphone only after an explicit PTT action.
       await startRecording();
       if (!mediaStreamRef.current) return;
       if (voiceStateRef.current === "speaking") {
@@ -603,43 +876,26 @@ export function useAudioCapture() {
       pendingBargeAudioRef.current = [];
       bargeResumePendingRef.current = false;
       pttActiveRef.current = true;
-      setIsMicActive(true);
       setVoiceState("listening");
       setPartialTranscript("");
       if (wsRef.current) activateConnectedSocket(wsRef.current);
     }
-  }, [startRecording, setVoiceState, finalizeListening, activateConnectedSocket, triggerBargeIn]);
-
-  const startWakeMonitoring = useCallback(async () => {
-    if (wakeMonitoringActiveRef.current || import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false") return;
-    try {
-      await startRecording();
-      if (!mediaStreamRef.current || wsRef.current?.readyState !== WebSocket.OPEN) {
-        setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: "Microphone or local voice service is unavailable." }));
-        return;
-      }
-      wakeMonitoringActiveRef.current = true;
-      setIsMicActive(pttActiveRef.current);
-      wsRef.current.send(JSON.stringify({ type: "wake_monitor_start" }));
-      setWakeWordStatus((current) => ({ ...current, available: true, ready: true, listening: true, state: "listening" }));
-    } catch (error) {
-      setWakeWordStatus((current) => ({ ...current, available: false, ready: false, listening: false, state: "error", reason: error instanceof Error ? error.message : String(error) }));
-    }
-  }, [startRecording]);
-
-  startWakeMonitoringRef.current = startWakeMonitoring;
+  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
 
   useEffect(() => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false") connectVoiceWs();
+    else setVoiceConnectionState("disabled");
     return () => {
       pttActiveRef.current = false;
-      wakeMonitoringActiveRef.current = false;
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       processorRef.current?.disconnect();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       audioContextRef.current?.close().catch(() => {});
+      pendingTextCommandRef.current = null;
       if (wsRef.current) {
-        wsRef.current.close();
+        const ws = wsRef.current;
+        wsRef.current = null;
+        ws.close();
       }
     };
   }, [connectVoiceWs]);
@@ -651,9 +907,16 @@ export function useAudioCapture() {
     partialTranscript,
     providerStatus,
     micError,
-    wakeWordStatus,
-    wakeWordActivationId,
-    lastFinalTranscript,
+    microphoneTestState,
+    microphoneTestMessage,
+    testMicrophone,
+    speechOutputTestState,
+    speechOutputTestMessage,
+    testSpeechOutput,
+    voiceConnectionState,
+    wakeWordActive,
+    submitTextCommand,
+    cancelVoice,
     startRecording,
     stopRecording,
     toggleRecording,

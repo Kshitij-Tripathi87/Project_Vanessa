@@ -1,0 +1,4 @@
+2026-10-18T14:09:00Z [INFO] SYNTHETIC FIXTURE ONLY: incident-lab sample data; not production telemetry
+2026-10-18T14:10:00Z [ERROR] TypeError: Cannot read properties of undefined (reading 'discountRate')
+2026-10-18T14:18:00Z [ERROR] discountRate was missing in checkout request
+2026-10-18T14:25:30Z [ERROR] Cannot read properties of null

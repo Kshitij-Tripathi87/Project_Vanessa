@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
-export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "error";
+export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
+export type TaskStage = "idle" | "accepted" | "planning" | "executing" | "verifying" | "completed" | "partial" | "failed" | "cancelled";
 
 interface VanessaState {
   voiceState: VoiceState;
@@ -11,7 +12,11 @@ interface VanessaState {
   auditLogs: AuditEntry[];
   transcript: string;
   lastResponse: string;
-  voiceProvider: "elevenlabs" | "fish" | "mock";
+  voiceProvider: "sarvam" | "fish" | "elevenlabs" | "local" | "mock";
+  taskStage: TaskStage;
+  currentRequestId: string | null;
+  currentTaskId: string | null;
+  progressMessage: string;
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -21,7 +26,10 @@ interface VanessaState {
   addAuditLog: (entry: AuditEntry) => void;
   setTranscript: (text: string) => void;
   setLastResponse: (text: string) => void;
-  setVoiceProvider: (provider: "elevenlabs" | "fish" | "mock") => void;
+  setVoiceProvider: (provider: "sarvam" | "fish" | "elevenlabs" | "local" | "mock") => void;
+  setTaskStage: (stage: TaskStage, message?: string) => void;
+  setCurrentRequestId: (requestId: string | null) => void;
+  setCurrentTaskId: (taskId: string | null) => void;
 }
 
 export const useVanessaStore = create<VanessaState>((set) => ({
@@ -32,7 +40,11 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   auditLogs: [],
   transcript: "",
   lastResponse: "Vanessa online. What should I do?",
-  voiceProvider: "fish",
+  voiceProvider: "sarvam",
+  taskStage: "idle",
+  currentRequestId: null,
+  currentTaskId: null,
+  progressMessage: "Ready when you are.",
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),
@@ -60,4 +72,10 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   setTranscript: (transcript) => set({ transcript }),
   setLastResponse: (lastResponse) => set({ lastResponse }),
   setVoiceProvider: (voiceProvider) => set({ voiceProvider }),
+  setTaskStage: (taskStage, progressMessage) => set((state) => ({
+    taskStage,
+    progressMessage: progressMessage || state.progressMessage,
+  })),
+  setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
+  setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
 }));

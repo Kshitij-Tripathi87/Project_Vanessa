@@ -4,6 +4,7 @@ import { planner } from "../core/planner.js";
 import { runPlan } from "../core/taskRunner.js";
 import { vanessaAgent } from "../agents/openjarvis.agent.js";
 import { Task } from "@vanessa/shared";
+import { createConnection } from "node:net";
 
 async function runSkillsTestSuite() {
   console.log("==================================================");
@@ -12,6 +13,20 @@ async function runSkillsTestSuite() {
 
   let passed = 0;
   let total = 0;
+  let skipped = 0;
+
+  const ollamaAvailable = await new Promise<boolean>((resolve) => {
+    const raw = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+    let endpoint: URL;
+    try { endpoint = new URL(raw.includes("://") ? raw : "http://" + raw); }
+    catch { resolve(false); return; }
+    const socket = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) || 11434 });
+    const finish = (available: boolean) => { socket.destroy(); resolve(available); };
+    socket.setTimeout(500);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
 
   async function assertTest(name: string, fn: () => Promise<boolean>) {
     total++;
@@ -120,39 +135,48 @@ async function runSkillsTestSuite() {
     return !verdict.passed && verdict.score < 0.5;
   });
 
-  // Test 6: Goal Job ReAct Execution via OpenJarvis Bridge
-  await assertTest("OpenJarvis Integration: Execute goal job via ReAct loop and verify structured thoughts/actions", async () => {
-    const goalResult = await vanessaAgent.runGoal("Research local AI models for desktop", ["web_search", "shell_exec"], 3);
-    const valid =
-      goalResult.success === true &&
-      goalResult.mode === "openjarvis_react" &&
-      Array.isArray(goalResult.steps) &&
-      goalResult.steps.length > 0 &&
-      Boolean(goalResult.final_answer);
+  // These two integration tests need a running local Ollama model; do not turn a missing
+  // optional developer service into a false CI regression.
+  if (!ollamaAvailable) {
+    total += 2;
+    skipped += 2;
+    console.log("⏭️ [SKIP] OpenJarvis Integration: Ollama is not reachable at the configured local endpoint.");
+    console.log("⏭️ [SKIP] Planner & TaskRunner: Ollama is not reachable at the configured local endpoint.");
+  } else {
+    // Test 6: Goal Job ReAct Execution via OpenJarvis Bridge
+    await assertTest("OpenJarvis Integration: Execute goal job via ReAct loop and verify structured thoughts/actions", async () => {
+      const goalResult = await vanessaAgent.runGoal("Research local AI models for desktop", ["web_search", "shell_exec"], 3);
+      const valid =
+        goalResult.success === true &&
+        goalResult.mode === "openjarvis_react" &&
+        Array.isArray(goalResult.steps) &&
+        goalResult.steps.length > 0 &&
+        Boolean(goalResult.final_answer);
 
-    return valid;
-  });
+      return valid;
+    });
 
-  // Test 7: End-to-End Planner DAG Execution with Skill Enriched Task
-  await assertTest("Planner & TaskRunner: End-to-end plan execution with skill enrichment and critic proof", async () => {
-    const plan = await planner.createPlan("Research local vector databases for desktop");
-    const researchTask = plan.tasks.find((t) => t.skillName === "web-research");
-    if (!researchTask) return false;
+    // Test 7: End-to-End Planner DAG Execution with Skill Enriched Task
+    await assertTest("Planner & TaskRunner: End-to-end plan execution with skill enrichment and critic proof", async () => {
+      const plan = await planner.createPlan("Research local vector databases for desktop");
+      const researchTask = plan.tasks.find((t) => t.skillName === "web-research");
+      if (!researchTask) return false;
 
-    const results = await runPlan(plan);
-    const completed = results.find((t) => t.id === researchTask.id);
+      const results = await runPlan(plan);
+      const completed = results.find((t) => t.id === researchTask.id);
 
-    return Boolean(
-      completed &&
-      completed.status === "success" &&
-      completed.skillName === "web-research" &&
-      completed.critic?.passed === true &&
-      completed.critic?.proof
-    );
-  });
+      return Boolean(
+        completed &&
+        completed.status === "success" &&
+        completed.skillName === "web-research" &&
+        completed.critic?.passed === true &&
+        completed.critic?.proof
+      );
+    });
+  }
 
-  console.log(`\nResults: ${passed}/${total} skills & critic tests passed.`);
-  if (passed !== total) {
+  console.log(`\nResults: ${passed}/${total} skills & critic tests passed; ${skipped} skipped (external service unavailable).`);
+  if (passed + skipped !== total) {
     process.exit(1);
   }
   process.exit(0);

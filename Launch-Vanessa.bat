@@ -1,28 +1,80 @@
 @echo off
-title Vanessa AI - Desktop Control Layer
-echo ========================================================
-echo           Starting Vanessa AI Desktop App
-echo ========================================================
-
+setlocal
+title Vanessa - Desktop Control Layer
 cd /d "%~dp0"
 
-echo [1/5] Checking Node.js and pnpm...
-node --version >nul 2>&1 || (echo ERROR: Node.js not found in PATH && pause && exit /b 1)
-pnpm --version >nul 2>&1 || (echo ERROR: pnpm not found in PATH && pause && exit /b 1)
+set "ENV_FILE=%~dp0.env"
+if defined VANESSA_CONFIG_HOME (
+  if not exist "%VANESSA_CONFIG_HOME%" mkdir "%VANESSA_CONFIG_HOME%" >nul 2>nul
+  set "ENV_FILE=%VANESSA_CONFIG_HOME%\.env"
+)
 
-echo [2/5] Starting Vanessa Orchestrator (port 4319)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4319 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \"pnpm --filter @vanessa/orchestrator dev\"' }"
+rem Explicit diagnostics bypass automatic repair so users can inspect the failure first.
+if /I "%~1"=="--doctor" goto doctor
 
-echo [3/5] Starting Vanessa Voice Agent (port 4500)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4500 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \"pnpm --filter @vanessa/voice-agent dev\"' }"
+rem The first launch bootstraps dependencies and local models; later launches go straight to the app.
+set "NEEDS_SETUP=0"
+if not exist "%ENV_FILE%" set "NEEDS_SETUP=1"
+if not exist "node_modules\dotenv\package.json" set "NEEDS_SETUP=1"
+if not exist "apps\desktop\node_modules\electron\package.json" set "NEEDS_SETUP=1"
+if not exist "services\orchestrator\node_modules\tsx\package.json" set "NEEDS_SETUP=1"
 
-echo [4/5] Starting Mobile Relay (port 4400)...
-powershell -Command "if (!(Get-NetTCPConnection -LocalPort 4400 -ErrorAction SilentlyContinue)) { Start-Process -NoNewWindow powershell -ArgumentList '-Command \"pnpm --filter @vanessa/relay dev\"' }"
+if not exist ".venv-voice\Scripts\python.exe" if exist "%ENV_FILE%" (
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*whisper" "%ENV_FILE%" >nul
+  if not errorlevel 1 set "NEEDS_SETUP=1"
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*voice" "%ENV_FILE%" >nul
+  if not errorlevel 1 set "NEEDS_SETUP=1"
+  findstr /I /R /C:"^[ ]*VOICE_ASR_PROVIDER[ ]*=[ ]*fish" "%ENV_FILE%" >nul
+  if not errorlevel 1 (
+    findstr /I /R /C:"^[ ]*VOICE_ALLOW_FALLBACK[ ]*=[ ]*true" "%ENV_FILE%" >nul
+    if not errorlevel 1 set "NEEDS_SETUP=1"
+  )
+)
 
-echo [5/5] Waiting for services to be ready...
-powershell -Command "Start-Sleep -Seconds 3"
+if "%NEEDS_SETUP%"=="0" (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify-local-setup.ps1" >nul
+  if errorlevel 1 set "NEEDS_SETUP=1"
+)
 
-echo [6/6] Launching Vanessa Native Desktop App...
-pnpm --filter @vanessa/desktop start
+if "%NEEDS_SETUP%"=="1" (
+  echo.
+  echo [Vanessa Setup] First-run dependencies or local voice runtime are missing.
+  echo [Vanessa Setup] This may install Node.js, Python, and Ollama with Windows Package Manager,
+  echo [Vanessa Setup] then download speech and language models. Model downloads need internet and disk space.
+  echo [Vanessa Setup] No cloud provider API key is required for the default local profile.
+  echo.
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup_windows.ps1"
+  if errorlevel 1 (
+    echo.
+    echo [ERROR] Vanessa setup failed. Read the message above, fix that prerequisite, and run this file again.
+    pause
+    exit /b 1
+  )
+  rem Refresh common user-scope install locations in this CMD process after setup.
+  set "PATH=%ProgramFiles%\nodejs;%LOCALAPPDATA%\Programs\nodejs;%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+)
 
-echo Vanessa Desktop session closed.
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js is not on PATH after setup. Reopen Windows Terminal and run this file again.
+  pause
+  exit /b 1
+)
+
+node scripts\launch-vanessa.cjs %*
+set "VANESSA_EXIT=%ERRORLEVEL%"
+echo.
+echo [Launcher] Session ended with exit code %VANESSA_EXIT%.
+if not "%VANESSA_EXIT%"=="0" pause
+exit /b %VANESSA_EXIT%
+
+:doctor
+where node >nul 2>nul
+if errorlevel 1 goto doctor_no_node
+node "%~dp0scripts\doctor.cjs" %*
+exit /b %ERRORLEVEL%
+
+:doctor_no_node
+echo [Doctor] Node.js is not available yet, so diagnostics cannot run.
+echo [Doctor] Run Launch-Vanessa.bat without --doctor once to install required prerequisites.
+exit /b 2

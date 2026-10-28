@@ -28,30 +28,38 @@ const action = (
   risk: RiskLevel = "low", selectable = true, tools: string[] = [],
 ): CatalogAction => ({ name, description, parameters, returns, risk, selectable, tools });
 
-/** Reviewed against the registered handlers, not the older YAML agent cards.
- * This describes existing behavior; it does not implement or repair an agent.
- * Canonical names only. Legacy aliases and the checkout coding/incident agents
- * remain in the registry for compatibility but are not planner capabilities.
+/** Reviewed against registered handlers and the Trustworthy Execution v1 policy.
+ * Only operations with explicit schemas and a safe runtime path are selectable.
+ * Legacy aliases remain accepted only at the policy boundary and never expose
+ * arbitrary shell commands through the testing/repair workflow.
  */
 export const AGENT_CATALOG: CatalogAgent[] = [
   {
     id: "developer",
-    purpose: "Send project coding, debugging, refactoring, implementation, and code-review requests to the existing Codex launcher. Also open an IDE or run an explicitly requested command.",
-    limitations: "Codex accepts only projectPath and prompt. It launches an interactive Windows terminal; no coding completion, diff, test evidence, or agent response is returned. Its runner context argument is ignored, so selected context must be included in prompt. Never promise the code is fixed merely because a terminal opened.",
+    purpose: "Run bounded project coding tasks through a managed Codex subprocess, and retain an explicit interactive handoff when requested.",
+    limitations: "codex.run_task requires Windows, an installed Codex CLI, a clean Git repository root, and a non-detached branch. It never commits or pushes. A completed CLI turn is execution evidence only; task success remains partial until independent tests/postconditions are verified. codex.open only opens an interactive terminal.",
     actions: [
-      action("codex.open", "Preferred action for ALL project coding work, even when the user does not say Codex. Preserve the user's task, constraints, relevant history, and completion criteria in prompt.", {
+      action("codex.run_task", "Temporarily unavailable: the current Codex runner is not bound to the Trustworthy Execution v1 repair-worktree and independent-verification contract.", {
+        projectPath: p("string", "Not accepted by the current release policy.", true),
+        prompt: p("string", "Not accepted by the current release policy.", true),
+        expectedBranch: p("string", "Not accepted by the current release policy."),
+        acceptanceCriteria: p("array", "Not accepted by the current release policy."),
+        allowedPaths: p("array", "Not accepted by the current release policy."),
+        timeoutMs: p("number", "Not accepted by the current release policy."),
+      }, "Blocked before autonomous coding begins. Use the registered checkout repair flow or an explicitly interactive user handoff; neither implies verified success.", "high", false, ["coding_run"]),
+      action("codex.open", "Use only when the user explicitly wants an interactive Codex terminal handoff; terminal launch does not mean the coding task was executed or verified.", {
         projectPath: p("string", "Absolute existing project directory; use the trusted current project in runtime context unless the user selected another project.", true),
         prompt: p("string", "Concrete coding instructions, including scope, relevant files if known, and the user's constraints. Do not fabricate repository findings.", true),
       }, "{success, status: started|failed, terminalPid?, projectPath?, output?, error?}. PID identifies the terminal. Started proves launch only.", "high"),
       action("vscode.open_project", "Open an existing project in VS Code; this does not perform coding work.", {
         path: p("string", "Existing project path.", true),
       }, "{success, message? or error?}; executable path is machine-dependent."),
-      action("terminal.run_command", "Run a concrete command explicitly requested by the user. Do not substitute this for Codex coding work or invent shell scripts.", {
-        command: p("string", "Literal requested shell command; runs with the service working directory, not an arbitrary project cwd.", true),
-      }, "{success, exitCode, stdout?, stderr?, error?, verification}; 30-second subprocess timeout.", "high"),
-      action("tests.run", "Run an explicitly supplied test command in the service working directory, independently of any uncompleted Codex session.", {
-        command: p("string", "Known test command supplied by the user or trusted project context.", true),
-      }, "{success, exitCode, stdout? or error?, verification}; 20-second subprocess timeout.", "high"),
+      action("terminal.run_command", "Unavailable: arbitrary shell execution is disabled until routed through a registered supervisor operation.", {
+        command: p("string", "Not accepted by the current execution policy.", true),
+      }, "Blocked before process launch.", "high", false),
+      action("tests.run", "Unavailable: free-form test commands are disabled. Use the canonical registered incident-lab test suite in an approved worktree.", {
+        command: p("string", "Not accepted by the current execution policy.", true),
+      }, "Blocked before process launch.", "high", false),
       action("claude_code.open", "Legacy Claude workspace action. Default only returns preparation text; explicit visibleTerminal attempts terminal launch.", {
         prompt: p("string", "Initial task.", true), visibleTerminal: p("boolean", "Whether to request the legacy visible terminal path."),
       }, "{success, status: ready|started, prompt, output, verification}; not coding completion. Not selectable while Codex is the supported coding route.", "high", false),
@@ -60,35 +68,54 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   {
     id: "windows",
     purpose: "Perform bounded Windows settings, application, and screenshot actions through PowerShell.",
-    limitations: "Windows only. Wi-Fi and Bluetooth radio actions depend on Windows hardware/API support and permissions. Brightness control uses WMI and may be unsupported on external displays. Volume uses the Windows Core Audio endpoint API and verifies the returned level. Arbitrary desktop clicking is not implemented.",
+    limitations: "Windows only; radio actions may need hardware/admin rights. Wi-Fi, Bluetooth, volume, and close-app handlers have success-returning failure paths, so their success flags do not independently prove the requested state. No arbitrary desktop clicking.",
     actions: [
-      action("wifi.restart_adapter", "Restart the detected Wi-Fi adapter; temporarily interrupts connectivity.", {}, "AgentResult succeeds only when the adapter is found and its observed post-restart state is Up; internet reachability is not independently verified.", "high", true, ["net_adapter_control"]),
+      action("wifi.restart_adapter", "Attempt Wi-Fi adapter restart; temporarily interrupts connectivity.", {}, "AgentResult with data.adapter and data.connected; reported connectivity can be optimistic.", "high", true, ["net_adapter_control"]),
       action("wifi.status", "Read the Wi-Fi adapter's observed status.", {}, "AgentResult with data.status or an unverified/unknown status.", "low", true, ["net_adapter_control"]),
-      action("bluetooth.enable", "Enable the Bluetooth radio and read back its observed state.", {}, "AgentResult reports success only when Windows grants the state change and the observed state matches the request.", "low", true, ["windows_setting_toggle"]),
-      action("bluetooth.disable", "Disable the Bluetooth radio and read back its observed state.", {}, "AgentResult reports success only when Windows grants the state change and the observed state matches the request.", "low", true, ["windows_setting_toggle"]),
-      action("volume.set", "Set the default Windows playback endpoint master volume and read the value back through Core Audio.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "Success requires the observed master-volume scalar to match the requested percentage within tolerance. Invalid ranges and Windows/API errors fail.", "low", true, ["audio_volume_set"]),
-      action("brightness.set", "Set the brightness of WMI-controllable Windows displays to a percentage and read the values back.", { level: p("number", "Integer brightness percentage from 0 to 100.", true) }, "Success requires all reported WMI-controlled displays to read back at the requested value; unsupported displays and mismatches fail.", "low", true, ["display_brightness_control"]),
-      action("brightness.adjust", "Raise or lower WMI-controllable Windows display brightness by a percentage-point delta.", { delta: p("number", "Non-zero integer adjustment from -100 to 100 percentage points.", true) }, "Reads the current brightness, applies a clamped change, and verifies all reported displays; unsupported displays and mismatches fail.", "low", true, ["display_brightness_control"]),
-      action("app.open", "Launch a supported Windows application or utility; use browser actions for website URLs.", { name: p("string", "Application alias such as File Explorer, Chrome, Edge, Calculator, Notepad, Windows Terminal, Task Manager, Settings, or VS Code.", true) }, "AgentResult records whether Windows accepted the launch request; it does not prove the window is visible or focused.", "low", true, ["windows_app_launch"]),
-      action("app.close", "Stop an application process and check that it no longer exists.", { name: p("string", "Process name to close.", true) }, "AgentResult succeeds when the process is absent after the stop request; invalid names and OS failures are returned as failures.", "high", true, ["process_control"]),
+      action("brightness.list", "List active displays that expose brightness control and their observed levels.", {}, "Verified discovery snapshot with display IDs, names and supported levels.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.get", "Read the observed brightness of one display, selected by ID or friendly name.", {
+        targetId: p("string", "Previously discovered display ID."), targetName: p("string", "Unique friendly display name when no ID is available."),
+      }, "Verified read-only display observation.", "low", true, ["windows_setting_toggle"]),
+      action("brightness.set", "Set display brightness and verify the requested value by read-back.", {
+        brightnessPercent: p("number", "Requested integer percentage from 0 to 100.", true),
+        targetId: p("string", "Previously discovered display ID."), targetName: p("string", "Unique friendly display name when no ID is available."),
+      }, "Verified display observation matching the requested brightness; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.list", "List discovered Bluetooth radios and their observed states.", {}, "Verified discovery snapshot with radio IDs, names and states.", "low", true, ["windows_setting_toggle"]),
+      action("bluetooth.status", "Read the observed Bluetooth radio state.", {
+        targetId: p("string", "Previously discovered Bluetooth radio ID."), targetName: p("string", "Unique friendly radio name when no ID is available."),
+      }, "Verified read-only Bluetooth observation.", "low", true, ["windows_setting_toggle"]),
+      action("bluetooth.set", "Set an explicit Bluetooth radio state and verify it by read-back.", {
+        state: p("string", "Explicit state: On or Off.", true), targetId: p("string", "Previously discovered Bluetooth radio ID."), targetName: p("string", "Unique friendly radio name when no ID is available."),
+      }, "Verified Bluetooth observation matching the requested state; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.enable", "Enable the Bluetooth radio and verify its observed state.", {}, "Verified Bluetooth observation showing On; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("bluetooth.disable", "Disable the Bluetooth radio and verify its observed state.", {}, "Verified Bluetooth observation showing Off; may require approval.", "high", true, ["windows_setting_toggle"]),
+      action("volume.get", "Read the actual default playback volume and mute state.", {}, "Verified Core Audio read-back with device identity, volume percentage and mute state.", "low", true, ["audio_volume_set"]),
+      action("volume.set", "Set playback volume and verify the actual output level by Core Audio read-back.", { level: p("number", "Requested percentage from 0 to 100.", true) }, "Verified Core Audio read-back matching the requested level; may require approval.", "high", true, ["audio_volume_set"]),
+      action("volume.mute", "Set playback mute explicitly and verify the actual mute state.", { muted: p("boolean", "Whether playback should be muted.", true) }, "Verified Core Audio read-back matching the requested mute state; may require approval.", "high", true, ["audio_volume_set"]),
+      action("app.open", "Launch an application by executable name; use browser actions for URLs.", { name: p("string", "Executable or supported name such as notepad, calculator, edge, or terminal.", true) }, "AgentResult indicating whether Windows accepted the launch request.", "low", true, ["windows_app_launch"]),
+      action("app.close", "Attempt to stop an application process.", { name: p("string", "Process name to close.", true) }, "AgentResult with process operation output; fallback can overstate success.", "high", true, ["process_control"]),
       action("screenshot.capture", "Capture the primary Windows screen to a temporary PNG.", {}, "AgentResult with data.path and artifact path, or failure."),
+      action("ui.inspect", "Inspect the foreground window and bounded accessible control metadata without reading input-field values.", {}, "Verified window identity and at most 120 control descriptors; input values are not read.", "low", true, ["windows_ui_automation"]),
+      action("ui.click", "Invoke a uniquely identified accessible foreground-window control only when its inspected window identity still matches.", {
+        windowHandle: p("string", "Handle from a recent ui.inspect result.", true),
+        expectedWindowTitle: p("string", "Exact inspected foreground-window title.", true),
+        expectedProcessId: p("number", "Process ID from the same inspection.", true),
+        automationId: p("string", "Exact inspected AutomationId when available."),
+        name: p("string", "Exact inspected accessible control name when no AutomationId is available."),
+        controlType: p("string", "Exact inspected control type."),
+      }, "Reports whether InvokePattern was accepted; does not claim a visual postcondition without independent verification.", "high", true, ["windows_ui_automation"]),
     ],
   },
   {
     id: "browser",
     purpose: "Open URLs or search results, including YouTube searches. Delegate limited web research to the Python bridge.",
-    limitations: "Browser open/search actions launch the system default browser unless Chrome or Edge is explicitly requested. Page inspection/clicks use Vanessa’s separate Playwright browser context, which is not automatically signed into the user’s profile. HTTP(S) navigation uses DNS-aware private/reserved-host checks; local HTML must be approved, and consequential clicks require confirmation.",
+    limitations: "Navigation prefers Edge then the default URL handler; it does not verify page loading. YouTube opens search results, not verified playback. The handler does not implement general click/fill/extract automation despite those declared tool names.",
     actions: [
-      action("browser.open_url", "Open a URL in the user’s default browser or an explicitly selected supported browser.", { url: p("string", "Complete HTTP(S) URL; embedded credentials and local/private destinations are denied by default.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; page load and user-visible state are not verified. Use browser.inspect_page for isolated Playwright inspection.", "low", true, ["browser_navigate"]),
-      action("browser.search", "Open Google search results in the user’s default browser or an explicitly selected supported browser.", { query: p("string", "Non-empty search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "Reports OS launch acceptance only; search result contents are not extracted or verified.", "low", true, ["browser_navigate"]),
-      action("youtube.search_and_play", "Open YouTube search results in the default browser or an explicitly selected supported browser.", { query: p("string", "Video or music search terms.", true), browser: p("string", "Optional browser target: chrome or edge; omit to use the system default browser.") }, "AgentResult with data.query and data.url; playback is not performed or verified.", "low", true, ["browser_navigate"]),
+      action("browser.open_url", "Open a URL in the browser.", { url: p("string", "Complete http(s) URL.", true) }, "AgentResult with data.url, artifacts, and navigation claims; page contents are not returned.", "low", true, ["browser_navigate"]),
+      action("browser.search", "Open Google search results for a query.", { query: p("string", "Search terms.", true) }, "AgentResult with query/search URL; not extracted search facts.", "low", true, ["browser_navigate"]),
+      action("youtube.search_and_play", "Open YouTube search results. Retained action name does not imply actual playback.", { query: p("string", "Video or music search terms.", true) }, "AgentResult with data.query and data.url; do not claim playback was verified.", "low", true, ["browser_navigate"]),
       action("browser.research", "Invoke a limited Python web-search goal branch.", { goal: p("string", "Research request.", true) }, "AgentResult wrapping bridge steps/final_answer; bridge synthesis and success reports are limited and require Python dependencies.", "medium"),
-      action("browser.read_title", "Read the title from a requested URL or the active browser page.", { url: p("string", "Optional reference URL.") }, "AgentResult with observed rendered page title and URL.", "low", true, ["browser_navigate"]),
-      action("browser.inspect_page", "Inspect rendered page text and up to 50 links at a URL or the active page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with observed title, URL, rendered text and links.", "low", true, ["browser_extract"]),
-      action("browser.extract", "Extract readable rendered text and links from a URL or active browser page.", { url: p("string", "Optional HTTP(S) URL; omit to inspect the current page.") }, "AgentResult with bounded page text and link metadata.", "low", true, ["browser_extract"]),
-      action("browser.verify_page_state", "Verify expected text against rendered page text, not page source markup.", { url: p("string", "HTTP(S) URL to inspect.", true), expectedText: p("string", "Text that must be visible in the rendered page.", true) }, "AgentResult succeeds only when navigation succeeds and expected text is found.", "low", true, ["browser_extract"]),
-      action("browser.open_file", "Open an approved local HTML/XHTML file in the Playwright browser session.", { path: p("string", "Path to an existing HTML file inside an approved folder.", true) }, "AgentResult with observed title and file URL; target must be inside an approved folder.", "medium", true, ["browser_open_file"]),
-      action("browser.click", "Click a page locator, optionally navigating to a URL first. Requires explicit confirmation because clicks can submit or mutate data.", { selector: p("string", "CSS or Playwright locator selector.", true), url: p("string", "Optional HTTP(S) URL; omit to use the active page.") }, "AgentResult with resulting URL/title/text or an explicit error.", "high", true, ["browser_click"]),
+      action("browser.read_title", "Placeholder tab-title inspection.", { url: p("string", "Optional reference URL.") }, "Fixed title Browser Active Tab; no actual tab inspection.", "low", false),
     ],
   },
   {
@@ -162,16 +189,26 @@ export const AGENT_CATALOG: CatalogAgent[] = [
     ],
   },
   {
-    id: "testing",
-    purpose: "Execute a known regression command and return captured test output independently of coding-agent completion.",
-    limitations: "Runs in service cwd with a 25-second timeout. Success also depends on pass wording in stdout. A branch field is metadata; it does not switch branches. Do not schedule this after codex.open as if coding work had finished.",
+    id: "coding",
+    purpose: "Inspect the fixed incident-lab checkout target and prepare a narrowly scoped repair in a dedicated Git worktree.",
+    limitations: "The repair target and patch contract are fixed to packages/incident-lab/src/checkout.ts. A patch is only prepared after exact preimage checks, on-disk readback, diff inspection, and base-checkout preservation checks. It does not run tests or claim the repair is complete. Dirty base checkouts are blocked; no commit, push, merge, or deployment is performed.",
     actions: [
-      action("testing.verify_regression", "Execute a known test command and report captured outcome.", {
-        command: p("string", "Test command supplied by the user or trusted context.", true),
-        branch: p("string", "Optional reporting label; no branch checkout occurs."),
-        autoDeploy: p("boolean", "Must be false; this action does not deploy."),
-      }, "AgentResult with data.exitStatus/testsPassed/testOutput/deploymentStatus plus verification and evidence.", "high", true, ["test_run", "regression_check"]),
-      action("testing.run_checks", "Alias operation for the same regression subprocess.", { command: p("string", "Known check command.", true), autoDeploy: p("boolean", "Must be false.") }, "Same test result contract as testing.verify_regression.", "high", true, ["test_run"]),
+      action("coding.inspect_changes", "Inspect source evidence for the known checkout defect without modifying files.", {
+        target: p("string", "Optional allow-listed target; use packages/incident-lab/src/checkout.ts."),
+      }, "AgentResult with source line/snippet evidence when present; missing or fixed source returns inconclusive.", "low", true, ["file_read"]),
+      action("coding.prepare_patch", "Prepare the registered checkout null-guard patch in an isolated task worktree. Requires approval and returns workspaceId plus diffHash only when the actual patch and isolation checks pass.", {}, "AgentResult with workspaceId, worktreePath, baseCommit, diffHash and changedFiles. Regression tests have not run yet.", "high", true, ["file_read", "file_write", "apply_patch"]),
+    ],
+  },
+  {
+    id: "testing",
+    purpose: "Run one registered regression suite in an approved repair worktree and return structured process/test evidence.",
+    limitations: "No arbitrary command, cwd, executable, or environment input is accepted. Only incident-lab.regression is registered. The operation requires workspaceId and expectedDiffHash from a successful coding.prepare_patch result and separate approval. A non-zero exit, missing/invalid summary, zero tests, timeout, truncated output, leftover descendants, or failed base-worktree check can never produce success.",
+    actions: [
+      action("testing.run_incident_lab", "Run the registered incident-lab regression suite against the exact worktree and diff digest returned by coding.prepare_patch.", {
+        suiteId: p("string", "Must be incident-lab.regression.", true),
+        workspaceId: p("string", "Whole-string reference to the successful coding.prepare_patch workspaceId, e.g. $t2.result.workspaceId.", true),
+        expectedDiffHash: p("string", "Whole-string reference to the successful coding.prepare_patch SHA-256 diffHash, e.g. $t2.result.diffHash.", true),
+      }, "AgentResult with process status, exit code, structured test counts, diff digest and output digest, truncation metadata, termination proof and base-checkout preservation. Success requires exit 0 and all tests passed.", "high", true, ["test_run", "regression_check"]),
     ],
   },
   {
@@ -191,10 +228,10 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "vanessa",
-    purpose: "General conversational answers through Gemini and limited Python-bridge status/scheduling operations.",
+    purpose: "General conversational answers through the configured LLM and limited Python-bridge status/scheduling operations.",
     limitations: "An answer does not execute tools. Bridge actions need Python/OpenJarvis installed. Schedule creation stores a record but Vanessa startup does not start the scheduler loop. The goal bridge is keyword branching, not general iterative reasoning.",
     actions: [
-      action("vanessa.ask", "Answer a general question or explain unavailable capabilities; never use it to pretend to execute a coding or OS action.", { query: p("string", "Question to answer.", true) }, "{success, content, mode}; a concise conversational reply from Gemini."),
+      action("vanessa.ask", "Answer a general question or explain unavailable capabilities; never use it to pretend to execute a coding or OS action.", { query: p("string", "Question to answer.", true) }, "{success, content, mode}; a concise conversational reply from the configured LLM."),
       action("vanessa.status", "Query Python bridge tool/scheduler metadata.", {}, "Bridge {success, brain, tools, scheduler} or failure; metadata does not prove every integration works."),
       action("vanessa.schedule_create", "Register an explicitly specified schedule; do not promise execution without a running scheduler.", {
         prompt: p("string", "Task to register.", true), type: p("string", "Scheduler type supported by the bridge, such as cron.", true),
@@ -230,12 +267,8 @@ export function catalogAccepts(agent: string, name: string, params: Record<strin
     if (field.type === "number" && !Number.isFinite(value)) return false;
   }
   if (name === "volume.set" && typeof params.level === "number" && (params.level < 0 || params.level > 100)) return false;
-  if (name === "brightness.set" && typeof params.level === "number" &&
-      (!Number.isInteger(params.level) || params.level < 0 || params.level > 100)) return false;
-  if (name === "brightness.adjust" && typeof params.delta === "number" &&
-      (!Number.isInteger(params.delta) || params.delta === 0 || params.delta < -100 || params.delta > 100)) return false;
-  if (["browser.open_url", "browser.search", "youtube.search_and_play"].includes(name) &&
-      params.browser !== undefined && params.browser !== "chrome" && params.browser !== "edge") return false;
+  if (name === "brightness.set" && typeof params.brightnessPercent === "number" && (params.brightnessPercent < 0 || params.brightnessPercent > 100 || !Number.isInteger(params.brightnessPercent))) return false;
+  if (name === "bluetooth.set" && params.state !== "On" && params.state !== "Off") return false;
   if (params.autoDeploy === true) return false;
   if (name === "codex.open" && String(params.prompt).includes("\0")) return false;
   return true;

@@ -4,13 +4,13 @@ import { useVanessaStore } from "../stores/vanessaStore.js";
 export function useElevenLabs() {
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const { setVoiceState, setLastResponse, setActivePlan } = useVanessaStore();
+  const { setVoiceState, setLastResponse, setActivePlan, setTaskStage, setCurrentRequestId } = useVanessaStore();
 
   const startSession = useCallback(async () => {
     try {
       setVoiceState("listening");
       // Connect to ElevenLabs session endpoint or local bridge
-      const res = await fetch("http://127.0.0.1:4139/voice/session");
+      const res = await fetch("http://127.0.0.1:4319/voice/session");
       const data = (await res.json()) as any;
 
       if (data.signedUrl) {
@@ -27,14 +27,28 @@ export function useElevenLabs() {
 
   const executeSpeechCommand = useCallback(
     async (command: string, language: string = "en") => {
+      setTaskStage("accepted", "Request received.");
       setVoiceState("thinking");
       try {
         const result = await window.vanessa.executeCommand({ command, language });
+        if (result.requestId) setCurrentRequestId(result.requestId);
         if (result.plan) {
           setActivePlan(result.plan);
         }
         setLastResponse(result.spokenSummary);
-        setVoiceState(result.status === "awaiting_approval" ? "listening" : "speaking");
+        if (result.status === "awaiting_approval") {
+          setTaskStage("executing", "I need your approval before continuing.");
+          setVoiceState("listening");
+        } else if (result.status === "success") {
+          setTaskStage("completed", "Done — result verified.");
+          setVoiceState("speaking");
+        } else if (result.status === "failed" || result.status === "partial") {
+          setTaskStage("failed", "The task could not be fully completed.");
+          setVoiceState("error");
+        } else {
+          setTaskStage("executing", "Working on it.");
+          setVoiceState("speaking");
+        }
 
         // Speech synthesis if Web Speech API available
         if ("speechSynthesis" in window) {
@@ -60,7 +74,7 @@ export function useElevenLabs() {
         return { status: "failed", spokenSummary: "Could not execute task." };
       }
     },
-    [setVoiceState, setActivePlan, setLastResponse]
+    [setVoiceState, setActivePlan, setLastResponse, setTaskStage, setCurrentRequestId]
   );
 
   return {

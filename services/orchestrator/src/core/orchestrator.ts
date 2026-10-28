@@ -9,18 +9,59 @@ import {
 } from "@vanessa/shared";
 import { planner } from "./planner.js";
 import {
-  activePlanMap,
   activeTasks,
   approveTask as approveTaskRunner,
   rejectTask as rejectTaskRunner,
   runPlan,
   triggerKillSwitch,
+  cancelTaskWithProof,
+  type CancellationResolution,
 } from "./taskRunner.js";
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
 import { narrator } from "./narrator.js";
+import { formatLlmError } from "./llmDiagnostics.js";
+import { modelRouter } from "./router.js";
+import { cancelCodexTask } from "../agents/codex-task-runner.js";
 
 export class VanessaOrchestrator {
+  private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
+
+  async cancelRequest(requestId: string): Promise<{ cancelled: number; executionFinished: number; terminationUnconfirmed: number; planningOnly: boolean }> {
+    let request = this.requests.get(requestId);
+    if (!request) {
+      // Keep a bounded, time-scoped cancellation tombstone. Otherwise a cancel
+      // that arrives just before submit is forgotten and the same requestId can
+      // start executing afterward.
+      const controller = new AbortController();
+      controller.abort();
+      request = { controller, updatedAt: Date.now() };
+      this.requests.set(requestId, request);
+      return { cancelled: 0, executionFinished: 0, terminationUnconfirmed: 0, planningOnly: true };
+    }
+    request.controller.abort();
+    const plannedTasks = request.plan?.tasks || [];
+    const work: Promise<CancellationResolution>[] = [];
+    for (const plannedTask of plannedTasks) {
+      // runPlan owns cloned task records while execution is in flight.
+      const activeTask = activeTasks.get(plannedTask.id);
+      // Optional chaining made the equality true when both sides were undefined,
+      // which allowed task to infer as possibly undefined.
+      const task = activeTask && activeTask.parentId === request.plan?.id ? activeTask : plannedTask;
+      if (!["pending", "running", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) continue;
+      work.push(cancelTaskWithProof(
+        task,
+        "Request cancellation was requested. Final state is based on process termination evidence."
+      ));
+    }
+    const results = await Promise.all(work);
+    return {
+      cancelled: results.filter((result) => result === "cancelled").length,
+      executionFinished: results.filter((result) => result === "execution_finished").length,
+      terminationUnconfirmed: results.filter((result) => result === "termination_unconfirmed").length,
+      planningOnly: plannedTasks.length === 0,
+    };
+  }
   constructor() {
     // Reconcile interrupted tasks from prior crashes on startup
     this.reconcileTasks();
@@ -45,11 +86,48 @@ export class VanessaOrchestrator {
   }
 
   async executeCommand(payload: ExecuteCommandPayload): Promise<ExecuteCommandResult> {
+    payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
+    // Retain recent completed/approval requests for scoped cancellation, bounded
+    // by the command envelope lifetime. Never cancel another desktop request.
+    for (const [id, entry] of this.requests) {
+      if (entry.updatedAt < Date.now() - 10 * 60_000) this.requests.delete(id);
+    }
+    const requestId = payload.requestId!;
+    const existing = this.requests.get(requestId);
+    if (existing) return this.executeAcceptedCommand(payload, existing);
+    if (this.requests.size >= 1000) throw new Error("Too many recent requests; try again later.");
+    const request = { controller: new AbortController(), updatedAt: Date.now() };
+    this.requests.set(requestId, request);
+    return this.executeAcceptedCommand(payload, request);
+  }
+
+  private async executeAcceptedCommand(payload: ExecuteCommandPayload, request: { controller: AbortController; plan?: Plan; updatedAt: number }): Promise<ExecuteCommandResult> {
     // Also normalize direct API/legacy callers, not just the two desktop clients.
     payload = createCommandRequest({ ...payload, source: payload.source || "desktop" });
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
     const requestId = payload.requestId || envelope?.requestId;
+    if (request.controller.signal.aborted) {
+      const cancelled: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "Request cancelled before execution. No tasks were started.",
+        verification: {
+          verified: false,
+          postconditions: ["The request was cancelled before task planning or execution."],
+          outcome: "cancelled",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: `request-cancelled-before-submit-${requestId}`,
+        timestamp: startTime,
+        agent: "orchestrator",
+        action: "request.cancelled_before_submit",
+        status: "cancelled",
+        details: "A cancellation tombstone prevented a late or duplicate submission from starting planner work.",
+      });
+      return cancelled;
+    }
     console.log(`[Orchestrator] received request=${requestId} source=${payload.source} characters=${command.length} historyTurns=${conversationContext.length}`);
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
@@ -103,14 +181,17 @@ export class VanessaOrchestrator {
     let plan: Plan;
     try {
       console.log(`[Planner] start request=${requestId}`);
-      plan = await planner.createPlan(command, conversationContext, payload);
+      plan = await planner.createPlan(command, conversationContext, payload, request.controller.signal);
       console.log(`[Planner] ready request=${requestId} plan=${plan.id} elapsedMs=${Date.now() - startTime} tasks=${plan.tasks.map((task) => `${task.id}:${task.agent}/${task.action}`).join(",")}`);
-    } catch {
-      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime}; no tasks started. Check Gemini status above or plan validation.`);
+    } catch (error) {
+      const diagnostic = formatLlmError(error);
+      console.error(`[Planner] failed request=${requestId} elapsedMs=${Date.now() - startTime} error=${diagnostic}; no tasks started.`);
       const result: ExecuteCommandResult = {
         status: "failed",
         requestId,
-        spokenSummary: "I couldn't create a plan with Gemini. No tasks were started. Check the Gemini configuration or try again.",
+        spokenSummary: request.controller.signal.aborted
+          ? "Request cancelled before execution. No tasks were started."
+          : `I couldn't create a valid plan with ${modelRouter.activeProvider}. No tasks were started. Check the selected planner provider or try again.`,
         verification: {
           verified: false,
           postconditions: ["Planning failed before task execution."],
@@ -123,20 +204,22 @@ export class VanessaOrchestrator {
         agent: "orchestrator",
         action: "planning.failed",
         status: "error",
-        details: "Gemini planning failed; no task execution or keyword fallback was attempted.",
+        details: `${modelRouter.activeProvider} planning ${request.controller.signal.aborted ? "cancelled" : "failed"}; request=${requestId} error=${diagnostic}; no task execution or keyword fallback was attempted.`,
       });
       if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
       return result;
     }
 
     // 2. Execute plan through parallel DAG task runner
+    request.plan = plan;
+    if (request.controller.signal.aborted) await this.cancelRequest(requestId!);
     const tasks = await runPlan(plan);
     plan.tasks = tasks;
 
     // 3. Inspect results to build spoken response
     const pendingApproval = tasks.filter((t) => t.status === "awaiting_approval");
     const failedTasks = tasks.filter((t) => t.status === "failed");
-    const partialTasks = tasks.filter((t) => t.status === "partial" || t.status === "blocked" || t.status === "expired");
+    const partialTasks = tasks.filter((t) => ["partial", "blocked", "expired", "cancelled", "termination_unconfirmed", "pending", "running", "planning", "cancel_requested"].includes(t.status));
     const successTasks = tasks.filter((t) => t.status === "success");
 
     let status: ExecuteCommandResult["status"] = "success";
@@ -203,13 +286,13 @@ export class VanessaOrchestrator {
     return rejectTaskRunner(taskId);
   }
 
-  cancelAll(): void {
-    triggerKillSwitch();
+  cancelAll(): Promise<void> {
+    return triggerKillSwitch();
   }
 
   getSystemStatus(): SystemStatus {
     const activeTasksCount = [...activeTasks.values()].filter(
-      (t) => t.status === "running" || t.status === "pending" || t.status === "awaiting_approval"
+      (t) => t.status === "running" || t.status === "pending" || t.status === "awaiting_approval" || t.status === "termination_unconfirmed"
     ).length;
 
     return {
@@ -239,10 +322,6 @@ export class VanessaOrchestrator {
       return `${prefix}Aapka task complete ho gaya hai.`;
     }
 
-    if ((lower.includes("investigate") || lower.includes("checkout")) && successTasks.some((task) => task.agent === "coding" || task.agent === "incident")) {
-      return `${prefix}I investigated the checkout failure. The root cause was an unhandled null promo object in calculateTotal, matching previous incident INC-842 and the runbook. I prepared a fix in an isolated branch, ran the regression tests which passed completely, and kept deployment blocked.`;
-    }
-
     if (successTasks.length === 1) {
       const t = successTasks[0];
       if (t.result?.content) return `${prefix}${t.result.content}`;
@@ -266,7 +345,7 @@ export class VanessaOrchestrator {
       return `${prefix}Done. Successfully completed ${actions.join(" and ")}.`;
     }
 
-    return `${prefix}All requested tasks have completed successfully.`;
+    return `${prefix}No verifiable completion summary is available. Check the task evidence and final statuses before treating this request as complete.`;
   }
 }
 

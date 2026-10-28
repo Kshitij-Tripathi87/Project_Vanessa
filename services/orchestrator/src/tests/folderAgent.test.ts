@@ -15,8 +15,8 @@ test("resolves approved files and finds the containing project root", async () =
   const result = await new FolderAgent({ openTarget: async () => undefined }).execute("folder.resolve", { target });
   assert.equal(result.success, true);
   assert.equal((result.data as any).kind, "code");
-  assert.equal((result.data as any).projectRoot, root);
-  assert.equal((result.data as any).targetPath, target);
+  assert.equal((result.data as any).projectRoot, await fs.realpath(root));
+  assert.equal((result.data as any).targetPath, await fs.realpath(target));
   await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -25,11 +25,12 @@ test("opens a target through the injected desktop adapter", async () => {
   privacyGuard.addAllowedFolder(root);
   const target = path.join(root, "note.txt");
   await fs.writeFile(target, "hello", "utf8");
+  const canonicalTarget = await fs.realpath(target);
   const calls: unknown[][] = [];
   const agent = new FolderAgent({ platform: "win32", openTarget: async (pathValue, mode, isDirectory) => { calls.push([pathValue, mode, isDirectory]); } });
   const result = await agent.execute("folder.open", { target, mode: "explorer" });
   assert.equal(result.success, true);
-  assert.deepEqual(calls[0], [target, "explorer", false]);
+  assert.deepEqual(calls[0], [canonicalTarget, "explorer", false]);
   await fs.rm(root, { recursive: true, force: true });
 });
 

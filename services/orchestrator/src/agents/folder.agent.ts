@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { AgentResult, AgentRunContext, AgentTask, SpecialistAgent } from "@vanessa/shared";
 import { privacyGuard } from "../core/privacy.js";
 import { resolvePlannerWorkspace } from "../core/contextBuilder.js";
+import { buildPowerShellEnvironment } from "./powershell.js";
 
 const execFileAsync = promisify(execFile);
 type OpenMode = "explorer" | "default";
@@ -54,25 +55,52 @@ export class FolderAgent implements SpecialistAgent {
       case "folder.resolve": {
         const resource = await this.resolveTarget(String(params.target || params.path || ""), params.basePath);
         let openedExplorer = false;
-        if (params.openExplorer === true && (process.env.FAKE !== "1" || this.openTargetOverride)) {
+        const openExplorerRequested = params.openExplorer === true;
+        const openExplorerSimulated = openExplorerRequested && process.env.FAKE === "1" && !this.openTargetOverride;
+        if (openExplorerRequested && !openExplorerSimulated) {
           await this.openTarget(resource.targetPath, "explorer", resource.kind === "directory");
           openedExplorer = true;
         }
-        const detail = "Resolved " + resource.kind + " at " + resource.targetPath;
+        const resolvedDetail = "Resolved " + resource.kind + " at " + resource.targetPath;
+        const detail = openExplorerSimulated
+          ? resolvedDetail + " Filesystem resolution succeeded, but opening Explorer was simulated and not performed."
+          : resolvedDetail;
         return {
-          agentId: this.id, status: "completed", success: true, summary: detail,
-          spokenSummary: openedExplorer ? "Located the resource and opened it in File Explorer." : "Located the requested resource.",
-          evidence: [{ description: detail, source: resource.targetPath, timestamp: new Date().toISOString(), confidence: 1 }],
+          agentId: this.id,
+          status: openExplorerSimulated ? "partial" : "completed",
+          success: !openExplorerSimulated,
+          summary: detail,
+          spokenSummary: openExplorerSimulated
+            ? "I resolved the resource path, but this simulated run did not open File Explorer."
+            : openedExplorer ? "Located the resource and opened it in File Explorer." : "Located the requested resource.",
+          evidence: [{
+            description: detail, source: resource.targetPath, timestamp: new Date().toISOString(), confidence: 1,
+            data: { outcome: openExplorerSimulated ? "simulated" : "succeeded", pathResolved: true, openExplorerRequested, openedExplorer, simulated: openExplorerSimulated },
+          }],
           artifacts: [resource.targetPath],
-          verification: { passed: true, details: "Canonical path exists inside an approved folder." },
-          data: { ...resource, path: resource.targetPath, fileReferences: [resource.targetPath], openedExplorer, verifiedFilesystemResults: { path: resource.targetPath, exists: true } },
+          verification: { passed: !openExplorerSimulated, details: detail },
+          data: {
+            outcome: openExplorerSimulated ? "simulated" : "succeeded",
+            simulated: openExplorerSimulated,
+            ...resource, path: resource.targetPath, fileReferences: [resource.targetPath], openedExplorer,
+            verifiedFilesystemResults: { path: resource.targetPath, exists: true },
+          },
         };
       }
       case "folder.open": {
         const resource = await this.resolveTarget(String(params.target || params.path || ""), params.basePath);
         const mode: OpenMode = params.mode === "explorer" ? "explorer" : "default";
         if (process.env.FAKE === "1" && !this.openTargetOverride) {
-          throw new Error("Opening was skipped because FAKE=1; no desktop launch was performed.");
+          const detail = "Simulation only: the resource was resolved, but the desktop open request was not performed.";
+          return {
+            agentId: this.id, status: "partial", success: false, summary: detail,
+            spokenSummary: "This was a simulation. The file or folder was not opened.",
+            evidence: [{ description: detail, source: resource.targetPath, timestamp: new Date().toISOString(), confidence: 1,
+              data: { outcome: "simulated", simulated: true, processStarted: false, pathResolved: true, opened: false } }],
+            artifacts: [],
+            verification: { passed: false, details: detail },
+            data: { outcome: "simulated", simulated: true, processStarted: false, path: resource.targetPath, opened: false },
+          };
         }
         await this.openTarget(resource.targetPath, mode, resource.kind === "directory");
         const detail = "Operating system accepted the open request for " + resource.targetPath;
@@ -200,7 +228,7 @@ export class FolderAgent implements SpecialistAgent {
         await execFileAsync("explorer.exe", args, { windowsHide: true, timeout: 5000 });
       } else {
         await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Start-Process -FilePath $env:VANESSA_OPEN_TARGET"], {
-          windowsHide: true, timeout: 5000, env: { ...process.env, VANESSA_OPEN_TARGET: targetPath },
+          windowsHide: true, timeout: 5000, env: buildPowerShellEnvironment({ VANESSA_OPEN_TARGET: targetPath }),
         });
       }
       return;

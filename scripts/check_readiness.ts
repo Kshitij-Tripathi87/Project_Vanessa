@@ -3,6 +3,9 @@ import WebSocket from "ws";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
+const { buildReadinessConfig } = createRequire(path.join(__dirname, "check_readiness.ts"))("./readiness-config.cjs");
+const { probeOllama } = createRequire(path.join(__dirname, "check_readiness.ts"))("./ollama-readiness.cjs");
 
 // Load .env
 let envDir = process.cwd();
@@ -18,28 +21,25 @@ for (let i = 0; i < 4; i++) {
 interface ServiceCheck {
   name: string;
   port: number;
-  protocol: "http" | "ws";
+  protocol: "http" | "ws" | "ollama";
   url: string;
-  status: "ONLINE" | "OFFLINE" | "DEGRADED" | "STARTING";
+  status: "ONLINE" | "OFFLINE" | "DEGRADED";
   latencyMs: number;
   details: string;
 }
 
-async function checkHttp(url: string, timeoutMs = 3000): Promise<{ ok: boolean; statusText: string; statusCode: number; latencyMs: number; body?: any }> {
+async function checkHttp(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; statusCode: number; latencyMs: number }> {
   const start = Date.now();
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res: http.IncomingMessage) => {
       let data = "";
       res.on("data", (chunk: Buffer | string) => (data += chunk));
       res.on("end", () => {
-        let body: any = null;
-        try { body = JSON.parse(data); } catch {}
         resolve({
-          ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426,
+          ok: (res.statusCode ?? 500) < 400 || res.statusCode === 426, // 426 upgrade required is ok for WS endpoint
           statusText: `HTTP ${res.statusCode}`,
           statusCode: res.statusCode ?? 500,
           latencyMs: Date.now() - start,
-          body,
         });
       });
     });
@@ -55,52 +55,27 @@ async function checkHttp(url: string, timeoutMs = 3000): Promise<{ ok: boolean; 
   });
 }
 
-async function checkWs(url: string, timeoutMs = 3000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
+async function checkWs(url: string, timeoutMs = 2000): Promise<{ ok: boolean; statusText: string; latencyMs: number }> {
   const start = Date.now();
   return new Promise((resolve) => {
     let finished = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const socket = new WebSocket(url, { handshakeTimeout: timeoutMs });
 
     const finish = (ok: boolean, statusText: string) => {
       if (finished) return;
       finished = true;
-      try { socket.close(); } catch {}
+      if (timer) clearTimeout(timer);
+      try {
+        socket.close();
+      } catch {}
       resolve({ ok, statusText, latencyMs: Date.now() - start });
     };
 
-    socket.on("open", () => finish(true, "CONNECTED"));
-    socket.on("error", (err: Error) => finish(false, err.message));
-    setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
+    socket.once("open", () => finish(true, "CONNECTED"));
+    socket.once("error", (err: Error) => finish(false, err.message));
+    timer = setTimeout(() => finish(false, "TIMEOUT"), timeoutMs);
   });
-}
-
-async function checkServiceWithRetry(s: ServiceCheck, retries = 3, delayMs = 1000): Promise<ServiceCheck> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    if (s.protocol === "http") {
-      const res = await checkHttp(s.url);
-      if (res.statusCode === 503) {
-        s.status = "DEGRADED";
-        s.latencyMs = res.latencyMs;
-        s.details = `${res.statusText} (${res.body?.message || "degraded"})`;
-        if (attempt < retries) {
-          await new Promise(r => setTimeout(r, delayMs));
-          continue;
-        }
-        return s;
-      }
-      s.status = res.ok ? "ONLINE" : "OFFLINE";
-      s.latencyMs = res.latencyMs;
-      s.details = res.statusText;
-      return s;
-    } else {
-      const res = await checkWs(s.url);
-      s.status = res.ok ? "ONLINE" : "OFFLINE";
-      s.latencyMs = res.latencyMs;
-      s.details = res.statusText;
-      return s;
-    }
-  }
-  return s;
 }
 
 async function main() {
@@ -108,11 +83,18 @@ async function main() {
   console.log("     VANESSA SERVICE STACK READINESS PROBE       ");
   console.log("==================================================\n");
 
-  const orchestratorPort = Number(process.env.VANESSA_PORT || 4139);
+  // Use the same normalized provider defaults as launch-vanessa.cjs. The readiness
+  // probe must not silently report Fish/Gemini when a clean install uses local Whisper/Ollama.
+  const config = buildReadinessConfig(process.env, process.cwd(), fs.existsSync);
+  const orchestratorPort = Number(process.env.VANESSA_PORT || 4319);
   const voiceAgentPort = Number(process.env.VOICE_AGENT_PORT || 4500);
-  const localAsrUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505";
+  const localAsrUrl = config.localAsrUrl;
   const localAsrPort = Number(new URL(localAsrUrl).port || 4505);
   const relayPort = Number(process.env.RELAY_PORT || process.env.PORT || 4400);
+  const asrProvider = config.asrProvider;
+  const ttsProvider = config.ttsProvider;
+  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
+  const usesLocalAsr = config.usesLocalAsr;
 
   const services: ServiceCheck[] = [
     {
@@ -120,7 +102,7 @@ async function main() {
       port: orchestratorPort,
       protocol: "http",
       url: `http://127.0.0.1:${orchestratorPort}/health`,
-      status: "STARTING",
+      status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
@@ -129,25 +111,7 @@ async function main() {
       port: voiceAgentPort,
       protocol: "http",
       url: `http://127.0.0.1:${voiceAgentPort}/ready`,
-      status: "STARTING",
-      latencyMs: 0,
-      details: "",
-    },
-    {
-      name: "Voice Agent Liveness",
-      port: voiceAgentPort,
-      protocol: "http",
-      url: `http://127.0.0.1:${voiceAgentPort}/live`,
-      status: "STARTING",
-      latencyMs: 0,
-      details: "",
-    },
-    {
-      name: "Local Whisper ASR",
-      port: localAsrPort,
-      protocol: "ws",
-      url: localAsrUrl,
-      status: "STARTING",
+      status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
@@ -156,26 +120,55 @@ async function main() {
       port: relayPort,
       protocol: "http",
       url: `http://127.0.0.1:${relayPort}/health`,
-      status: "STARTING",
+      status: "OFFLINE",
       latencyMs: 0,
       details: "",
     },
   ];
 
-  // Check services in dependency order
-  const checkOrder = [
-    "Orchestrator Brain",
-    "Voice Agent Gateway",
-    "Voice Agent Liveness",
-    "Local Whisper ASR",
-    "Mobile Relay WSS",
-  ];
+  if (config.usesOllama) {
+    let ollamaPort = 11434;
+    try { ollamaPort = Number(new URL(config.ollamaBaseUrl).port || 11434); } catch { /* probe reports invalid endpoint */ }
+    services.splice(0, 0, {
+      name: "Local Ollama",
+      port: ollamaPort,
+      protocol: "ollama",
+      url: config.ollamaBaseUrl,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    });
+  }
 
-  for (const name of checkOrder) {
-    const svc = services.find(s => s.name === name);
-    if (svc) {
-      const checked = await checkServiceWithRetry(svc);
-      Object.assign(svc, checked);
+  if (usesLocalAsr) {
+    services.splice(2, 0, {
+      name: "Local Whisper ASR",
+      port: localAsrPort,
+      protocol: "ws",
+      url: localAsrUrl,
+      status: "OFFLINE",
+      latencyMs: 0,
+      details: "",
+    });
+  }
+
+  const selectedServices = services.filter(s => s.name !== "Mobile Relay WSS" || process.env.VANESSA_REQUIRE_RELAY === "true");
+  for (const s of selectedServices) {
+    if (s.protocol === "ollama") {
+      const res = await probeOllama(config.ollamaBaseUrl, config.ollamaModel);
+      s.status = res.status;
+      s.latencyMs = res.latencyMs;
+      s.details = res.message;
+    } else if (s.protocol === "http") {
+      const res = await checkHttp(s.url);
+      s.status = res.statusCode === 503 ? "DEGRADED" : res.ok ? "ONLINE" : "OFFLINE";
+      s.latencyMs = res.latencyMs;
+      s.details = res.statusText;
+    } else {
+      const res = await checkWs(s.url);
+      s.status = res.ok ? "ONLINE" : "OFFLINE";
+      s.latencyMs = res.latencyMs;
+      s.details = res.statusText;
     }
   }
 
@@ -191,7 +184,7 @@ async function main() {
   );
   console.log("--------------------------------------------------------------------------------");
 
-  for (const s of services) {
+  for (const s of selectedServices) {
     const statusIcon = s.status === "ONLINE" ? "🟢" : s.status === "DEGRADED" ? "🟡" : "🔴";
     console.log(
       `${statusIcon} ${s.name.padEnd(21)}` +
@@ -206,47 +199,38 @@ async function main() {
   // Voice Provider Configuration Summary
   const fishKey = process.env.FISH_API_KEY || "";
   const hasValidFishKey = fishKey.startsWith("sk-fish-");
-  const asrProvider = process.env.VOICE_ASR_PROVIDER || "fish";
-  const ttsProvider = process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish";
-  const fallbackEnabled = process.env.VOICE_ALLOW_FALLBACK === "true";
+  const sarvamKey = process.env.SARVAM_API_KEY || "";
+  const hasValidSarvamKey = Boolean(sarvamKey.trim()) && !/placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(sarvamKey);
 
   console.log("VOICE PROVIDER CONFIGURATION:");
   console.log(`- Configured ASR Provider: ${asrProvider}`);
   console.log(`- Configured TTS Provider: ${ttsProvider}`);
-  const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
-  console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish ASR unavailable)"}`);
-  console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
-  console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
-  console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
-  console.log(`- Offline Local ASR Fallback: ${localAsrUrl} (${fallbackEnabled ? "enabled" : "disabled"})`);
-
-  // Voice Agent Provider Status (if online)
-  const voiceAgent = services.find(s => s.name === "Voice Agent Gateway");
-  if (voiceAgent?.status === "ONLINE" && voiceAgent?.body?.providers) {
-    console.log("\nVOICE AGENT PROVIDER STATUS:");
-    const providers = voiceAgent.body.providers;
-    console.log(`- ASR: ${providers.asr?.requested} (${providers.asr?.configured ? "configured" : "not configured"})`);
-    console.log(`- TTS: ${providers.tts?.requested} (${providers.tts?.configured ? "configured" : "not configured"})`);
-    if (voiceAgent.body.configValidation) {
-      const cv = voiceAgent.body.configValidation;
-      if (cv.errors.length > 0) console.log(`- Config Errors: ${cv.errors.join("; ")}`);
-      if (cv.warnings.length > 0) console.log(`- Config Warnings: ${cv.warnings.join("; ")}`);
+  if (asrProvider === "fish" || ttsProvider === "fish") {
+    const hasFishVoice = Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID);
+    console.log(`- Fish Audio Key: ${hasValidFishKey ? "Configured" : fallbackEnabled ? "Missing (explicit local ASR fallback enabled)" : "Missing (Fish provider unavailable)"}`);
+    if (asrProvider === "fish") console.log(`- Fish ASR Model: ${process.env.FISH_ASR_MODEL || "transcribe-stream-1"}`);
+    if (ttsProvider === "fish") {
+      console.log(`- Fish TTS Model: ${process.env.FISH_TTS_MODEL || "s2.1-pro-free"}`);
+      console.log(`- Fish TTS Voice ID: ${hasFishVoice ? "Configured" : "Missing"}`);
     }
   }
+  if (asrProvider === "sarvam" || ttsProvider === "sarvam") {
+    console.log(`- Sarvam API Key: ${hasValidSarvamKey ? "Configured" : "Missing or placeholder"}`);
+    if (asrProvider === "sarvam") console.log(`- Sarvam ASR Model: ${process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime"}`);
+    if (ttsProvider === "sarvam") {
+      console.log(`- Sarvam TTS Model: ${process.env.SARVAM_TTS_MODEL || "bulbul:v4-flash"}`);
+      console.log(`- Sarvam TTS Speaker: ${process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads"}`);
+    }
+  }
+  console.log(`- Local ASR: ${usesLocalAsr ? `${localAsrUrl} (selected)` : "not selected for the active ASR provider"}`);
 
-  const onlineCount = services.filter((s) => s.status === "ONLINE").length;
-  const degradedCount = services.filter((s) => s.status === "DEGRADED").length;
-  console.log(`\nReadiness: ${onlineCount}/${services.length} services online${degradedCount > 0 ? `, ${degradedCount} degraded` : ""}.`);
-
-  // Exit code for CI/CD
-  const allCriticalOnline = services
-    .filter(s => ["Orchestrator Brain", "Voice Agent Gateway", "Voice Agent Liveness"].includes(s.name))
-    .every(s => s.status === "ONLINE");
-
-  process.exit(allCriticalOnline ? 0 : 1);
+  console.log(`- Planner: ${config.plannerProvider}`);
+  console.log(`- Conversation: ${config.conversationProvider}`);
+  console.log(`- Selected-provider configuration: ${config.missing.length ? "INCOMPLETE" : "configured (not live-provider verification)"}`);
+  for (const missing of config.missing) console.log(`  Missing: ${missing}`);
+  const onlineCount = selectedServices.filter((s) => s.status === "ONLINE").length;
+  console.log(`\nReadiness: ${onlineCount}/${selectedServices.length} required services online.`);
+  if (config.missing.length || onlineCount !== selectedServices.length) process.exitCode = 1;
 }
 
-main().catch((err) => {
-  console.error("Readiness probe failed:", err);
-  process.exit(1);
-});
+main().catch(() => { console.error("Readiness configuration invalid; check selected provider settings."); process.exitCode = 1; });

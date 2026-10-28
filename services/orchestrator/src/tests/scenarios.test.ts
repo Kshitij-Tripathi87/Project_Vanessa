@@ -1,6 +1,6 @@
 import { orchestrator } from "../core/orchestrator.js";
 import { planner } from "../core/planner.js";
-import { runPlan, resolveParams } from "../core/taskRunner.js";
+import { runPlan } from "../core/taskRunner.js";
 import { workingMemory } from "../core/workingMemory.js";
 import { Task } from "@vanessa/shared";
 import { privacyGuard } from "../core/privacy.js";

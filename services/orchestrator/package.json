@@ -6,16 +6,26 @@
   "main": "./dist/server.js",
   "scripts": {
     "smoke:codex": "tsx src/scripts/codex-smoke.ts",
-    "test:codex": "tsx --test src/tests/codexLauncher.test.ts",
-    "build": "tsc",
+    "test:codex": "tsx --test src/tests/codexLauncher.test.ts src/tests/codexTaskRunner.test.ts",
+    "build": "tsc && node scripts/copy-windows-audio.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "test:scenarios": "tsx src/tests/scenarios.test.ts",
     "test:skills": "tsx src/tests/skillsRuntime.test.ts",
     "test:voice-planning": "tsx src/tests/voicePlanning.test.ts",
-    "test:playwright": "tsx src/tests/playwright.test.ts",
-    "test:agent-routing": "tsx --test src/tests/agentRouting.test.ts src/tests/folderAgent.test.ts src/tests/fileAgent.test.ts src/tests/browserAgent.unit.test.ts",
-    "test:windows-agent": "tsx --test src/tests/windowsAgent.unit.test.ts"
+    "test:sarvam-chat": "tsx --test src/tests/sarvamChat.test.ts",
+    "test:powershell": "tsx --test src/tests/powershellExecutor.test.ts",
+    "test:powershell:windows": "tsx --test src/tests/powershellExecutor.windows.test.ts",
+    "smoke:powershell": "tsx src/scripts/powershell-smoke.ts",
+    "test:windows-audio": "tsx --test src/tests/windowsAudio.test.ts",
+    "smoke:windows-audio": "tsx src/scripts/windows-audio-smoke.ts",
+    "test:windows-controls": "tsx --test src/tests/windowsControls.test.ts",
+    "smoke:windows-controls": "tsx src/scripts/windows-controls-smoke.ts",
+    "test:agent-result": "tsx --test src/tests/agentResult.test.ts",
+    "test:trustworthy-execution": "tsx --test src/tests/trustworthyExecution.test.ts",
+    "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts",
+    "test:ollama-client": "tsx --test src/tests/ollamaClient.test.ts",
+    "test:resource-workflows": "tsx --test src/tests/agentRouting.test.ts src/tests/folderAgent.test.ts src/tests/fileAgent.test.ts src/tests/planner.resourceRouting.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
@@ -24,11 +34,9 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "ws": "^8.18.0",
-    "playwright": "^1.40.0",
-    "playwright-core": "^1.40.0"
+    "playwright": "^1.40.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.40.0",
     "@types/node": "^22.13.4",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",

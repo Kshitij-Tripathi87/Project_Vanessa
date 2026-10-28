@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish a GitHub Release after building the installer
+        description: Publish a GitHub Release after building and testing the Windows installer
         type: boolean
         default: false
         required: true
@@ -17,8 +17,6 @@ permissions:
   contents: write
 
 concurrency:
-  # PR builds are SHA-scoped so a stuck older smoke test cannot block current fixes.
-  # Release/tag runs remain serialized by ref.
   group: desktop-release-${{ github.event_name == 'pull_request' && github.sha || github.ref }}
   cancel-in-progress: false
 
@@ -41,182 +39,48 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Set up Python for bootstrap packaging
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build shared contracts
-        run: pnpm --filter @vanessa/shared build
+      - name: Build all workspace packages
+        run: pnpm build
 
-      - name: Build backend services
+      - name: Test launcher, desktop layout, microphone, and provider contracts
         shell: pwsh
         run: |
-          pnpm --filter @vanessa/orchestrator build
+          pnpm run test:launcher
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm --filter @vanessa/voice-agent build
+          pnpm run test:doctor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run test:desktop:layout
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run test:desktop:microphone
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Create isolated production runtimes
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build the supported sanitized Windows setup EXE
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force apps/desktop/runtime | Out-Null
-          pnpm --filter @vanessa/orchestrator deploy --prod apps/desktop/runtime/orchestrator --config.node-linker=hoisted
+          pnpm run package:windows-installer
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm --filter @vanessa/voice-agent deploy --prod apps/desktop/runtime/voice-agent --config.node-linker=hoisted
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item -Recurse -Force skills apps/desktop/runtime/skills
-          Copy-Item -Recurse -Force config apps/desktop/runtime/config
-          Copy-Item -Force .env.example apps/desktop/runtime/vanessa.env.example
-          $nodeExe = (node -e "process.stdout.write(process.execPath)").Trim()
-          Copy-Item -Force $nodeExe apps/desktop/runtime/node.exe
-          $package = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
-          @{
-            buildId = "${{ github.sha }}"
-            version = $package.version
-            sourceRef = "${{ github.ref }}"
-          } | ConvertTo-Json | Set-Content -Encoding utf8 apps/desktop/runtime/build-meta.json
-          if (!(Test-Path apps/desktop/runtime/orchestrator/dist/server.js)) { throw "Orchestrator deploy output is missing." }
-          if (!(Test-Path apps/desktop/runtime/voice-agent/dist/server.js)) { throw "Voice agent deploy output is missing." }
-          if (!(Test-Path apps/desktop/runtime/node.exe)) { throw "Bundled Node.js runtime is missing." }
 
-      - name: Smoke-test deployed production package dependency graphs
+      - name: Install and uninstall smoke test
         shell: pwsh
-        run: |
-          $nodeExe = (Resolve-Path "apps/desktop/runtime/node.exe").Path
-          $moduleRoot = (Resolve-Path "apps/desktop/runtime/orchestrator/node_modules").Path
-          foreach ($dependency in @("fastify", "avvio", "playwright", "playwright-core")) {
-            $dependencyPath = Join-Path $moduleRoot $dependency
-            if (!(Test-Path $dependencyPath)) { throw "Deployed dependency is missing: $dependency" }
-            $dependencyItem = Get-Item $dependencyPath -Force
-            if ($dependencyItem.LinkType) { throw "Deployed dependency is still a $($dependencyItem.LinkType) link: $dependencyPath" }
-          }
-          Push-Location "apps/desktop/runtime/orchestrator"
-          try {
-            & $nodeExe --input-type=module -e "await import('fastify'); await import('playwright'); console.log('Orchestrator production dependencies resolve.')"
-            if ($LASTEXITCODE -ne 0) { throw "Orchestrator production dependency smoke test failed." }
-          } finally {
-            Pop-Location
-          }
-
-          Push-Location "apps/desktop/runtime/voice-agent"
-          try {
-            & $nodeExe --input-type=module -e "await import('fastify'); console.log('Voice-agent production dependencies resolve.')"
-            if ($LASTEXITCODE -ne 0) { throw "Voice-agent production dependency smoke test failed." }
-          } finally {
-            Pop-Location
-          }
-
-      - name: Build renderer and Electron desktop process
-        run: pnpm --filter @vanessa/desktop build
-
-      - name: Package the Windows installer
-        run: pnpm --filter @vanessa/desktop build:installer
-
-      - name: Install Windows setup and smoke-test installed app
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem -Path "apps/desktop/dist/installers" -Filter "Vanessa Setup *.exe" | Select-Object -First 1
-          if (!$installer) {
-            Get-ChildItem "apps/desktop/dist/installers" -Force | Format-Table Name, FullName
-            throw "The NSIS Vanessa Setup installer was not produced."
-          }
-
-          $installDir = Join-Path $env:RUNNER_TEMP "VanessaSmokeInstall"
-          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -PassThru
-          if (!$install.WaitForExit(300000)) {
-            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-            throw "NSIS installer did not exit within 300 seconds."
-          }
-          if ($install.ExitCode -ne 0) {
-            throw "NSIS installer exited with code $($install.ExitCode)."
-          }
-
-          $requiredFiles = @(
-            (Join-Path $installDir "Vanessa.exe"),
-            (Join-Path $installDir "resources\app.asar"),
-            (Join-Path $installDir "resources\runtime\build-meta.json"),
-            (Join-Path $installDir "resources\runtime\node.exe"),
-            (Join-Path $installDir "resources\runtime\orchestrator\dist\server.js"),
-            (Join-Path $installDir "resources\runtime\voice-agent\dist\server.js")
-          )
-          $missingFiles = @($requiredFiles | Where-Object { !(Test-Path $_) })
-          if ($missingFiles.Count -gt 0) {
-            Write-Host "Missing installed files:"
-            $missingFiles | ForEach-Object { Write-Host " - $_" }
-            Get-ChildItem $installDir -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 100 FullName | Format-Table
-            throw "NSIS installation exited successfully but the installed Vanessa payload is incomplete."
-          }
-
-          $appPath = Join-Path $installDir "Vanessa.exe"
-          $appStdout = Join-Path $env:RUNNER_TEMP "vanessa-main.stdout.log"
-          $appStderr = Join-Path $env:RUNNER_TEMP "vanessa-main.stderr.log"
-          $app = $null
-          $orchestratorHealthy = $false
-          $voiceHealthy = $false
-          try {
-            $app = Start-Process -FilePath $appPath -PassThru -RedirectStandardOutput $appStdout -RedirectStandardError $appStderr
-            $deadline = [DateTime]::UtcNow.AddSeconds(60)
-            while ([DateTime]::UtcNow -lt $deadline) {
-              if (!$orchestratorHealthy) {
-                try {
-                  $health = Invoke-RestMethod -Uri "http://127.0.0.1:4139/health" -TimeoutSec 2
-                  $orchestratorHealthy = $health.service -eq "vanessa-orchestrator"
-                } catch {}
-              }
-              if (!$voiceHealthy) {
-                try {
-                  $health = Invoke-RestMethod -Uri "http://127.0.0.1:4500/health" -TimeoutSec 2
-                  $voiceHealthy = $health.service -eq "vanessa-voice-agent"
-                } catch {}
-              }
-              if ($orchestratorHealthy -and $voiceHealthy) { break }
-              if ($app.HasExited) { throw "Installed Vanessa exited before its local services became healthy (exit code $($app.ExitCode))." }
-              Start-Sleep -Seconds 1
-            }
-
-            if (!$orchestratorHealthy -or !$voiceHealthy) {
-              Write-Host "=== Installed app stdout ==="
-              if (Test-Path $appStdout) { Get-Content $appStdout -Tail 200 }
-              Write-Host "=== Installed app stderr ==="
-              if (Test-Path $appStderr) { Get-Content $appStderr -Tail 200 }
-              Write-Host "=== Vanessa service logs (credentials excluded) ==="
-              $vanessaDirs = @()
-              foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
-                if (Test-Path $root) {
-                  $vanessaDirs += Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "Vanessa" }
-                }
-              }
-              foreach ($directory in $vanessaDirs) {
-                $logs = Get-ChildItem -Path $directory.FullName -Filter "*.log" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @("orchestrator.log", "voice-agent.log") }
-                foreach ($log in $logs) {
-                  Write-Host "--- $($log.FullName) ---"
-                  Get-Content $log.FullName -Tail 200
-                }
-              }
-              Write-Host "=== Packaged runtime metadata ==="
-              $metaPath = Join-Path $installDir "resources\runtime\build-meta.json"
-              if (Test-Path $metaPath) { Get-Content $metaPath }
-              if (!$orchestratorHealthy) { throw "Installed orchestrator did not become healthy on 127.0.0.1:4139." }
-              throw "Installed voice agent did not become healthy on 127.0.0.1:4500."
-            }
-            Write-Host "NSIS install completed, installed app launched, and both backend health checks passed."
-          } finally {
-            if ($app -and !$app.HasExited) {
-              & taskkill.exe /F /T /PID $app.Id | Out-Null
-            }
-            $runtimeProcesses = Get-CimInstance Win32_Process | Where-Object {
-              $_.Name -eq "node.exe" -and $_.CommandLine -match "[\\/]runtime[\\/](orchestrator|voice-agent)[\\/]"
-            }
-            foreach ($runtimeProcess in $runtimeProcesses) {
-              Stop-Process -Id $runtimeProcess.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-          }
+        run: ./scripts/test-windows-installer.ps1 -InstallerPath 'artifacts/windows-installer/Vanessa-Setup-x64.exe'
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Vanessa-Windows-${{ github.event.pull_request.number || github.ref_name }}
-          path: apps/desktop/dist/installers/*.exe
+          name: Vanessa-Windows-Installer-${{ github.event.pull_request.number || github.ref_name }}
+          path: artifacts/windows-installer/Vanessa-Setup-x64.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -226,6 +90,6 @@ jobs:
         with:
           name: Vanessa ${{ github.ref_name }}
           generate_release_notes: true
-          files: apps/desktop/dist/installers/*.exe
+          files: artifacts/windows-installer/Vanessa-Setup-x64.exe
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

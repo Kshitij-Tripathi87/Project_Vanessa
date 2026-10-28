@@ -1,4 +1,4 @@
-import { VanessaEvent, ExecuteCommandPayload, ExecuteCommandResult, Task, DockPosition } from "@vanessa/shared";
+import { VanessaEvent, ExecuteCommandPayload, ExecuteCommandResult, Task } from "@vanessa/shared";
 import type { DetailedHTMLProps, HTMLAttributes } from "react";
 
 declare module "react" {
@@ -29,20 +29,15 @@ declare global {
 
   interface Window {
     vanessa: {
-      getControlStatus: () => Promise<VanessaControlStatus>;
-      addAllowedFolder: (folderPath: string) => Promise<{ success: boolean; allowedFolders?: string[]; error?: string }>;
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
       approveTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
-      cancelTask: (taskId?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+      cancelTask: (requestId?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;
       onTriggerPTT?: (callback: () => void) => () => void;
       onTriggerCancel?: (callback: () => void) => () => void;
       resizeWindow?: (size: { width: number; height: number }) => Promise<{ success: boolean }>;
-      getDockPosition?: () => Promise<{ success: boolean; dockPosition?: DockPosition }>;
-      dockCorner?: (position: DockPosition) => Promise<{ success: boolean; dockPosition?: DockPosition; x?: number; y?: number }>;
-      showWindow?: () => Promise<{ success: boolean }>;
-      onOpenChat?: (callback: () => void) => () => void;
+      dockCorner?: (corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => Promise<{ success: boolean; corner?: string; x?: number; y?: number }>;
       minimizeWindow?: () => Promise<{ success: boolean }>;
       closeWindow?: () => Promise<{ success: boolean }>;
     };

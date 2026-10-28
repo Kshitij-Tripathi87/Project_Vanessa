@@ -13,6 +13,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "test:usage": "tsx --test src/usageMeter.test.ts",
     "dev": "tsc --watch"
   },
   "devDependencies": {

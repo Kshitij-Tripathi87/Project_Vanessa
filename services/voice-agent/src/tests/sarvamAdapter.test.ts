@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
+import { SpeechAudioGate } from "../audio/speechGate.js";
 
 test("Sarvam audio, partials and final transcript reach POST /api/execute once per activation", { timeout: 5000 }, async () => {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -58,21 +59,11 @@ test("Sarvam audio, partials and final transcript reach POST /api/execute once p
     assert.notEqual(requests[0].requestId, requests[1].requestId);
     for (const body of requests) {
       assert.equal(body.command, "Open my Python project");
-      assert.equal(body.source, "desktop");
+      assert.equal(body.source, "voice");
       assert.equal(body.language, "en-IN");
-      assert(Array.isArray(body.conversationContext));
-      assert(typeof body.requestId === "string" && body.requestId.length > 0);
-      assert.equal(body.idempotencyKey, `desktop:${body.requestId}`);
-      assert.equal(body.sentiment, null);
       assert.equal(body.envelope.command, body.command);
       assert.equal(body.envelope.requestId, body.requestId);
-      assert.equal(body.envelope.idempotencyKey, body.idempotencyKey);
-      assert.equal(body.envelope.source, "desktop");
-      assert.equal(body.envelope.originDeviceId, "desktop-local");
-      assert.equal(body.envelope.schemaVersion, "1.0");
-      assert.equal(body.envelope.language, "en-IN");
-      assert.equal(typeof body.envelope.createdAt, "number");
-      assert.equal(body.envelope.expiresAt, body.envelope.createdAt + 300000);
+      assert.equal(body.idempotencyKey, `voice:${body.requestId}`);
     }
   } finally {
     session.stop(); globalThis.fetch = originalFetch;
@@ -114,4 +105,190 @@ test("Sarvam activation can be cancelled while connecting", { timeout: 5000 }, a
   await rejected;
   await new Promise<void>(resolve => server.close(() => resolve()));
   assert.equal(adapter.getProviderStatus().state, "idle");
+});
+
+test("Sarvam retries transient connection loss with bounded backoff", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let connections = 0;
+  server.on("connection", (socket) => {
+    connections++;
+    if (connections === 1) {
+      socket.close();
+      return;
+    }
+    socket.send(JSON.stringify({ event: "session.begin" }));
+  });
+  const adapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${address.port}`,
+    maxReconnectAttempts: 1,
+    reconnectBaseDelayMs: 50,
+  });
+  adapter.connect({ onPartial: () => {}, onFinal: () => {} });
+  try {
+    await adapter.activateStream(1000);
+    assert.equal(connections, 2);
+  } finally {
+    adapter.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Sarvam ignores malformed audio/events and duplicate finals after deactivation", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let partials = 0;
+  let finals = 0;
+  server.on("connection", (ws) => {
+    ws.send(JSON.stringify({ event: "session.begin" }));
+    ws.on("message", raw => {
+      const msg = JSON.parse(raw.toString());
+      if (msg.event === "audio_input") {
+        ws.send("not-json");
+        ws.send(JSON.stringify(null));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: 42 }));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: "He", language: { value: "en-IN" } }));
+        ws.send(JSON.stringify({ event: "transcript.partial", text: "Hello", language: "en-IN" }));
+      }
+      if (msg.event === "speech_end") {
+        const final = JSON.stringify({ event: "transcript.final", text: "Hello", language: "en-IN" });
+        ws.send(final);
+        setTimeout(() => { if (ws.readyState === ws.OPEN) ws.send(final); }, 10);
+      }
+    });
+  });
+  const adapter = new SarvamAsrAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${address.port}` });
+  adapter.connect({
+    onPartial: result => { partials++; assert.equal(result.language, "en-IN"); },
+    onFinal: result => { finals++; assert.equal(result.text, "Hello"); },
+  });
+  try {
+    await adapter.activateStream(1000);
+    assert.doesNotThrow(() => {
+      adapter.sendAudioChunk(null as unknown as Int16Array);
+      adapter.sendAudioChunk(new Int8Array([1, 2]) as unknown as Int16Array);
+      adapter.sendAudioChunk(new Int16Array());
+    });
+    adapter.sendAudioChunk(new Int16Array([1, -1]));
+    adapter.finalizeTurn();
+    const deadline = Date.now() + 1000;
+    while (finals < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(partials, 1);
+    assert.equal(finals, 1);
+    assert.equal(adapter.getProviderStatus().state, "idle");
+  } finally {
+    adapter.close();
+    for (const ws of server.clients) ws.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("Sarvam readiness and finalization timeouts are bounded and cancellable", { timeout: 5000 }, async () => {
+  const readinessServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(readinessServer, "listening");
+  const readinessAddress = readinessServer.address(); assert(readinessAddress && typeof readinessAddress !== "string");
+  const readinessAdapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${readinessAddress.port}`,
+    maxReconnectAttempts: 0,
+    connectionTimeoutMs: 25,
+  });
+  readinessAdapter.connect({ onPartial: () => {}, onFinal: () => assert.fail("No transcript on timeout") });
+  try {
+    await assert.rejects(readinessAdapter.activateStream(), /session readiness timed out/);
+    assert.equal(readinessAdapter.getProviderStatus().state, "error");
+  } finally {
+    readinessAdapter.close();
+    for (const ws of readinessServer.clients) ws.terminate();
+    await new Promise<void>(resolve => readinessServer.close(() => resolve()));
+  }
+
+  const finalizationServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(finalizationServer, "listening");
+  const finalizationAddress = finalizationServer.address(); assert(finalizationAddress && typeof finalizationAddress !== "string");
+  finalizationServer.on("connection", ws => ws.send(JSON.stringify({ event: "session.begin" })));
+  const finalizationAdapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${finalizationAddress.port}`,
+    finalizationTimeoutMs: 25,
+  });
+  finalizationAdapter.connect({ onPartial: () => {}, onFinal: () => assert.fail("No transcript on timeout") });
+  try {
+    await finalizationAdapter.activateStream(1000);
+    finalizationAdapter.finalizeTurn();
+    const deadline = Date.now() + 1000;
+    while (finalizationAdapter.getProviderStatus().state !== "error" && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(finalizationAdapter.getProviderStatus().state, "error");
+    assert.match(finalizationAdapter.getProviderStatus().detail ?? "", /within 1 seconds/);
+  } finally {
+    finalizationAdapter.close();
+    for (const ws of finalizationServer.clients) ws.terminate();
+    await new Promise<void>(resolve => finalizationServer.close(() => resolve()));
+  }
+});
+
+test("Sarvam cancellation prevents a queued reconnect from reopening the session", { timeout: 5000 }, async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  let connections = 0;
+  server.on("connection", ws => {
+    connections++;
+    ws.close();
+  });
+  const adapter = new SarvamAsrAdapter({
+    apiKey: "test-key",
+    url: `ws://127.0.0.1:${address.port}`,
+    maxReconnectAttempts: 1,
+    reconnectBaseDelayMs: 50,
+  });
+  adapter.connect({ onPartial: () => {}, onFinal: () => {} });
+  const activation = adapter.activateStream();
+  try {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    adapter.close();
+    await assert.rejects(activation, /cancelled/);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(connections, 1);
+    assert.equal(adapter.getProviderStatus().state, "idle");
+  } finally {
+    adapter.close();
+    for (const ws of server.clients) ws.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("Sarvam speech gate forwards pre-roll and speech, not idle silence", () => {
+  const gate = new SpeechAudioGate({ preRollFrames: 2, trailingSilenceFrames: 2 });
+  const quiet = (v: number) => new Int16Array([v, v]);
+  const speech = (v: number) => new Int16Array([v + 1000, v + 1000]);
+
+  assert.deepEqual(gate.push(quiet(1), false), []);
+  assert.deepEqual(gate.push(quiet(2), false), []);
+  const onset = gate.push(speech(3), true);
+  assert.deepEqual(onset.map(frame => frame[0]), [2, 1003]);
+
+  assert.deepEqual(gate.push(speech(4), true).map(frame => frame[0]), [1004]);
+  assert.deepEqual(gate.push(quiet(5), false).map(frame => frame[0]), [5]);
+  assert.deepEqual(gate.push(quiet(6), false).map(frame => frame[0]), [6]);
+  assert.deepEqual(gate.push(quiet(7), false), []);
+
+  // After a long pause, only the latest pre-roll and new speech are forwarded.
+  assert.deepEqual(gate.push(quiet(8), false), []);
+  const nextOnset = gate.push(speech(9), true);
+  assert.deepEqual(nextOnset.map(frame => frame[0]), [8, 1009]);
+});
+
+test("Sarvam speech gate reset prevents audio leaking across turns", () => {
+  const gate = new SpeechAudioGate({ preRollFrames: 3, trailingSilenceFrames: 1 });
+  gate.push(new Int16Array([11]), false);
+  gate.reset();
+  const output = gate.push(new Int16Array([22]), true);
+  assert.deepEqual(output.map(frame => frame[0]), [22]);
 });

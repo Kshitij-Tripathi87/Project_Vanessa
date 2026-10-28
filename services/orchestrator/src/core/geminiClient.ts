@@ -1,7 +1,7 @@
 import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 
-const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_TIMEOUT_MS = 8000;
 
 export class GeminiError extends Error {

@@ -1,201 +1,188 @@
-import { app, ipcMain, BrowserWindow, screen } from "electron";
+import { ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
 import WebSocket from "ws";
-import * as path from "node:path";
-import type { DockPosition, ExecuteCommandPayload } from "@vanessa/shared";
-import { calculateDockPosition, isDockPosition, readDockPosition, writeDockPosition } from "./docking.js";
+import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
+import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
 
-const getOrchestratorUrl = () => process.env.ORCHESTRATOR_URL || ("http://127.0.0.1:" + (process.env.VANESSA_PORT || "4139"));
-const getOrchestratorWsUrl = () => process.env.ORCHESTRATOR_WS || ("ws://127.0.0.1:" + (process.env.VANESSA_PORT || "4139") + "/events");
-const WINDOW_MARGIN = 16;
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319";
+const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
 
 let wsClient: WebSocket | null = null;
+let lastEventSequence = 0;
+let lastEventStreamId: string | null = null;
+let dockedCorner: DockCorner = "bottom-right";
+
+function positionWindowAtCorner(
+  mainWindow: BrowserWindow,
+  corner: DockCorner,
+  requestedSize?: { width: number; height: number },
+) {
+  const display = screen.getDisplayMatching(mainWindow.getBounds());
+  const [currentWidth, currentHeight] = mainWindow.getSize();
+  const position = calculateDockPosition(
+    display.workArea,
+    requestedSize || { width: currentWidth, height: currentHeight },
+    corner,
+    24,
+  );
+  mainWindow.setPosition(position.x, position.y, true);
+  return position;
+}
+
+function assertTrustedRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWindow) {
+  if (mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error("Untrusted renderer sender.");
+  }
+}
+
+function assertTaskId(taskId: unknown): asserts taskId is string {
+  if (typeof taskId !== "string" || !/^[a-zA-Z0-9:_-]{1,160}$/.test(taskId)) {
+    throw new Error("Invalid task ID.");
+  }
+}
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
-  const settingsPath = path.join(app.getPath("userData"), "dock-preference.json");
-  let dockPosition: DockPosition = readDockPosition(settingsPath, "bottom-right");
-
-  const redock = () => {
-    if (mainWindow.isDestroyed()) return;
-    const display = screen.getDisplayMatching(mainWindow.getBounds());
-    const [width, height] = mainWindow.getSize();
-    const position = calculateDockPosition(display.workArea, [width, height], dockPosition, WINDOW_MARGIN);
-    mainWindow.setPosition(position.x, position.y, true);
-    return position;
-  };
-
-  ipcMain.handle("vanessa:execute-command", async (_, payload: ExecuteCommandPayload) => {
+  // 1. Execute Command
+  ipcMain.handle("vanessa:execute-command", async (event, payload: ExecuteCommandPayload) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (!payload || typeof payload.command !== "string" || payload.command.trim().length === 0 || payload.command.length > 20_000) {
+      return { status: "failed", spokenSummary: "That request is empty or too long." };
+    }
     try {
       const { submitCommandRequest } = await commandClient;
-      return await submitCommandRequest(getOrchestratorUrl(), {
+      return await submitCommandRequest(ORCHESTRATOR_URL, {
         ...payload,
         source: "desktop",
         originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
       });
     } catch (err: any) {
-      return { status: "failed", spokenSummary: "Connection to orchestrator failed: " + err.message };
+      return { status: "failed", spokenSummary: `Connection to orchestrator failed: ${err.message}` };
     }
   });
 
-  ipcMain.handle("vanessa:approve-task", async (_, taskId: string) => {
+  // 2. Approve Task
+  ipcMain.handle("vanessa:approve-task", async (event, taskId: string) => {
+    assertTrustedRenderer(event, mainWindow);
+    assertTaskId(taskId);
     try {
-      const res = await fetch(getOrchestratorUrl() + "/api/approve", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId }),
-      });
-      return await res.json();
-    } catch (err: any) { return { success: false, error: err.message }; }
-  });
-
-  ipcMain.handle("vanessa:reject-task", async (_, taskId: string) => {
-    try {
-      const res = await fetch(getOrchestratorUrl() + "/api/reject", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId }),
-      });
-      return await res.json();
-    } catch (err: any) { return { success: false, error: err.message }; }
-  });
-
-  ipcMain.handle("vanessa:cancel-task", async () => {
-    try {
-      const res = await fetch(getOrchestratorUrl() + "/api/cancel", { method: "POST", headers: { "Content-Type": "application/json" } });
-      return await res.json();
-    } catch (err: any) { return { success: false, error: err.message }; }
-  });
-
-  ipcMain.handle("vanessa:get-control-status", async () => {
-    const baseUrl = getOrchestratorUrl().replace(/\/$/, "");
-    let orchestratorPort = Number(process.env.VANESSA_PORT || 4139);
-    try {
-      const parsed = new URL(baseUrl);
-      orchestratorPort = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
-    } catch {
-      // Keep the configured default for status reporting if the URL itself is malformed.
-    }
-
-    const readJson = async (route: string): Promise<{ ok: boolean; data?: any }> => {
-      try {
-        const response = await fetch(baseUrl + route, { signal: AbortSignal.timeout(1500) });
-        const data = await response.json().catch(() => ({}));
-        return { ok: response.ok, data };
-      } catch {
-        return { ok: false };
-      }
-    };
-
-    const [health, privacy, mode] = await Promise.all([
-      readJson("/health"),
-      readJson("/api/privacy"),
-      readJson("/api/mode"),
-    ]);
-    const system = health.data?.system || {};
-    const orchestratorOnline = health.ok &&
-      health.data?.status === "online" &&
-      health.data?.service === "vanessa-orchestrator";
-    const allowedFolders = Array.isArray(privacy.data?.allowedFolders)
-      ? privacy.data.allowedFolders.filter((item: unknown): item is string => typeof item === "string")
-      : [];
-    const errors: string[] = [];
-    if (!orchestratorOnline) errors.push("The Vanessa orchestrator health check did not pass.");
-    if (!privacy.ok) errors.push("Folder authorization status could not be loaded.");
-    if (!mode.ok || typeof mode.data?.autonomous !== "boolean") errors.push("Execution policy mode could not be confirmed.");
-
-    return {
-      success: orchestratorOnline,
-      orchestratorOnline,
-      orchestratorPort,
-      activeTasksCount: Number.isFinite(system.activeTasksCount) ? system.activeTasksCount : 0,
-      platform: typeof system.platform === "string" ? system.platform : process.platform,
-      autonomousMode: typeof mode.data?.autonomous === "boolean" ? mode.data.autonomous : undefined,
-      allowedFolders,
-      checkedAt: Date.now(),
-      errors,
-    };
-  });
-
-  ipcMain.handle("vanessa:add-allowed-folder", async (_, folderPath: unknown) => {
-    if (typeof folderPath !== "string" || !folderPath.trim()) {
-      return { success: false, error: "Enter a folder path." };
-    }
-    try {
-      const response = await fetch(getOrchestratorUrl().replace(/\/$/, "") + "/api/privacy/folders", {
+      const res = await fetch(`${ORCHESTRATOR_URL}/api/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: folderPath.trim() }),
-        signal: AbortSignal.timeout(2500),
+        body: JSON.stringify({ taskId }),
       });
-      const data = await response.json().catch(() => ({})) as { success?: boolean; allowedFolders?: unknown };
-      const allowedFolders = Array.isArray(data.allowedFolders)
-        ? data.allowedFolders.filter((item): item is string => typeof item === "string")
-        : [];
-      if (!response.ok || data.success !== true) {
-        return { success: false, allowedFolders, error: "The folder was not added. Confirm it exists and is a directory." };
-      }
-      return { success: true, allowedFolders };
-    } catch {
-      return { success: false, error: "Could not reach Vanessa to update folder permissions." };
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   });
 
-  ipcMain.handle("vanessa:resize-window", (_, payload: { width: number; height: number }) => {
-    if (mainWindow.isDestroyed()) return { success: false };
-    const width = Math.max(90, Math.min(760, Math.round(Number(payload?.width) || 90)));
-    const height = Math.max(90, Math.min(820, Math.round(Number(payload?.height) || 90)));
-    mainWindow.setSize(width, height, true);
-    const position = redock();
-    return { success: true, width, height, ...position };
-  });
-
-  ipcMain.handle("vanessa:get-dock-position", () => ({ success: true, dockPosition }));
-
-  ipcMain.handle("vanessa:dock-corner", (_, requestedPosition: DockPosition) => {
-    if (mainWindow.isDestroyed() || !isDockPosition(requestedPosition)) {
-      return { success: false, error: "Unknown docking position." };
-    }
-    dockPosition = requestedPosition;
-    writeDockPosition(settingsPath, dockPosition);
-    const position = redock();
-    return { success: true, dockPosition, ...position };
-  });
-
-  ipcMain.handle("vanessa:show-window", () => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.show();
-      mainWindow.focus();
-      return { success: true };
-    }
-    return { success: false };
-  });
-
-  ipcMain.handle("vanessa:minimize-window", () => {
-    if (!mainWindow.isDestroyed()) mainWindow.hide();
-    return { success: true };
-  });
-
-  // "Close" in the UI means hide to background; Quit is deliberately in the tray menu.
-  ipcMain.handle("vanessa:close-window", () => {
-    if (!mainWindow.isDestroyed()) mainWindow.hide();
-    return { success: true };
-  });
-
-  function initWebSocket() {
-    if (mainWindow.isDestroyed()) return;
+  ipcMain.handle("vanessa:reject-task", async (event, taskId: string) => {
+    assertTrustedRenderer(event, mainWindow);
+    assertTaskId(taskId);
     try {
-      wsClient = new WebSocket(getOrchestratorWsUrl());
+      const res = await fetch(`${ORCHESTRATOR_URL}/api/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId }),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 3. Cancel Task / Emergency Kill-Switch
+  ipcMain.handle("vanessa:cancel-task", async (event, taskId?: string) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (taskId !== undefined) assertTaskId(taskId);
+    try {
+      const endpoint = taskId ? "/api/cancel/request" : "/api/cancel";
+      const res = await fetch(`${ORCHESTRATOR_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: taskId ? JSON.stringify({ requestId: taskId }) : undefined,
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 4. Resize and dock the floating window. Reposition immediately after
+  // resizing so the expanded panel stays visible on the selected display.
+  ipcMain.handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (!payload || !Number.isInteger(payload.width) || !Number.isInteger(payload.height) || payload.width < 70 || payload.width > 900 || payload.height < 70 || payload.height > 900) {
+      return { success: false };
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    mainWindow.setSize(payload.width, payload.height);
+    const position = positionWindowAtCorner(mainWindow, dockedCorner, payload);
+    return { success: true, corner: dockedCorner, ...position };
+  });
+
+  ipcMain.handle("vanessa:dock-corner", (event, corner: DockCorner) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    dockedCorner = corner;
+    const position = positionWindowAtCorner(mainWindow, dockedCorner);
+    return { success: true, corner: dockedCorner, ...position };
+  });
+
+  // 5. Window Controls
+  ipcMain.handle("vanessa:minimize-window", (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    mainWindow?.minimize();
+    return { success: true };
+  });
+
+  ipcMain.handle("vanessa:close-window", (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    mainWindow?.close();
+    return { success: true };
+  });
+
+  // Connect to WebSocket stream and forward to Renderer
+  function initWebSocket() {
+    try {
+      const eventsUrl = new URL(WS_URL);
+      eventsUrl.searchParams.set("since", String(lastEventSequence));
+      if (lastEventStreamId) eventsUrl.searchParams.set("streamId", lastEventStreamId);
+      wsClient = new WebSocket(eventsUrl.toString());
+
       wsClient.on("message", (data: any) => {
         try {
-          const parsed = JSON.parse(data.toString());
-          if (!mainWindow.isDestroyed()) mainWindow.webContents.send("vanessa:event", parsed);
-        } catch { /* Ignore malformed event frames. */ }
+           const parsed = JSON.parse(data.toString());
+           if (parsed.type === "system:status" && typeof parsed.payload?.eventStreamId === "string") {
+             const nextStreamId = parsed.payload.eventStreamId as string;
+             if (lastEventStreamId && lastEventStreamId !== nextStreamId) lastEventSequence = 0;
+             lastEventStreamId = nextStreamId;
+           }
+           if (typeof parsed.sequence === "number") {
+             lastEventSequence = Math.max(lastEventSequence, parsed.sequence);
+           }
+          if (!mainWindow.isDestroyed()) {
+             mainWindow.webContents.send("vanessa:event", parsed as VanessaEvent);
+          }
+        } catch {
+          // Ignore malformed
+        }
       });
+
       wsClient.on("close", () => {
-        if (!mainWindow.isDestroyed()) setTimeout(initWebSocket, 2000);
+        setTimeout(initWebSocket, 2000);
       });
-      wsClient.on("error", () => { wsClient?.close(); });
+
+      wsClient.on("error", () => {
+        wsClient?.close();
+      });
     } catch {
-      if (!mainWindow.isDestroyed()) setTimeout(initWebSocket, 3000);
+      setTimeout(initWebSocket, 3000);
     }
   }
+
   initWebSocket();
 }

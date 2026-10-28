@@ -1,6 +1,7 @@
-import { AudioChunk } from "../audio/capture.js";
+import type { AudioChunk } from "../audio/capture.js";
 import { TurnDetector } from "../audio/turnDetector.js";
 import { SileroVadDetector } from "../audio/vad.js";
+import { SpeechAudioGate } from "../audio/speechGate.js";
 import { BargeInDetector } from "./bargeIn.js";
 import { WakeWordDetector } from "./wakeWord.js";
 import { AsrAdapter, ProviderRuntimeStatus } from "../asr/types.js";
@@ -11,9 +12,11 @@ import { ElevenLabsAsrAdapter } from "../asr/elevenlabsAdapter.js";
 import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
+import { SarvamTtsAdapter } from "../tts/sarvamTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
 import { ConversationTurn } from "@vanessa/shared";
 import { createHash, randomUUID } from "node:crypto";
+import { safeProviderDetail } from "../diagnostics/providerDiagnostics.js";
 
 export type SessionState =
   | "idle"
@@ -27,10 +30,11 @@ export interface VoiceSessionHandlers {
   onStateChange?: (state: SessionState) => void;
   onPartialTranscript?: (text: string) => void;
   onFinalTranscript?: (text: string, requestId: string) => void;
-  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
+  onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "wav" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
   onTtsUnavailable?: (detail: string) => void;
   onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
   onProviderStatus?: (status: VoiceProviderInfo) => void;
+  onError?: (detail: string) => void;
 }
 
 export interface VoiceProviderInfo {
@@ -41,8 +45,10 @@ export interface VoiceProviderInfo {
 export class VanessaVoiceSession {
   private turnDetector = new TurnDetector();
   private vad = new SileroVadDetector();
+  private readonly sarvamSpeechGate = new SpeechAudioGate();
   private bargeIn = new BargeInDetector();
   private wakeWord = new WakeWordDetector();
+  private wakeWordMonitorActive = false;
   private asr: AsrAdapter;
   private tts: VoiceTtsAdapter;
 
@@ -57,15 +63,23 @@ export class VanessaVoiceSession {
   private conversationContext: ConversationTurn[] = [];
   private processedTurnIds = new Set<string>();
   private queuedUtterances: Array<{ text: string; language: string }> = [];
+  private requestController?: AbortController;
+  private activeRequestId?: string;
+  private captureAuthorized = false;
+  private readonly client: Pick<typeof orchestratorClient, "executeCommand" | "cancelRequest">;
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
-    ttsProvider?: "elevenlabs" | "fish";
+    ttsProvider?: "elevenlabs" | "fish" | "sarvam";
     handlers?: VoiceSessionHandlers;
+    asr?: AsrAdapter;
+    tts?: VoiceTtsAdapter;
+    client?: Pick<typeof orchestratorClient, "executeCommand" | "cancelRequest">;
   }) {
     this.handlers = options?.handlers || {};
+    this.client = options?.client || orchestratorClient;
 
-    const asrType = options?.asrProvider || (process.env.VOICE_ASR_PROVIDER as any) || "fish";
+    const asrType = String(options?.asrProvider || process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase() as "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
     if (asrType === "sarvam") {
       this.asr = new SarvamAsrAdapter();
     } else if (asrType === "fish") {
@@ -79,14 +93,28 @@ export class VanessaVoiceSession {
     if (!options?.ttsProvider && !process.env.VOICE_TTS_PROVIDER && process.env.VOICE_PROVIDER) {
       console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
     }
-    const ttsType = options?.ttsProvider || (process.env.VOICE_TTS_PROVIDER as any) || (process.env.VOICE_PROVIDER as any) || "fish";
+    const ttsType = String(options?.ttsProvider || process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase() as "elevenlabs" | "fish" | "sarvam";
     if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
+    } else if (ttsType === "sarvam") {
+      this.tts = new SarvamTtsAdapter();
     } else {
       this.tts = new ElevenLabsTtsAdapter();
     }
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
-    this.asr.setStatusHandler?.(() => this.notifyProviderStatus());
+    this.asr = options?.asr || this.asr;
+    this.tts = options?.tts || this.tts;
+    this.asr.setStatusHandler?.((status) => {
+      this.notifyProviderStatus();
+      if (status.state === "error") {
+        this.captureAuthorized = false;
+        this.wakeWord.resetSession();
+        this.isAsrConnected = false;
+        this.asrConnectPromise = undefined;
+        if (this.state === "listening") this.setState("idle");
+        this.handlers.onError?.(safeProviderDetail(status.detail || "Speech recognition failed; activate the microphone to retry."));
+      }
+    });
     this.tts.setStatusHandler?.(() => this.notifyProviderStatus());
   }
 
@@ -102,8 +130,16 @@ export class VanessaVoiceSession {
         state: "idle",
       },
       tts: this.tts.getProviderStatus?.() || {
-        requested: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
-        active: this.tts instanceof FishTtsAdapter ? "Fish Audio" : "ElevenLabs",
+        requested: this.tts instanceof FishTtsAdapter
+          ? "Fish Audio"
+          : this.tts instanceof SarvamTtsAdapter
+            ? "Sarvam"
+            : "ElevenLabs",
+        active: this.tts instanceof FishTtsAdapter
+          ? "Fish Audio"
+          : this.tts instanceof SarvamTtsAdapter
+            ? "Sarvam"
+            : "ElevenLabs",
         state: "idle",
       },
     };
@@ -114,7 +150,8 @@ export class VanessaVoiceSession {
   }
 
   async start(): Promise<void> {
-    // Keep the ASR provider disconnected until an explicit push-to-talk action.
+    // Startup is passive. The desktop explicitly enables local Whisper wake-word
+    // standby or opens push-to-talk; hosted ASR never receives ambient audio.
     this.setState("idle");
   }
 
@@ -122,13 +159,19 @@ export class VanessaVoiceSession {
     if (this.isAsrConnected) return;
     if (this.asrConnectPromise) return this.asrConnectPromise;
 
-    this.asrConnectPromise = Promise.resolve(this.asr.connect({
+    this.asrConnectPromise = Promise.resolve().then(() => this.asr.connect({
       onPartial: (result) => {
         this.partialTranscript = result.text;
-        this.handlers.onPartialTranscript?.(result.text);
+        const startsWithWakePhrase = /^\s*(?:hey\s+vanessa|ok(?:ay)?\s+vanessa|vanessa)(?=$|[\s,!.?;:-])/i.test(result.text);
+        if (this.captureAuthorized || (this.wakeWordMonitorActive && startsWithWakePhrase)) {
+          this.handlers.onPartialTranscript?.(result.text);
+        }
       },
       onFinal: async (result) => {
-        await this.handleFinalUtterance(result.text, result.language, result.turnId);
+        if (this.captureAuthorized) await this.handleFinalUtterance(result.text, result.language, result.turnId, true);
+        else if (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter) {
+          await this.handleFinalUtterance(result.text, result.language, result.turnId, false);
+        }
       },
     })).then(() => {
       this.isAsrConnected = true;
@@ -139,17 +182,62 @@ export class VanessaVoiceSession {
     return this.asrConnectPromise;
   }
 
+  async enableWakeWordMonitor(): Promise<void> {
+    if (!(this.asr instanceof VoiceAdapter)) {
+      throw new Error("Always-on wake-word listening requires the local Whisper speech runtime.");
+    }
+    if (this.wakeWordMonitorActive) return;
+    this.wakeWordMonitorActive = true;
+    this.captureAuthorized = false;
+    this.wakeWord.resetSession();
+    try {
+      await this.ensureAsrConnected();
+      await this.asr.activateStream?.();
+      this.setState("idle");
+      console.log("[VanessaVoiceSession] Local wake-word monitor enabled; ambient audio stays on this device.");
+    } catch (error) {
+      this.wakeWordMonitorActive = false;
+      this.asr.deactivateStream?.();
+      throw error;
+    }
+  }
+
+  isWakeWordMonitorActive(): boolean {
+    return this.wakeWordMonitorActive;
+  }
+
+  async deactivateSession(): Promise<void> {
+    this.cancelCurrentTurn();
+    this.captureAuthorized = false;
+    this.asr.deactivateStream?.();
+    this.wakeWord.resetSession();
+    this.turnDetector.reset();
+    if (this.wakeWordMonitorActive && this.asr instanceof VoiceAdapter) {
+      await this.resumeWakeWordMonitor();
+      return;
+    }
+    this.setState("idle");
+  }
+
   async activateSession(durationMs = 25000): Promise<void> {
+    if (this.isProcessing || this.isSpeaking) this.cancelCurrentTurn();
+    const generation = this.sessionGeneration;
+    this.captureAuthorized = true;
+    this.sarvamSpeechGate.reset();
     this.wakeWord.touchActiveSession(durationMs);
     try {
       await this.ensureAsrConnected();
+      if (generation !== this.sessionGeneration) return;
+      await this.asr.activateStream?.(durationMs);
     } catch (err) {
+      if (generation !== this.sessionGeneration) return;
+      this.captureAuthorized = false;
       this.wakeWord.resetSession();
       this.asr.deactivateStream?.();
       this.setState("idle");
       throw err;
     }
-    await this.asr.activateStream?.(durationMs);
+    if (generation !== this.sessionGeneration) return;
     this.setState("listening");
     this.turnDetector.reset();
     console.log(`[VanessaVoiceSession] Session explicitly activated for ${durationMs}ms`);
@@ -170,9 +258,17 @@ export class VanessaVoiceSession {
       return;
     }
 
-    // 3. Stream audio chunk to ASR
-    if (this.wakeWord.isSessionActive()) {
-      this.asr.sendAudioChunk(chunk.pcm);
+    // 3. Forward only active speech and a short acoustic tail to Sarvam.
+    // Manual endpointing is owned by Vanessa, so local gating prevents long
+    // PTT silence from being sent upstream. Other providers keep their contract.
+    if (this.wakeWord.isSessionActive() || (this.wakeWordMonitorActive && !this.isProcessing && !this.isSpeaking && this.asr instanceof VoiceAdapter)) {
+      if (this.asr instanceof SarvamAsrAdapter) {
+        for (const frame of this.sarvamSpeechGate.push(chunk.pcm, vadRes.isSpeech)) {
+          this.asr.sendAudioChunk(frame);
+        }
+      } else {
+        this.asr.sendAudioChunk(chunk.pcm);
+      }
     }
 
     // 4. Turn detection: silence threshold + transcript completion
@@ -223,49 +319,51 @@ export class VanessaVoiceSession {
     // Filter wake word prefix
     const wakeCheck = alreadyAccepted ? { detected: true, cleanedText: rawText } : this.wakeWord.processTranscript(rawText);
     if (!wakeCheck.detected) {
-      // Ignore transcripts unless an explicit push-to-talk activation is active.
+      // Ignore room speech without a wake prefix, then re-arm local standby.
       this.isProcessing = false;
       this.turnDetector.reset();
+      this.asr.deactivateStream?.();
+      await this.resumeWakeWordMonitor();
       return;
     }
     const command = wakeCheck.cleanedText;
+    this.captureAuthorized = false;
+    // A committed transcript ends the capture window. Close provider streaming
+    // before planning/execution so command latency does not extend ASR billing.
+    this.wakeWord.resetSession();
+    this.asr.deactivateStream?.();
 
-    // A wake phrase on its own should open the listening window, not greet and
-    // immediately shut the microphone off. The user can say the command next.
     if (!command.trim()) {
       if (wakeCheck.detected) {
-        this.wakeWord.touchActiveSession(15000);
-        try {
-          await this.asr.activateStream?.(15000);
-          this.setState("listening");
-          this.handlers.onHudUpdate?.({ state: "listening", transcript: "I'm listening. What would you like me to do?" });
-        } catch (error) {
-          this.wakeWord.resetSession();
-          this.asr.deactivateStream?.();
-          this.setState("idle");
-          this.handlers.onTtsUnavailable?.(error instanceof Error ? error.message : String(error));
-        }
+        // User woke up Vanessa with "Hey Vanessa"
+        this.setState("responding");
+        const greeting = "Hey boss, how are you? How can I help you?";
+        this.handlers.onHudUpdate?.({ state: "responding", transcript: greeting });
+        try { await this.speak(greeting); }
+        catch { if (generation === this.sessionGeneration) this.handlers.onTtsUnavailable?.("Speech generation failed; activate the microphone to retry."); }
+        if (generation !== this.sessionGeneration) return;
+        this.setState("idle");
+        this.handlers.onHudUpdate?.({ state: "idle", transcript: "" });
       }
       this.isProcessing = false;
       this.turnDetector.reset();
+      await this.resumeWakeWordMonitor();
       return;
     }
 
-    // A committed command ends the capture window before planning/execution,
-    // avoiding unnecessary ASR streaming while specialist agents do their work.
-    this.wakeWord.resetSession();
-    this.asr.deactivateStream?.();
     this.partialTranscript = "";
     this.setState("thinking");
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });
     this.conversationContext.push({ role: "user", content: command });
     this.conversationContext = this.conversationContext.slice(-8);
     this.asr.setConversationContext?.(this.conversationContext);
-    const source = (process.env.VOICE_COMMAND_SOURCE as any) || "desktop";
     const requestId = turnId
-      ? `req-${createHash("sha256").update(turnId).digest("hex").slice(0, 16)}`
-      : `req-${randomUUID().slice(0, 8)}`;
-    const idempotencyKey = `${source}:${requestId}`;
+      ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
+      : `voice-${randomUUID()}`;
+    const idempotencyKey = `voice:${requestId}`;
+    const controller = new AbortController();
+    this.requestController = controller;
+    this.activeRequestId = requestId;
     this.handlers.onFinalTranscript?.(command, requestId);
 
     let responseText: string;
@@ -278,14 +376,23 @@ export class VanessaVoiceSession {
         // dispatch remain owned by the orchestrator.
         const submitStarted = Date.now();
         console.log(`[Voice] submitting request=${requestId} historyTurns=${this.conversationContext.length}`);
-        const execution = await orchestratorClient.executeCommand({
+        const execution = await this.client.executeCommand({
           command,
           requestId,
           idempotencyKey,
-          source,
+          source: "voice",
           language,
           conversationContext: this.conversationContext,
-        });
+        }, controller.signal);
+
+        if (generation !== this.sessionGeneration) return;
+
+        // Only terminal results release the cancellation handle. An approval
+        // request remains cancellable even while Vanessa speaks the approval prompt.
+        if (["success", "failed", "partial"].includes(execution.status)) {
+          if (this.activeRequestId === requestId) this.activeRequestId = undefined;
+        }
+        if (this.requestController === controller) this.requestController = undefined;
 
         console.log(`[Voice] response request=${requestId} status=${execution.status} plan=${execution.planId || "none"} elapsedMs=${Date.now() - submitStarted}`);
         this.setState("responding");
@@ -296,14 +403,15 @@ export class VanessaVoiceSession {
         });
         responseText = execution.spokenSummary;
       } catch (err: any) {
-        console.error("[VanessaVoiceSession] Execution error:", err.message);
-        responseText = "I couldn't reach the task coordinator. Your request was not submitted; please try again.";
+        if (generation !== this.sessionGeneration) return;
+        console.error("[VanessaVoiceSession] Execution error:", safeProviderDetail(err.message));
+        responseText = "I couldn't confirm the task result. Check the task timeline before retrying; the request may already be running.";
         this.setState("responding");
         this.handlers.onHudUpdate?.({ state: "responding", transcript: responseText });
       }
 
       if (responseText) {
-        if (!responseText.startsWith("I couldn't reach the task coordinator.")) {
+        if (!responseText.startsWith("I couldn't confirm the task result.")) {
           this.conversationContext.push({ role: "assistant", content: responseText });
           this.conversationContext = this.conversationContext.slice(-8);
           this.asr.setConversationContext?.(this.conversationContext);
@@ -313,17 +421,20 @@ export class VanessaVoiceSession {
           await this.speak(responseText);
           console.log(`[Voice] TTS complete request=${requestId}`);
         } catch (err: any) {
-          console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", err.message);
-        this.handlers.onTtsUnavailable?.(err.message || "Voice speech generation is unavailable.");
+          console.warn("[VanessaVoiceSession] Response is available as text but speech failed:", safeProviderDetail(err.message));
+          if (generation === this.sessionGeneration) this.handlers.onTtsUnavailable?.(safeProviderDetail(err.message || "Voice speech generation is unavailable."));
         }
       }
     } finally {
+      if (generation !== this.sessionGeneration) return;
+      this.requestController = undefined;
       this.isProcessing = false;
       this.turnDetector.reset();
       if (generation === this.sessionGeneration) {
         this.bargeIn.reset();
         this.wakeWord.resetSession();
         this.asr.deactivateStream?.();
+        await this.resumeWakeWordMonitor();
       }
       if (this.state !== "listening") {
         this.setState("idle");
@@ -354,37 +465,82 @@ export class VanessaVoiceSession {
   }
 
   /**
-   * Barge-In interrupt: immediately cancels active speech and downstream responses
+   * Barge-in stops speech output and opens a fresh listening turn.
+   * It deliberately does not cancel the orchestrator task: playback interruption
+   * and task cancellation are different user intents. Explicit stop/deactivate
+   * still uses cancelCurrentTurn() and requests orchestrator cancellation.
    */
   interrupt(): void {
-    this.sessionGeneration += 1;
+    // Fence the prior response so late callbacks cannot speak over the new turn.
+    // Barge-in normally occurs after the orchestrator response has arrived, so
+    // there is no reason to send a second, potentially misleading cancel request.
+    this.sessionGeneration++;
+    this.requestController = undefined;
+    // Preserve a non-terminal request ID (for example awaiting_approval) so an
+    // explicit Stop can still cancel it. Terminal request IDs are cleared above.
+    this.isProcessing = false;
     this.isSpeaking = false;
+    this.queuedUtterances = [];
+    this.partialTranscript = "";
     this.tts.abort();
+    this.sarvamSpeechGate.reset();
+    this.captureAuthorized = false;
     this.bargeIn.reset();
     this.setState("interrupted");
-    this.handlers.onStateChange?.("interrupted");
-
-    // Local speech onset is an explicit conversational interruption. Re-open
-    // ASR immediately; old response cleanup is generation-guarded above.
     this.turnDetector.reset();
-    this.resumeSessionAfterInterruption(this.sessionGeneration).then((resumed) => {
+
+    const generation = this.sessionGeneration;
+    this.resumeSessionAfterInterruption(generation).then((resumed) => {
       if (resumed) this.handlers.onHudUpdate?.({ state: "listening", transcript: "" });
     }).catch((err) => {
       console.warn("[VanessaVoiceSession] Could not resume ASR after interruption:", err.message);
-      if (this.state === "interrupted") this.setState("idle");
+      if (generation === this.sessionGeneration && this.state === "interrupted") this.setState("idle");
     });
   }
 
   stop(): void {
-    this.sessionGeneration += 1;
-    this.isSpeaking = false;
-    this.tts.abort();
+    this.wakeWordMonitorActive = false;
+    this.cancelCurrentTurn();
     this.asr.close();
     this.isAsrConnected = false;
+    this.asrConnectPromise = undefined;
     this.wakeWord.resetSession();
     this.turnDetector.reset();
     this.bargeIn.reset();
     this.setState("idle");
+  }
+
+  private async resumeWakeWordMonitor(): Promise<void> {
+    if (!this.wakeWordMonitorActive || !(this.asr instanceof VoiceAdapter)) return;
+    this.captureAuthorized = false;
+    this.wakeWord.resetSession();
+    try {
+      await this.ensureAsrConnected();
+      await this.asr.activateStream?.();
+      this.setState("idle");
+    } catch (error) {
+      this.wakeWordMonitorActive = false;
+      this.asr.deactivateStream?.();
+      this.handlers.onError?.(safeProviderDetail(error instanceof Error ? error.message : "Local wake-word monitor could not resume."));
+    }
+  }
+
+  private cancelCurrentTurn(): void {
+    this.sessionGeneration++;
+    this.requestController?.abort();
+    this.requestController = undefined;
+    const requestId = this.activeRequestId;
+    this.activeRequestId = undefined;
+    if (requestId) void this.client.cancelRequest(requestId).catch(() => {
+      this.handlers.onError?.("Cancellation could not be confirmed. Check the task timeline; already-started actions may continue.");
+    });
+    this.isProcessing = false;
+    this.isSpeaking = false;
+    this.queuedUtterances = [];
+    this.partialTranscript = "";
+    this.tts.abort();
+    this.sarvamSpeechGate.reset();
+    this.captureAuthorized = false;
   }
 
   getState(): SessionState {
@@ -397,10 +553,12 @@ export class VanessaVoiceSession {
   }
 
   private async resumeSessionAfterInterruption(generation: number): Promise<boolean> {
+    this.captureAuthorized = true;
     this.wakeWord.touchActiveSession(25000);
     await this.ensureAsrConnected();
     if (generation !== this.sessionGeneration) return false;
     await this.asr.activateStream?.(25000);
+    if (generation !== this.sessionGeneration) return false;
     this.setState("listening");
     this.turnDetector.reset();
     return true;

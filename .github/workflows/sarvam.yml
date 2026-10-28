@@ -1,0 +1,61 @@
+name: Sarvam deterministic acceptance
+on:
+  push:
+    branches: [Vanessa-Prototype-1-MAIN, feature/kshitij-voice-agent-plane]
+  pull_request:
+    branches: [Vanessa-Prototype-1-MAIN, feature/kshitij-voice-agent-plane]
+permissions:
+  contents: read
+jobs:
+  windows-contracts:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      SARVAM_API_KEY: vanessa-build-secret-canary
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify local speech transcripts are private by default
+        run: python -m unittest discover -s services/voice-agent/tests -p "test_*.py"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Test first-run setup diagnostics
+        run: pnpm run test:doctor
+      - name: Verify agent result contracts
+        run: pnpm --filter @vanessa/orchestrator test:agent-result
+      - name: Verify incident log target resolution
+        run: pnpm --filter @vanessa/orchestrator test:it-ops-log-target
+      - name: Test resource routing and approved file operations
+        run: pnpm --filter @vanessa/orchestrator test:resource-workflows
+      - name: Verify local Ollama client contracts
+        run: pnpm --filter @vanessa/orchestrator test:ollama-client
+      - name: Verify managed Codex runner contracts
+        run: pnpm --filter @vanessa/orchestrator test:codex
+      # Full legacy scenarios require a user-selected live planner and include removed legacy actions;
+      # deterministic planner/voice contracts are covered below without live API calls.
+      - name: Type-check evaluation harness
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+      - name: Test floating-window docking geometry
+        run: pnpm run test:desktop:layout
+      - name: Test microphone failure diagnostics
+        run: pnpm run test:desktop:microphone
+      - run: pnpm run test:sarvam:gate
+      - run: node --test scripts/security.test.cjs
+      - name: Package sanitized Windows bootstrap ZIP
+        run: pnpm run package:bootstrap
+      - name: Upload Windows bootstrap ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanessa-Windows-Bootstrap-${{ github.sha }}
+          path: artifacts/windows/Vanessa-Windows-Bootstrap-*.zip
+          if-no-files-found: error
+          retention-days: 7
+      # No real microphone, cloud credentials, or billable provider calls in CI.

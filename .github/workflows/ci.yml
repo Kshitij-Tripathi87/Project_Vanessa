@@ -48,19 +48,19 @@ jobs:
         run: pnpm --filter @vanessa/desktop build
 
       - name: Test desktop docking and preference persistence
-        run: pnpm --filter @vanessa/desktop test:docking
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts
 
       - name: Test local wake-word routing and PCM framing
-        run: pnpm --filter @vanessa/voice-agent test:wake-word
+        run: pnpm --filter @vanessa/voice-agent exec tsx --test src/session/wakeWord.test.ts
 
       - name: Test deterministic agent workflows
-        run: pnpm --filter @vanessa/orchestrator test:agent-routing
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentRouting.test.ts
 
       - name: Test browser and Windows routing contracts
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/planner.browser.test.ts
 
       - name: Test Windows action failure handling and verification
-        run: pnpm --filter @vanessa/orchestrator test:windows-agent
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/windowsAgentUiAutomation.test.ts src/tests/windowsControls.test.ts src/tests/windowsUiAutomation.test.ts
 
       - name: Test task outcome and verification semantics
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/taskRunner.result.test.ts
@@ -69,7 +69,7 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
 
       - name: Test shared voice/text command contract
-        run: pnpm --filter @vanessa/voice-agent test:contract
+        run: pnpm --filter @vanessa/voice-agent exec tsx --test src/tests/commandContract.test.ts
 
       - name: Regression-test existing coding handoff
         run: pnpm --filter @vanessa/orchestrator test:codex

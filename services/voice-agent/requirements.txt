@@ -1,0 +1,5 @@
+# Local Windows STT runtime used by services/voice-agent/voice_server.py
+# Pin the ASR engine; constrain the NumPy line to a Windows/Python 3.11 compatible range.
+faster-whisper==1.2.1
+numpy>=1.26,<2.5
+websockets>=13,<16

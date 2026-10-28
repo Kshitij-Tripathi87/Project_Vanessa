@@ -19,7 +19,7 @@ export interface AsrAdapter {
   usesServerTurnDetection?: boolean;
   connect(handlers: {
     onPartial: (result: TranscriptResult) => void;
-    onFinal: (result: TranscriptResult) => void;
+    onFinal: (result: TranscriptResult) => void | Promise<void>;
   }): Promise<void> | void;
   sendAudioChunk(pcm: Int16Array): void;
   finalizeTurn?(): void;

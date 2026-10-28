@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Vanessa" Manufacturer="Vanessa" Version="$(var.AppVersion)"
+    UpgradeCode="C704D9B2-A11B-45FA-89C4-9B321D5B38F1" Scope="perUser"
+    InstallerVersion="500" Compressed="yes" Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Vanessa is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="VanessaIcon" SourceFile="$(var.PayloadRoot)\apps\desktop\assets\vanessa.ico" />
+    <Property Id="ARPPRODUCTICON" Value="VanessaIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Kshitij-Tripathi87/Project_Vanessa" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Kshitij-Tripathi87/Project_Vanessa" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LOCALAPPDATA_PROGRAMS" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Vanessa" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuVanessaFolder" Name="Vanessa" />
+    </StandardDirectory>
+    <ComponentGroup Id="VanessaPayload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PayloadRoot)\**" />
+    </ComponentGroup>
+    <Component Id="VanessaStartMenuShortcut" Directory="ProgramMenuVanessaFolder" Guid="*">
+      <Shortcut Id="VanessaStartMenuShortcut" Name="Vanessa"
+        Target="[SystemFolder]wscript.exe"
+        Arguments="&quot;[INSTALLFOLDER]scripts\Launch-Vanessa-Installed.vbs&quot;"
+        WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\Vanessa" Name="Installed"
+        Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveVanessaStartMenuFolder" Directory="ProgramMenuVanessaFolder" On="uninstall" />
+    </Component>
+    <Feature Id="VanessaComplete" Title="Vanessa" Level="1">
+      <ComponentGroupRef Id="VanessaPayload" />
+      <ComponentRef Id="VanessaStartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

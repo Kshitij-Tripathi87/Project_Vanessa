@@ -1,0 +1,45 @@
+VANESSA — WINDOWS FIRST-RUN GUIDE
+=================================
+
+Supported target: Windows 11.
+
+1. Extract this ZIP to a folder your Windows user can write to. Do not extract it into
+   C:\Program Files. The folder contains the source needed by the local bootstrap.
+
+2. Double-click Launch-Vanessa.bat. On first run the setup may install Node.js,
+   Python 3.11 and Ollama using Windows Package Manager (winget), then install project
+   dependencies and download the selected speech/language models.
+
+3. The default local profile uses local Faster-Whisper, local Ollama and browser/OS
+   speech fallback. No cloud provider API key is required for that profile. The first
+   setup requires internet access and disk space; the default Ollama model is roughly
+   2 GB, and the speech model download size depends on VOICE_MODEL.
+
+4. To validate local configuration and prerequisites without starting services, run:
+      node scripts\launch-vanessa.cjs --check
+   For a build-only compile check, run:
+      node scripts\launch-vanessa.cjs --build-only
+
+5. Start voice from the Vanessa HUD and speak a short phrase to verify microphone
+   capture. The command-line doctor cannot grant Windows microphone permission or
+   prove that your physical microphone is working. Check Windows Settings > Privacy
+   & security > Microphone if capture fails.
+
+6. Optional provider credentials belong in a local .env file only when you explicitly
+   select a cloud provider. Never share .env, API keys, transcripts, or diagnostic
+   files containing private project information.
+
+This ZIP is the developer/bootstrap payload. A per-user Windows Setup EXE is built
+by the "Windows installer" GitHub Actions workflow (download the
+Vanessa-Setup-x64.exe artifact). On a fresh PC the first-run bootstrap still installs
+Node/Python/Ollama and downloads local speech/language models. The installer is not
+currently code-signed or fully offline. Never package or share a .env with provider
+credentials.
+
+7. The Windows installer workflow now builds both Vanessa-Setup-x64.exe and Vanessa-Setup-x64.msi. The MSI creates a Start Menu shortcut and supports standard Windows Installer install/uninstall operations. Both installer formats are tested in CI with install/uninstall smoke tests. This validates installer mechanics only; it does not prove that a physical microphone works.
+
+8. Installer signing: version-tag releases require an Authenticode signature for both EXE and MSI. The repository must have the trusted publisher PFX and password configured as GitHub Actions secrets named WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD before a version tag is pushed. Ordinary branch CI may emit unsigned test artifacts.
+
+9. This Setup EXE is an online bootstrap, not a fully offline installer. First-run setup downloads dependencies and models. Hosted Sarvam still requires BYOK until a secure server-side gateway is deployed; never embed a shared key in the EXE or bootstrap ZIP.
+
+For release gates and clean-device acceptance instructions, see docs/WINDOWS-DISTRIBUTION.md.

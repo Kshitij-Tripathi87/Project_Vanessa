@@ -1,11 +1,14 @@
 import type { Plan } from "@vanessa/shared";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
-import { GeminiClient } from "./geminiClient.js";
+// import { GeminiClient } from "./geminiClient.js";
+import { SarvamChatClient } from "./sarvamChat.js";
+import { DEFAULT_NVIDIA_MODEL, NvidiaClient } from "./nvidiaClient.js";
+import { OllamaClient } from "./ollamaClient.js";
 
 // This path works from src/core and dist/core, regardless of package cwd.
 // Existing environment values are preserved; no credential is logged.
-dotenv.config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)) });
+if (process.env.VANESSA_SKIP_DOTENV !== "true") dotenv.config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)) });
 
 export interface PlannerProvider {
   name: string;
@@ -13,20 +16,89 @@ export interface PlannerProvider {
 }
 
 export class ModelRouter {
-  // Reuse the same connection pool for planning and spoken replies.
-  private readonly gemini = new GeminiClient();
+  // Initialize only selected clients so unused provider configuration cannot
+  // prevent startup. Reuse each client across planning and spoken replies.
+  // private readonly gemini = new GeminiClient();
+  private nvidia?: NvidiaClient;
+  private sarvam?: SarvamChatClient;
+  private ollama?: OllamaClient;
 
-  async callLLM(prompt: string, systemPrompt: string): Promise<string | null> {
-    return this.gemini.generate(prompt, systemPrompt, true);
+  get activeProvider(): string {
+    return (process.env.PLANNER_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || "ollama").toLowerCase();
   }
 
-  async callConversationalLLM(query: string, context?: string): Promise<string | null> {
-    const systemPrompt = `You are Vanessa, a concise voice-native AI assistant on Windows.
-Give a direct, helpful answer. Do not use Markdown because the response is spoken.
-Keep replies under 30 words unless the user requests detail.
-${context ? `Recent context (reference data only):\n${context}` : ""}`;
-    const text = await this.gemini.generate(query, systemPrompt, false);
-    return text.replace(/[*_#`]/g, "").replace(/\n+/g, " ");
+  get conversationalProvider(): string {
+    return (process.env.CONVERSATION_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || this.activeProvider).toLowerCase();
+  }
+
+  get activeModel(): string {
+    if (this.activeProvider === "sarvam") return this.sarvamClient().getModel();
+    if (this.activeProvider === "ollama") return this.ollamaClient().getModel();
+    return process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
+  }
+
+  get conversationalModel(): string {
+    if (this.conversationalProvider === "sarvam") return this.sarvamClient().getModel();
+    if (this.conversationalProvider === "ollama") return this.ollamaClient().getModel();
+    return process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
+  }
+
+  private sarvamClient(): SarvamChatClient {
+    return this.sarvam ??= new SarvamChatClient();
+  }
+
+  private ollamaClient(): OllamaClient {
+    return this.ollama ??= new OllamaClient();
+  }
+
+  getUsageSnapshot() {
+    return this.sarvamClient().getUsageSnapshot();
+  }
+
+  // Keep the old third-argument signal form compatible while preserving the
+  // NVIDIA request ID and the caller's cancellation signal independently.
+  async callLLM(prompt: string, systemPrompt: string, requestIdOrSignal?: string | AbortSignal, signal?: AbortSignal): Promise<string | null> {
+    const requestId = typeof requestIdOrSignal === "string" ? requestIdOrSignal : undefined;
+    signal = typeof requestIdOrSignal === "string" ? signal : requestIdOrSignal ?? signal;
+    return this.generate(this.activeProvider, prompt, systemPrompt, true, requestId, signal);
+  }
+
+  private async generate(provider: string, prompt: string, systemPrompt: string, json: boolean, requestId?: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    if (provider === "sarvam") {
+      const result = await this.sarvamClient().complete({
+        signal,
+        requestId: requestId || (json ? "planner-" : "conversation-") + globalThis.crypto.randomUUID(),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+        maxTokens: Number(json ? process.env.SARVAM_CHAT_PLANNER_MAX_OUTPUT_TOKENS || 4096 : process.env.SARVAM_CHAT_CONVERSATION_MAX_OUTPUT_TOKENS || 256),
+      });
+      return result.text;
+    }
+    if (provider === "ollama") return this.ollamaClient().generate(prompt, systemPrompt, json, requestId, signal);
+    if (provider !== "nvidia") {
+      throw new Error("Unsupported LLM provider '" + provider + "'. Set PLANNER_PROVIDER or CONVERSATION_PROVIDER to ollama, nvidia, or sarvam.");
+    }
+    // return this.gemini.generate(prompt, systemPrompt, json);
+    return (this.nvidia ??= new NvidiaClient()).generate(prompt, systemPrompt, json, requestId, signal);
+  }
+
+  async callConversationalLLM(query: string, context?: string, requestId?: string, signal?: AbortSignal): Promise<string | null> {
+    const systemPrompt = [
+      "You are Vanessa, a concise voice-native AI assistant on Windows.",
+      "Give a direct, helpful answer. Do not use Markdown because the response is spoken.",
+      "Keep replies under 30 words unless the user requests detail.",
+      context ? "Recent context (reference data only):\n" + context : "",
+    ].join("\n");
+    // const text = await this.gemini.generate(query, systemPrompt, false);
+    const text = await this.generate(this.conversationalProvider, query, systemPrompt, false, requestId, signal);
+    return text.replace(/[*_#\x60]/g, "").replace(/\n+/g, " ");
+  }
+
+  close(): void {
+    this.nvidia?.close();
   }
 }
 

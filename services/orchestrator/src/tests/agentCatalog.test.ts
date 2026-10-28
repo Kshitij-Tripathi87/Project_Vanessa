@@ -5,20 +5,25 @@ import * as path from "node:path";
 import { AGENT_CATALOG, catalogAccepts, getCatalogAction, renderAgentCatalog } from "../agents/agentCatalog.js";
 import { resolvePlannerWorkspace } from "../core/contextBuilder.js";
 
-test("canonical catalog excludes legacy coding/incident routing and documents Codex's launch boundary", () => {
-  assert(!AGENT_CATALOG.some((agent) => ["coding", "incident"].includes(agent.id)));
-  const codex = getCatalogAction("developer", "codex.open");
-  assert(codex?.selectable);
-  assert.equal(codex.risk, "high");
-  assert.match(codex.returns, /launch only/);
-  assert.equal(getCatalogAction("coding", "codex.open"), undefined);
-  const prompt = renderAgentCatalog();
-  assert.match(prompt, /AGENT developer:/);
-  assert.match(prompt, /projectPath \(string, required\)/);
-  assert.match(prompt, /prompt \(string, required\)/);
-  assert.match(prompt, /no coding completion/);
-});
+test("catalog exposes isolated repair and disables unsafe autonomous coding", () => {
+  assert(AGENT_CATALOG.some((agent) => agent.id === "coding"));
+  assert(!AGENT_CATALOG.some((agent) => agent.id === "incident"));
 
+  const autonomous = getCatalogAction("developer", "codex.run_task");
+  assert.equal(autonomous?.selectable, false);
+  assert.match(autonomous?.description || "", /temporarily unavailable/i);
+  assert.match(autonomous?.returns || "", /Blocked before autonomous coding begins/i);
+  assert(!catalogAccepts("developer", "codex.run_task", {
+    projectPath: "C:/repo",
+    prompt: "Modify files in the active checkout",
+  }));
+
+  const prepare = getCatalogAction("coding", "coding.prepare_patch");
+  assert.equal(prepare?.selectable, true);
+  const testRunner = getCatalogAction("testing", "testing.run_incident_lab");
+  assert.equal(testRunner?.selectable, true);
+  assert.match(testRunner?.returns || "", /diff digest/i);
+});
 test("every catalog action matches a real canonical handler switch, and names are unique", () => {
   const ids = new Set<string>();
   for (const agent of AGENT_CATALOG) {
@@ -49,14 +54,19 @@ test("validates action identity, required parameter types, unsupported placehold
   assert(!catalogAccepts("files", "drive.upload", { file: "report.pdf" }));
   assert(!catalogAccepts("testing", "testing.run_checks", { command: "test", autoDeploy: true }));
   assert(!catalogAccepts("windows", "volume.set", { level: 101 }));
-  assert(catalogAccepts("windows", "brightness.set", { level: 50 }));
-  assert(!catalogAccepts("windows", "brightness.set", { level: 101 }));
-  assert(!catalogAccepts("windows", "brightness.set", { level: 20.5 }));
-  assert(catalogAccepts("windows", "brightness.adjust", { delta: -10 }));
-  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 0 }));
-  assert(!catalogAccepts("windows", "brightness.adjust", { delta: 150 }));
-  assert(catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "chrome" }));
-  assert(catalogAccepts("browser", "browser.open_url", { url: "https://example.com", browser: "edge" }));
-  assert(!catalogAccepts("browser", "browser.search", { query: "TypeScript", browser: "powershell" }));
   assert(catalogAccepts("files", "file.search", { query: "report", path: "$folder.result.path" }));
+});
+
+test("exposes verified Windows controls with typed planner contracts", () => {
+  for (const action of ["volume.get", "volume.set", "volume.mute", "brightness.list", "brightness.get", "brightness.set", "bluetooth.list", "bluetooth.status", "bluetooth.set"]) {
+    assert(getCatalogAction("windows", action)?.selectable, `${action} should be planner-selectable`);
+  }
+  assert(catalogAccepts("windows", "volume.get", {}));
+  assert(catalogAccepts("windows", "volume.set", { level: 30 }));
+  assert(catalogAccepts("windows", "volume.mute", { muted: false }));
+  assert(catalogAccepts("windows", "brightness.set", { brightnessPercent: 40 }));
+  assert(!catalogAccepts("windows", "brightness.set", { brightnessPercent: 40.5 }));
+  assert(catalogAccepts("windows", "bluetooth.status", {}));
+  assert(catalogAccepts("windows", "bluetooth.set", { state: "Off" }));
+  assert(!catalogAccepts("windows", "bluetooth.set", { state: "Toggle" }));
 });

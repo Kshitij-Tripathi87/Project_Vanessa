@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractResourceTarget, inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch } from "../core/agentRouting.js";
+import { extractResourceTarget, inferBrowserSearch, inferCommonActionSequence, inferExplicitBrowserNavigation, inferExplicitUiClick, inferResourceWorkflow, inferWindowsControl, inferYouTubeSearch } from "../core/agentRouting.js";
 
 test("routes code changes to the coding workflow", () => {
   assert.deepEqual(inferResourceWorkflow('Fix the bug in "src/example.ts" and add a regression test.'), {
@@ -122,6 +122,38 @@ test("routes single-intent Windows controls deterministically", () => {
   });
 });
 
+test("parses only explicitly named Windows UI controls", () => {
+  assert.deepEqual(inferExplicitUiClick('Click the button named "Search"'), {
+    name: "Search", controlType: "ControlType.Button",
+  });
+  assert.deepEqual(inferExplicitUiClick("Please click the link named Privacy"), {
+    name: "Privacy", controlType: "ControlType.Hyperlink",
+  });
+  assert.deepEqual(inferExplicitUiClick('Click the button named "Where?"'), {
+    name: "Where?", controlType: "ControlType.Button",
+  });
+  assert.deepEqual(inferExplicitUiClick("Click the button named Search"), {
+    name: "Search", controlType: "ControlType.Button",
+  });
+  assert.deepEqual(inferExplicitUiClick('Hey Vanessa, click the tab named "Bluetooth"'), {
+    name: "Bluetooth", controlType: "ControlType.TabItem",
+  });
+  assert.equal(inferExplicitUiClick("Click Search"), null);
+  assert.equal(inferExplicitUiClick("Click the button named Search and close Settings"), null);
+  assert.equal(inferExplicitUiClick('Do not click the button named "Delete"'), null);
+});
+test("routes active-window accessibility inspection to UI Automation", () => {
+  assert.deepEqual(inferWindowsControl("Inspect the active window"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("List controls in the current app"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.deepEqual(inferWindowsControl("Hey Vanessa, inspect the foreground application UI controls"), {
+    action: "ui.inspect", params: {},
+  });
+  assert.equal(inferWindowsControl("Inspect the active window and click Search"), null);
+});
 test("does not collapse multi-action requests into a single Windows action", () => {
   assert.equal(inferWindowsControl("Turn off Bluetooth and increase brightness"), null);
   assert.equal(inferWindowsControl("Open Chrome and search for TypeScript tutorials"), null);

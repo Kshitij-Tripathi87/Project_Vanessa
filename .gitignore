@@ -23,6 +23,8 @@ build/
 **/build/
 out/
 **/out/
+artifacts/
+release/
 .cache/
 
 # Logs

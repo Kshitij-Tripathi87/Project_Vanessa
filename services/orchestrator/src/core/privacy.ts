@@ -26,18 +26,19 @@ export class PrivacyGuard {
       }
     }
     this.allowedFolders.add(this.defaultFolder);
-    // Also allow current workspace incident lab if running
+    // Also allow the current package and the trusted monorepo workspace. The
+    // launcher starts from the repository root, while package-scoped tests and
+    // dev commands may start from services/orchestrator.
     this.allowedFolders.add(path.resolve(process.cwd()));
-    // Add the detected monorepo root as an explicit approved workspace when launched from a child package.
-    let workspaceCandidate = path.resolve(process.cwd());
+    let workspace = path.resolve(process.cwd());
     while (true) {
-      if (fs.existsSync(path.join(workspaceCandidate, "pnpm-workspace.yaml"))) {
-        try { this.allowedFolders.add(fs.realpathSync(workspaceCandidate)); } catch { /* retain existing approved roots */ }
+      if (fs.existsSync(path.join(workspace, "pnpm-workspace.yaml"))) {
+        this.allowedFolders.add(fs.realpathSync(workspace));
         break;
       }
-      const parent = path.dirname(workspaceCandidate);
-      if (parent === workspaceCandidate) break;
-      workspaceCandidate = parent;
+      const parent = path.dirname(workspace);
+      if (parent === workspace) break;
+      workspace = parent;
     }
   }
 
@@ -109,7 +110,7 @@ export class PrivacyGuard {
 
     for (const pat of apiKeyPatterns) {
       if (pat.test(clean)) {
-        clean = clean.replace(pat, (match, p1, p2) => {
+        clean = clean.replace(pat, (_match, p1, p2) => {
           redactedCount++;
           if (!types.includes("API_KEY")) types.push("API_KEY");
           return p2 ? `${p1}[REDACTED_API_KEY]` : "[REDACTED_API_KEY]";
