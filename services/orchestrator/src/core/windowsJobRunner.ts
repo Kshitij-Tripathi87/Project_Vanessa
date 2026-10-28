@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 /**
  * Windows Job Object wrapper for the registered incident-lab test runner.
  *
@@ -437,7 +439,7 @@ export function buildWindowsJobRunnerEnvironment(
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
     throw new Error("Windows Job Object runner args must be a string array.");
   }
-  if (!cwd || !require("node:path").isAbsolute(cwd)) throw new Error("Windows Job Object runner cwd must be absolute.");
+  if (!cwd || !path.isAbsolute(cwd)) throw new Error("Windows Job Object runner cwd must be absolute.");
   if (!runId || !/^[a-zA-Z0-9-]{1,80}$/.test(runId)) throw new Error("Invalid managed run ID.");
   return {
     VANESSA_JOBRUNNER_EXECUTABLE: executable,
