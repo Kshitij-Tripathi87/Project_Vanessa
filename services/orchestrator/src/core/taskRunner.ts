@@ -235,11 +235,15 @@ export async function cancelTaskWithProof(task: Task, reason: string): Promise<"
       // Codex has a separate cancellation channel, but it does not provide process-tree proof.
       void cancelCodexTask(task.id);
     }
-    const result = await processSupervisor.cancel(task.id);
+    const result = await processSupervisor.cancel(
+      task.id,
+      task.action === "testing.run_incident_lab" ? task.action : undefined
+    );
     const stopped = Boolean(result && (
       (result.status === "cancelled" && result.terminationVerified === true) ||
       (result.status === "timed_out" && result.terminationVerified === true) ||
-      result.status === "exited"
+      result.status === "exited" ||
+      (result.processStarted === false && result.terminationVerified === true)
     ));
     if (!stopped) {
       markTerminationUnconfirmed(
@@ -476,13 +480,22 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       throw new Error("Approval binding changed or expired before process launch.");
     }
 
-    const result = await agent.execute(task.action, resolvedParams, {
+    // Reserve supervised test execution before entering the agent's async
+    // workspace validation. Cancellation during that preflight must prevent spawn.
+    const managedTestAction = task.action === "testing.run_incident_lab";
+    if (managedTestAction) processSupervisor.reserve(task.id, task.action);
+    let result: any;
+    try {
+      result = await agent.execute(task.action, resolvedParams, {
         planId: plan.id,
         command: plan.command,
         workingMemory: workingMemory.getSnapshot(),
         task,
         agentTask,
       });
+    } finally {
+      if (managedTestAction) processSupervisor.releaseReservationIfUnused(task.id);
+    }
 
       if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Do not overwrite an unresolved process state with a convenient terminal status.
@@ -781,13 +794,22 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         ],
       };
 
-      const result = await agent.execute(task.action, resolvedParams, {
-        planId: plan.id,
-        command: plan.command,
-        workingMemory: workingMemory.getSnapshot(),
-        task,
-        agentTask,
-      });
+      // Keep the same preflight/cancellation barrier for every orchestration
+      // entry path, including low-risk tasks and plan-driven execution.
+      const managedTestAction = task.action === "testing.run_incident_lab";
+      if (managedTestAction) processSupervisor.reserve(task.id, task.action);
+      let result: any;
+      try {
+        result = await agent.execute(task.action, resolvedParams, {
+          planId: plan.id,
+          command: plan.command,
+          workingMemory: workingMemory.getSnapshot(),
+          task,
+          agentTask,
+        });
+      } finally {
+        if (managedTestAction) processSupervisor.releaseReservationIfUnused(task.id);
+      }
 
       if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Cancellation requested but the supervisor could not prove that the
@@ -801,12 +823,14 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
         task.completedAt = Date.now();
-        task.verification = {
-          verified: false,
-          postconditions: ["Cancellation was requested. Process termination is only verified when the supervisor has supplied termination evidence."],
-          exitCode: undefined,
-          outcome: "cancelled",
-        };
+        if (!(task.verification?.outcome === "cancelled" && task.verification?.verified === true)) {
+          task.verification = {
+            verified: false,
+            postconditions: ["Cancellation was requested; termination proof is unavailable in this result."],
+            exitCode: undefined,
+            outcome: "cancelled",
+          };
+        }
         memoryPalace.recordTaskCheckpoint(task, plan.id);
         eventBus.emitEvent("task:update", task);
         return;
