@@ -7,8 +7,6 @@ import * as path from "node:path";
  * interpolated into PowerShell source. The inner process is created suspended,
  * assigned to a KILL_ON_JOB_CLOSE Job Object, and only then resumed.
  */
-export const WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE = 71;
-
 export const WINDOWS_JOB_RUNNER_SCRIPT = String.raw`$ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @'
 using System;
@@ -232,8 +230,21 @@ public static class VanessaWindowsJobRunner
         return Marshal.StringToHGlobalUni(block);
     }
 
+    private static int FailUnverified(string message)
+    {
+        string token = Environment.GetEnvironmentVariable("VANESSA_JOBRUNNER_VERIFICATION_TOKEN") ?? "";
+        try
+        {
+            Console.Error.WriteLine("VANESSA_JOB_RUNNER_UNVERIFIED:" + token + ":" + message);
+            Console.Error.Flush();
+        }
+        catch { }
+        return 71;
+    }
+
     private static int Fail(string message, int exitCode)
     {
+        if (exitCode == 71) return FailUnverified(message);
         try
         {
             Console.Error.WriteLine("VANESSA_JOB_RUNNER_ERROR: " + message + "; Win32Error=" + Marshal.GetLastWin32Error());
@@ -378,7 +389,7 @@ public static class VanessaWindowsJobRunner
                 if (cancelRequested)
                 {
                     TerminateJobObject(job, 130);
-                    return JobIsEmpty(job, 3000) ? 130 : 71;
+                    return JobIsEmpty(job, 3000) ? 130 : FailUnverified("Cancellation was requested but Job Object emptiness could not be verified.");
                 }
             }
 
@@ -397,7 +408,7 @@ public static class VanessaWindowsJobRunner
                     if (cancelRequested)
                     {
                         TerminateJobObject(job, 130);
-                        return JobIsEmpty(job, 3000) ? 130 : 71;
+                        return JobIsEmpty(job, 3000) ? 130 : FailUnverified("Cancellation was requested but Job Object emptiness could not be verified.");
                     }
                 }
                 uint waitResult = WaitForSingleObject(processInfo.hProcess, 50);
@@ -405,7 +416,7 @@ public static class VanessaWindowsJobRunner
                 if (waitResult == WAIT_FAILED)
                 {
                     TerminateJobObject(job, 71);
-                    return JobIsEmpty(job, 3000) ? 71 : 71;
+                    return FailUnverified("WaitForSingleObject failed; normal child completion could not be verified.");
                 }
             }
 
@@ -430,7 +441,7 @@ public static class VanessaWindowsJobRunner
                 try { TerminateJobObject(job, 71); } catch { }
                 try { JobIsEmpty(job, 3000); } catch { }
             }
-            return 71;
+            return FailUnverified("Unexpected wrapper exception prevented reliable execution/termination evidence.");
         }
         finally
         {
@@ -458,6 +469,7 @@ export function buildWindowsJobRunnerEnvironment(
   args: string[],
   cwd: string,
   runId: string,
+  verificationToken: string,
 ): Record<string, string> {
   if (!executable || !executable.trim()) throw new Error("A child executable is required.");
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
@@ -465,8 +477,10 @@ export function buildWindowsJobRunnerEnvironment(
   }
   if (!cwd || !path.isAbsolute(cwd)) throw new Error("Windows Job Object runner cwd must be absolute.");
   if (!runId || !/^[a-zA-Z0-9-]{1,80}$/.test(runId)) throw new Error("Invalid managed run ID.");
+  if (!verificationToken || !/^[a-zA-Z0-9-]{20,100}$/.test(verificationToken)) throw new Error("Invalid verification token.");
   const result: Record<string, string> = {
     VANESSA_JOBRUNNER_EXECUTABLE: executable,
+    VANESSA_JOBRUNNER_VERIFICATION_TOKEN: verificationToken,
     VANESSA_JOBRUNNER_ARG_COUNT: String(args.length),
     VANESSA_JOBRUNNER_CWD: cwd,
     VANESSA_JOBRUNNER_RUN_ID: runId,
