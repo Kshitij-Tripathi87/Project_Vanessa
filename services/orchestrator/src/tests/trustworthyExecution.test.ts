@@ -536,6 +536,27 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     assert.match(processResult.stdout + processResult.stderr, /api_key=\[REDACTED\]/);
     assert.equal(await workspaceService.isBaseCheckoutUnchanged(workspace), true);
 
+    // Exit code 71 is a legitimate child result. Supervisor-uncertainty must be
+    // signalled by private evidence, not inferred from a numeric exit code.
+    const ordinaryExit71 = await supervisor.run({
+      taskId: `exit-71-${randomUUID()}`,
+      actionId: "testing.run_incident_lab",
+      actionParams: {
+        suiteId: "incident-lab.regression",
+        workspaceId: workspace.taskId,
+        expectedDiffHash,
+      },
+      executable: process.execPath,
+      args: ["-e", "process.exit(71)"],
+      cwd: workspace.worktreePath,
+      timeoutMs: 5000,
+      maxOutputBytes: 64 * 1024,
+    });
+    assert.equal(ordinaryExit71.status, "exited");
+    assert.equal(ordinaryExit71.exitCode, 71);
+    assert.equal(ordinaryExit71.processStarted, true);
+    assert.equal(ordinaryExit71.terminationVerified, true);
+
     const hangingPatch = patched.replace("const discount", "/* HANG_TEST_MARKER */\nconst discount");
     await fs.writeFile(target, hangingPatch, "utf8");
     const hangingDiff = execFileSync("git", ["diff", "--no-ext-diff", "--", relativeFile], {
