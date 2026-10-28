@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { repairWorkspaceService } from "./repairWorkspace.js";
 import { WINDOWS_JOB_RUNNER_SCRIPT, WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE, buildWindowsJobRunnerEnvironment } from "./windowsJobRunner.js";
@@ -111,9 +112,10 @@ export function getIncidentLabTestInvocation(worktreePath: string): { executable
   if (!path.isAbsolute(loaderPath) || !path.isAbsolute(testPath)) {
     throw new Error("The registered incident-lab runner paths could not be resolved safely.");
   }
-  // Use the explicit equals form so Windows argument parsing cannot
-  // ambiguously bind the loader path as part of the option token.
-  return { executable: process.execPath, args: [`--import=${loaderPath}`, testPath] };
+  // ESM loader specifiers must be file URLs on Windows; a raw drive-letter
+  // path is parsed as an unsupported URL scheme. file: URLs are also valid on POSIX.
+  const loaderUrl = pathToFileURL(loaderPath).href;
+  return { executable: process.execPath, args: [`--import=${loaderUrl}`, testPath] };
 }
 
 const ENV_ALLOWLIST = [
