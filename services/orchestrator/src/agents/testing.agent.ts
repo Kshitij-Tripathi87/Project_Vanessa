@@ -238,13 +238,21 @@ export class TestingAgent implements SpecialistAgent {
     let actualRoot = "", actualHead = "", actualBranch = "", actualDiff = "";
     let changedFiles: string[] = [];
     try {
-      const [root, head, branch, diff, names] = await Promise.all([
+      // Let every fixed, read-only Git preflight command settle before returning
+      // from this stage; Promise.all could reject early while siblings keep running.
+      const checks = await Promise.allSettled([
         execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["branch", "--show-current"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["diff", "--name-only"], { cwd: workspace.worktreePath, timeout: 5000, encoding: "utf8" }),
       ]);
+      const failedCheck = checks.find((check) => check.status === "rejected");
+      if (failedCheck?.status === "rejected") throw failedCheck.reason;
+      const [root, head, branch, diff, names] = checks.map((check) => {
+        if (check.status !== "fulfilled") throw new Error("A Git preflight command did not settle successfully.");
+        return check.value;
+      });
       actualRoot = path.resolve(root.stdout.trim());
       actualHead = head.stdout.trim();
       actualBranch = branch.stdout.trim();
