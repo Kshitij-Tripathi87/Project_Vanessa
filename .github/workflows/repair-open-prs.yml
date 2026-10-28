@@ -125,7 +125,7 @@ jobs:
           # Reconcile files whose implementations/tests were written against different branch APIs.
           # Keep the current target Windows agent and planner; reuse the new deterministic route helpers
           # and the BrowserAgent plus unit tests from the same tested feature branch.
-          git restore --source $targetSnapshot --staged --worktree -- services/orchestrator/src/agents/windows.agent.ts services/orchestrator/src/core/planner.ts
+          git restore --source $targetSnapshot --staged --worktree -- services/orchestrator/src/agents/windows.agent.ts services/orchestrator/src/agents/agentCatalog.ts services/orchestrator/src/tests/agentCatalog.test.ts services/orchestrator/src/core/planner.ts
           if ($LASTEXITCODE -ne 0) { throw "Could not restore target Windows agent/planner contracts." }
 
           $featureFiles = @(
