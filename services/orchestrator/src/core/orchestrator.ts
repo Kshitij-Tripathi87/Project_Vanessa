@@ -15,6 +15,7 @@ import {
   runPlan,
   triggerKillSwitch,
   cancelTaskWithProof,
+  type CancellationResolution,
 } from "./taskRunner.js";
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
@@ -26,7 +27,7 @@ import { cancelCodexTask } from "../agents/codex-task-runner.js";
 export class VanessaOrchestrator {
   private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
 
-  async cancelRequest(requestId: string): Promise<{ cancelled: number; terminationUnconfirmed: number; planningOnly: boolean }> {
+  async cancelRequest(requestId: string): Promise<{ cancelled: number; executionFinished: number; terminationUnconfirmed: number; planningOnly: boolean }> {
     let request = this.requests.get(requestId);
     if (!request) {
       // Keep a bounded, time-scoped cancellation tombstone. Otherwise a cancel
@@ -36,11 +37,11 @@ export class VanessaOrchestrator {
       controller.abort();
       request = { controller, updatedAt: Date.now() };
       this.requests.set(requestId, request);
-      return { cancelled: 0, terminationUnconfirmed: 0, planningOnly: true };
+      return { cancelled: 0, executionFinished: 0, terminationUnconfirmed: 0, planningOnly: true };
     }
     request.controller.abort();
     const plannedTasks = request.plan?.tasks || [];
-    const work: Promise<"cancelled" | "termination_unconfirmed">[] = [];
+    const work: Promise<CancellationResolution>[] = [];
     for (const plannedTask of plannedTasks) {
       // runPlan owns cloned task records while execution is in flight.
       const activeTask = activeTasks.get(plannedTask.id);
@@ -56,6 +57,7 @@ export class VanessaOrchestrator {
     const results = await Promise.all(work);
     return {
       cancelled: results.filter((result) => result === "cancelled").length,
+      executionFinished: results.filter((result) => result === "execution_finished").length,
       terminationUnconfirmed: results.filter((result) => result === "termination_unconfirmed").length,
       planningOnly: plannedTasks.length === 0,
     };
