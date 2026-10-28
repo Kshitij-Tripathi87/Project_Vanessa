@@ -1,0 +1,119 @@
+name: Repair and integrate open Vanessa PRs
+on:
+  push:
+    branches: [Vanessa-Prototype-1-MAIN]
+permissions:
+  contents: write
+concurrency:
+  group: repair-open-prs
+  cancel-in-progress: false
+jobs:
+  integrate:
+    if: contains(github.event.head_commit.message, '[integrate-open-prs]')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout full git history
+        uses: actions/checkout@v4
+        with:
+          ref: Vanessa-Prototype-1-MAIN
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Configure git identity and fetch existing PR branches
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+          git checkout --force -B Vanessa-Prototype-1-MAIN origin/Vanessa-Prototype-1-MAIN
+      - name: Integrate the descendant browser/folder handoff branch (#19, includes #38)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'feat/issue-18-browser-folder-handoff'
+          & git merge --no-edit --no-ff -X ours "origin/$source" -m "merge: integrate browser launch and operation-first handoff (#19, #38)"
+          if ($LASTEXITCODE -ne 0) {
+            $conflicts = & git diff --name-only --diff-filter=U
+            Write-Host "::error::Unresolved conflicts while integrating $source"
+            $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
+            & git merge --abort
+            throw "Integration stopped before tests/push because conflicts were unresolved."
+          }
+          & git merge-base --is-ancestor origin/feat/agent-routing-folder-browser-ci HEAD
+          if ($LASTEXITCODE -ne 0) { throw "The #38 source branch is not contained in the #19 integration result." }
+          Write-Host "[OK] Browser/folder routing branch merged. Candidate: $(git rev-parse HEAD)"
+      - name: Integrate Windows UI Automation branch (#23, includes main/#37 ancestry)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'feat/windows-ui-automation-agent'
+          & git merge --no-edit --no-ff -X ours "origin/$source" -m "merge: integrate safe Windows UI Automation (#23, #37)"
+          if ($LASTEXITCODE -ne 0) {
+            $conflicts = & git diff --name-only --diff-filter=U
+            Write-Host "::error::Unresolved conflicts while integrating $source"
+            $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
+            & git merge --abort
+            throw "Integration stopped before tests/push because conflicts were unresolved."
+          }
+          & git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) {
+            & git merge --no-edit --no-ff -X ours origin/main -m "merge: preserve main branch integration history (#37)"
+            if ($LASTEXITCODE -ne 0) {
+              $conflicts = & git diff --name-only --diff-filter=U
+              Write-Host "::error::Unresolved conflicts while integrating origin/main"
+              $conflicts | ForEach-Object { Write-Host "CONFLICT: $_" }
+              & git merge --abort
+              throw "Main-branch integration stopped before tests/push."
+            }
+          }
+          Write-Host "[OK] Windows UI Automation and main-branch history integrated. Candidate: $(git rev-parse HEAD)"
+      - name: Set up Node.js and Python
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build every workspace package
+        run: pnpm build
+      - name: Test agent routing and UI automation regressions
+        shell: pwsh
+        run: |
+          pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts src/tests/agentRouting.test.ts src/tests/browserAgent.unit.test.ts src/tests/fileAgent.test.ts src/tests/folderAgent.test.ts src/tests/planner.browser.test.ts src/tests/taskRunner.result.test.ts src/tests/windowsAgent.unit.test.ts src/tests/windowsUiAutomation.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "Agent routing/UI Automation tests failed." }
+          pnpm --filter @vanessa/orchestrator test:trustworthy-execution
+          if ($LASTEXITCODE -ne 0) { throw "Trustworthy-execution tests failed." }
+      - name: Test voice, launcher, and microphone contracts
+        shell: pwsh
+        run: |
+          pnpm run test:sarvam:gate
+          if ($LASTEXITCODE -ne 0) { throw "Voice/provider regression gate failed." }
+          pnpm run test:doctor
+          if ($LASTEXITCODE -ne 0) { throw "Launcher diagnostics tests failed." }
+          pnpm run test:desktop:layout
+          if ($LASTEXITCODE -ne 0) { throw "Desktop layout tests failed." }
+          pnpm run test:desktop:microphone
+          if ($LASTEXITCODE -ne 0) { throw "Microphone diagnostics tests failed." }
+      - name: Test orchestrator scenarios, skills, and failure drills
+        shell: pwsh
+        run: |
+          pnpm run test:scenarios
+          if ($LASTEXITCODE -ne 0) { throw "Scenario regression suite failed." }
+          pnpm run test:skills
+          if ($LASTEXITCODE -ne 0) { throw "Skills regression suite failed." }
+          pnpm run test:drills
+          if ($LASTEXITCODE -ne 0) { throw "Failure drills failed." }
+          pnpm run test:drills:process
+          if ($LASTEXITCODE -ne 0) { throw "Process failure drills failed." }
+      - name: Push only after all integration checks pass
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Verified integration commit: $(git rev-parse HEAD)"
+          git log -4 --oneline
+          git push origin HEAD:refs/heads/Vanessa-Prototype-1-MAIN
