@@ -10,6 +10,7 @@ import { criticEngine } from "./critic.js";
 import { recordAgentResult } from "./agentResult.js";
 import { cancelCodexTask } from "../agents/codex-task-runner.js";
 import { processSupervisor } from "./processSupervisor.js";
+import { catalogAccepts } from "../agents/agentCatalog.js";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { repairWorkspaceService } from "./repairWorkspace.js";
 import { createHash } from "node:crypto";
@@ -404,6 +405,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   const dependenciesReady = (task.dependsOn || []).every((id) => activeTasks.get(id)?.status === "success");
   const permission = permissionGuard.check(task, false);
+  const catalogAllowed = catalogAccepts(task.agent, task.action, task.params || {});
   let currentApprovalDigest = "";
   let approvalDigestError = "";
   try {
@@ -420,18 +422,22 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
     task.approvalConsumedAt !== undefined ||
     currentApprovalDigest !== task.approvalDigest;
-  if (isKillSwitchEngaged || !dependenciesReady || permission === "blocked" || approvalInvalid) {
+  if (isKillSwitchEngaged || !dependenciesReady || permission === "blocked" || !catalogAllowed || approvalInvalid) {
     task.status = isKillSwitchEngaged ? "cancelled" : "blocked";
     task.lifecycleState = isKillSwitchEngaged ? "cancelled" : "blocked";
     task.error = isKillSwitchEngaged
       ? "Approval cancelled by emergency kill switch."
       : !dependenciesReady
       ? "Approval rejected because prerequisite tasks are not verified as successful."
-      : approvalDigestError
-        ? `Approval rejected because the target could not be safely revalidated: ${approvalDigestError}`
-        : approvalInvalid
-          ? "Approval binding is missing, expired, reused, or no longer matches the exact operation."
-          : "Approval rejected because the safety policy now blocks this task.";
+      : permission === "blocked"
+        ? "Approval rejected because the canonical execution policy blocks this task."
+        : !catalogAllowed
+          ? "Approval rejected because the action or parameters are not accepted by the reviewed, selectable agent catalog."
+          : approvalDigestError
+            ? `Approval rejected because the target could not be safely revalidated: ${approvalDigestError}`
+            : approvalInvalid
+              ? "Approval binding is missing, expired, reused, or no longer matches the exact operation."
+              : "Approval rejected because the safety policy now blocks this task.";
     task.completedAt = Date.now();
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
     eventBus.emitEvent("audit:log", {
@@ -527,6 +533,10 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       (task.status as string) === "termination_unconfirmed" ||
       (task.lifecycleState as string) === "cancel_requested"
     ) return task;
+    const finalPermission = permissionGuard.check(task, false);
+    if (finalPermission === "blocked" || !catalogAccepts(task.agent, task.action, resolvedParams)) {
+      throw new Error("Execution was blocked because the action policy or reviewed parameter contract changed before launch.");
+    }
     if (
       task.approvalDigest &&
       (task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
@@ -779,10 +789,13 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     eventBus.emitEvent("tool.started", { taskId: task.id, agentId: task.agent, tool: task.action, params: resolvedParams });
 
     const permission = permissionGuard.check(task);
-    if (permission === "blocked") {
+    const catalogAllowed = catalogAccepts(task.agent, task.action, resolvedParams);
+    if (permission === "blocked" || !catalogAllowed) {
       task.status = "blocked";
       task.lifecycleState = "blocked";
-      task.error = "Blocked by the canonical execution policy. No process was started.";
+      task.error = permission === "blocked"
+        ? "Blocked by the canonical execution policy. No process was started."
+        : "Blocked because the action or parameters are not accepted by the reviewed, selectable agent catalog. No process was started.";
       task.completedAt = Date.now();
       task.verification = {
         verified: false,
@@ -887,6 +900,10 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         (task.status as string) === "termination_unconfirmed" ||
         (task.lifecycleState as string) === "cancel_requested"
       ) return;
+      const finalPermission = permissionGuard.check(task, false);
+      if (finalPermission === "blocked" || !catalogAccepts(task.agent, task.action, resolvedParams)) {
+        throw new Error("Execution was blocked because the action policy or reviewed parameter contract changed before launch.");
+      }
       const agent = agentRegistry[task.agent];
       if (!agent) {
         throw new Error(`Unknown agent: ${task.agent}`);
