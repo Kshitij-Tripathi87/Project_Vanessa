@@ -233,6 +233,17 @@ public static class VanessaWindowsJobRunner
         return Marshal.StringToHGlobalUni(block);
     }
 
+    private static int Fail(string message, int exitCode)
+    {
+        try
+        {
+            Console.Error.WriteLine("VANESSA_JOB_RUNNER_ERROR: " + message + "; Win32Error=" + Marshal.GetLastWin32Error());
+            Console.Error.Flush();
+        }
+        catch { }
+        return exitCode;
+    }
+
     private static bool JobIsEmpty(IntPtr job, int timeoutMs)
     {
         DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
@@ -262,7 +273,7 @@ public static class VanessaWindowsJobRunner
         try
         {
             job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero) return 126;
+            if (job == IntPtr.Zero) return Fail("CreateJobObject failed.", 126);
 
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -271,7 +282,7 @@ public static class VanessaWindowsJobRunner
             try
             {
                 Marshal.StructureToPtr(limits, limitsPtr, false);
-                if (!SetInformationJobObject(job, 9, limitsPtr, (uint)limitsSize)) return 126;
+                if (!SetInformationJobObject(job, 9, limitsPtr, (uint)limitsSize)) return Fail("SetInformationJobObject failed.", 126);
             }
             finally
             {
@@ -308,7 +319,7 @@ public static class VanessaWindowsJobRunner
             nullSecurity.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
             nullSecurity.bInheritHandle = true;
             nullInput = CreateFile("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, ref nullSecurity, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-            if (nullInput == IntPtr.Zero || nullInput == new IntPtr(-1)) return 126;
+            if (nullInput == IntPtr.Zero || nullInput == new IntPtr(-1)) return Fail("CreateFile(NUL) failed.", 126);
 
             IntPtr stdIn = GetStdHandle(-10);
             IntPtr stdOut = GetStdHandle(-11);
@@ -338,14 +349,14 @@ public static class VanessaWindowsJobRunner
             bool created = CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true,
                 CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
                 environment, workingDirectory, ref startup, out processInfo);
-            if (!created) return 126;
+            if (!created) return Fail("CreateProcess for the registered runner failed.", 126);
             processCreated = true;
 
             if (!AssignProcessToJobObject(job, processInfo.hProcess))
             {
                 TerminateProcess(processInfo.hProcess, 126);
                 WaitForSingleObject(processInfo.hProcess, 3000);
-                return 126;
+                return Fail("AssignProcessToJobObject failed.", 126);
             }
             processAssigned = true;
 
@@ -362,7 +373,7 @@ public static class VanessaWindowsJobRunner
             if (resumed == 0xFFFFFFFF)
             {
                 TerminateJobObject(job, 126);
-                return JobIsEmpty(job, 3000) ? 126 : 71;
+                return JobIsEmpty(job, 3000) ? Fail("ResumeThread failed.", 126) : Fail("ResumeThread failed and job emptiness could not be verified.", 71);
             }
 
             Console.Error.WriteLine("VANESSA_JOB_RUNNER_STARTED:" + runId);
@@ -386,20 +397,21 @@ public static class VanessaWindowsJobRunner
             }
 
             uint childExitCode;
-            if (!GetExitCodeProcess(processInfo.hProcess, out childExitCode)) return 71;
+            if (!GetExitCodeProcess(processInfo.hProcess, out childExitCode)) return Fail("GetExitCodeProcess failed.", 71);
             if (!JobIsEmpty(job, 1200))
             {
                 // The root runner exited while one or more descendants remained.
                 // Terminate those descendants and return a non-zero result; a
                 // successful test run is never reported from a dirty job.
-                if (!TerminateJobObject(job, 70)) return 71;
-                if (!JobIsEmpty(job, 3000)) return 71;
+                if (!TerminateJobObject(job, 70)) return Fail("TerminateJobObject failed for surviving descendants.", 71);
+                if (!JobIsEmpty(job, 3000)) return Fail("Job Object remained non-empty after termination escalation.", 71);
                 return 70;
             }
             return unchecked((int)childExitCode);
         }
-        catch
+        catch (Exception error)
         {
+            try { Console.Error.WriteLine("VANESSA_JOB_RUNNER_EXCEPTION: " + error.GetType().FullName + ": " + error.Message); Console.Error.Flush(); } catch { }
             if (job != IntPtr.Zero)
             {
                 try { TerminateJobObject(job, 71); } catch { }
