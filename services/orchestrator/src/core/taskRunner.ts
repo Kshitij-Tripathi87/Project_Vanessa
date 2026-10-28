@@ -10,7 +10,7 @@ import { criticEngine } from "./critic.js";
 import { recordAgentResult } from "./agentResult.js";
 import { cancelCodexTask } from "../agents/codex-task-runner.js";
 import { processSupervisor } from "./processSupervisor.js";
-import { catalogAccepts } from "../agents/agentCatalog.js";
+import { catalogAccepts, getCatalogAction } from "../agents/agentCatalog.js";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { repairWorkspaceService } from "./repairWorkspace.js";
 import { createHash } from "node:crypto";
@@ -25,6 +25,18 @@ export const activePlanMap = new Map<string, Plan>();
 let isKillSwitchEngaged = false;
 
 const APPROVAL_POLICY_VERSION = "trustworthy-execution-v1";
+
+function matchesReviewedActionContract(task: Task, params: Record<string, any>): boolean {
+  const spec = getCatalogAction(task.agent, task.action);
+  if (!spec?.selectable || !catalogAccepts(task.agent, task.action, params)) return false;
+
+  // The planner is not the authority for risk or allowed tools. These fields
+  // must exactly match the reviewed catalog or the task is rejected before
+  // approval can be requested and again immediately before execution.
+  if (task.risk !== spec.risk || !Array.isArray(task.allowedTools)) return false;
+  if (task.allowedTools.length !== spec.tools.length) return false;
+  return spec.tools.every((tool, index) => task.allowedTools![index] === tool);
+}
 
 function stableJson(value: any): string {
   if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
@@ -405,7 +417,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
   const dependenciesReady = (task.dependsOn || []).every((id) => activeTasks.get(id)?.status === "success");
   const permission = permissionGuard.check(task, false);
-  const catalogAllowed = catalogAccepts(task.agent, task.action, task.params || {});
+  const catalogAllowed = matchesReviewedActionContract(task, task.params || {});
   let currentApprovalDigest = "";
   let approvalDigestError = "";
   try {
@@ -534,7 +546,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       (task.lifecycleState as string) === "cancel_requested"
     ) return task;
     const finalPermission = permissionGuard.check(task, false);
-    if (finalPermission === "blocked" || !catalogAccepts(task.agent, task.action, resolvedParams)) {
+    if (finalPermission === "blocked" || !matchesReviewedActionContract(task, resolvedParams)) {
       throw new Error("Execution was blocked because the action policy or reviewed parameter contract changed before launch.");
     }
     if (
@@ -789,7 +801,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     eventBus.emitEvent("tool.started", { taskId: task.id, agentId: task.agent, tool: task.action, params: resolvedParams });
 
     const permission = permissionGuard.check(task);
-    const catalogAllowed = catalogAccepts(task.agent, task.action, resolvedParams);
+    const catalogAllowed = matchesReviewedActionContract(task, resolvedParams);
     if (permission === "blocked" || !catalogAllowed) {
       task.status = "blocked";
       task.lifecycleState = "blocked";
@@ -901,7 +913,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         (task.lifecycleState as string) === "cancel_requested"
       ) return;
       const finalPermission = permissionGuard.check(task, false);
-      if (finalPermission === "blocked" || !catalogAccepts(task.agent, task.action, resolvedParams)) {
+      if (finalPermission === "blocked" || !matchesReviewedActionContract(task, resolvedParams)) {
         throw new Error("Execution was blocked because the action policy or reviewed parameter contract changed before launch.");
       }
       const agent = agentRegistry[task.agent];
