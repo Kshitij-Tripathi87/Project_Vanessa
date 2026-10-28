@@ -1,7 +1,7 @@
 import { execFile, spawn as nodeSpawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { win32 as win32Path } from "node:path";
 import { promisify } from "node:util";
 import { codexDependencies, findCodexCli } from "./codex-launcher.js";
 
@@ -235,10 +235,10 @@ export async function runCodexTask(
     if (typeof params.projectPath !== "string" || !params.projectPath.trim() || params.projectPath.includes("\0")) {
       throw new Error("codex.run_task requires an absolute repository projectPath.");
     }
-    if (!isAbsolute(params.projectPath)) {
+    if (!win32Path.isAbsolute(params.projectPath)) {
       throw new Error("projectPath must be absolute. Select the repository folder in Vanessa first.");
     }
-    projectPath = resolve(params.projectPath);
+    projectPath = win32Path.resolve(params.projectPath);
     if (typeof params.prompt !== "string" || !params.prompt.trim() || params.prompt.includes("\0")) {
       throw new Error("codex.run_task requires a non-empty prompt without NUL characters.");
     }
@@ -265,7 +265,7 @@ export async function runCodexTask(
     const allowedPaths = params.allowedPaths === undefined ? [] : params.allowedPaths;
     if (!Array.isArray(allowedPaths) || allowedPaths.length > 50 ||
       allowedPaths.some((item) => typeof item !== "string" || !item.trim() || item.length > 260 ||
-        isAbsolute(item) || item.split(/[\\/]+/).some((part) => part === "..") || item.includes("\0"))) {
+        win32Path.isAbsolute(item) || item.split(/[\\/]+/).some((part) => part === "..") || item.includes("\0"))) {
       throw new Error("allowedPaths must contain at most 50 repository-relative paths without parent-directory traversal.");
     }
     if (activeRuns.has(taskId)) throw new Error("A managed Codex run already exists for this task ID.");
@@ -276,7 +276,7 @@ export async function runCodexTask(
 
     if (!(await deps.isDirectory(projectPath))) throw new Error("The selected project path is not an accessible directory.");
     const workspace = await deps.inspectWorkspace(projectPath);
-    if (!workspace.root || resolve(workspace.root).toLowerCase() !== projectPath.toLowerCase()) {
+    if (!workspace.root || win32Path.resolve(workspace.root).toLowerCase() !== projectPath.toLowerCase()) {
       throw new Error("Select the Git repository root, not a nested folder.");
     }
     if (!workspace.branch) throw new Error("The repository is in detached-HEAD state. Check out the intended feature branch first.");
