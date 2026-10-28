@@ -4,6 +4,7 @@ name: Repair and integrate open Vanessa PRs # [integrate-open-prs]
 # Re-restore the reviewed catalog after merging old branches before adding UI Automation actions.
 # Preserve the target memory handler and catalog contract, then rerun the full acceptance gates.
 # Keep current BrowserAgent semantics; the injected launcher is a tested seam, not playback proof.
+# Run desktop docking tests with the workspace's available tsx binary; the desktop manifest has no test:docking script.
 on:
   push:
     branches: [Vanessa-Prototype-1-MAIN]
