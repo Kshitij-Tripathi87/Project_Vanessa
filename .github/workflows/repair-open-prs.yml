@@ -6,6 +6,7 @@ name: Repair and integrate open Vanessa PRs # [integrate-open-prs]
 # Keep current BrowserAgent semantics; the injected launcher is a tested seam, not playback proof.
 # Run desktop docking tests with the workspace's available tsx binary; the desktop manifest has no test:docking script.
 # Ollama-backed end-to-end scenarios run only when a local service is reachable; hosted CI still enforces deterministic gates.
+# Windows Job Object tests allow for PowerShell Add-Type compilation before timing the supervised process.
 on:
   push:
     branches: [Vanessa-Prototype-1-MAIN]
