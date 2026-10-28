@@ -453,7 +453,21 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
         stderr: processResult.stderr,
       }),
     );
-    assert.equal(processResult.exitCode, 0);
+    assert.equal(
+      processResult.exitCode,
+      0,
+      JSON.stringify({
+        exitCode: processResult.exitCode,
+        executable: processResult.executable,
+        args: processResult.args,
+        cwd: processResult.cwd,
+        launcherExecutable: processResult.launcherExecutable,
+        launcherArgs: processResult.launcherArgs,
+        stdout: processResult.stdout,
+        stderr: processResult.stderr,
+        error: processResult.error,
+      }),
+    );
     assert.equal(processResult.processStarted, true);
     assert.equal(processResult.terminationVerified, true);
     assert.deepEqual(parseRegressionSummary(processResult.stdout + processResult.stderr, processResult.runId), { passed: 2, total: 2 });
