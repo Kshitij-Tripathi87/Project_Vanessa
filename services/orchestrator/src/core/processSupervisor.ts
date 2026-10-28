@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolveManagedAction } from "./actionRegistry.js";
 import { repairWorkspaceService } from "./repairWorkspace.js";
-import { WINDOWS_JOB_RUNNER_SCRIPT, WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE, buildWindowsJobRunnerEnvironment } from "./windowsJobRunner.js";
+import { WINDOWS_JOB_RUNNER_SCRIPT, buildWindowsJobRunnerEnvironment } from "./windowsJobRunner.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,6 +79,9 @@ interface ManagedEntry {
   windowsJobWrapper: boolean;
   runnerStarted: boolean;
   runnerStartProbe: string;
+  unverifiedMarkerProbe: string;
+  verificationToken: string;
+  unverifiedJobTermination: boolean;
   runId: string;
   startedMs: number;
   startedAt: string;
@@ -443,6 +446,7 @@ export class ProcessSupervisor {
       const startedMs = Date.now();
       const startedAt = new Date(startedMs).toISOString();
       const runId = randomUUID();
+      const verificationToken = randomUUID();
       const windowsJobWrapper = process.platform === "win32";
       const launcherExecutable = windowsJobWrapper ? "powershell.exe" : normalizedRequest.executable;
       const launcherArgs = windowsJobWrapper
@@ -463,6 +467,7 @@ export class ProcessSupervisor {
             normalizedRequest.args,
             normalizedRequest.cwd,
             runId,
+            verificationToken,
           ));
         }
         child = spawn(launcherExecutable, launcherArgs, {
@@ -496,6 +501,7 @@ export class ProcessSupervisor {
       const entry: ManagedEntry = {
         request: normalizedRequest, child, launcherExecutable, launcherArgs, windowsJobWrapper,
         runnerStarted: !windowsJobWrapper, runnerStartProbe: "",
+        unverifiedMarkerProbe: "", verificationToken, unverifiedJobTermination: false,
         runId, startedMs, startedAt, stdout: [], stderr: [],
         stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false,
         timedOut: false, cancellationRequested: false, completion, resolveCompletion,
@@ -509,13 +515,17 @@ export class ProcessSupervisor {
       child.stderr?.on("data", (chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         appendBounded(entry, "stderr", buffer, normalizedRequest.maxOutputBytes!);
-        if (entry.windowsJobWrapper && !entry.runnerStarted) {
-          entry.runnerStartProbe = (entry.runnerStartProbe + buffer.toString("utf8")).slice(-4096);
-          if (entry.runnerStartProbe.includes(`VANESSA_JOB_RUNNER_STARTED:${entry.runId}`)) {
-            // This marker can only be emitted by the wrapper after the child
-            // process was assigned and successfully resumed. Child output may
-            // repeat it only after that process has already started.
-            entry.runnerStarted = true;
+        if (entry.windowsJobWrapper) {
+          const text = buffer.toString("utf8");
+          if (!entry.runnerStarted) {
+            entry.runnerStartProbe = (entry.runnerStartProbe + text).slice(-4096);
+            if (entry.runnerStartProbe.includes(`VANESSA_JOB_RUNNER_STARTED:${entry.runId}`)) {
+              entry.runnerStarted = true;
+            }
+          }
+          entry.unverifiedMarkerProbe = (entry.unverifiedMarkerProbe + text).slice(-8192);
+          if (entry.unverifiedMarkerProbe.includes(`VANESSA_JOB_RUNNER_UNVERIFIED:${entry.verificationToken}:`)) {
+            entry.unverifiedJobTermination = true;
           }
         }
       });
@@ -594,7 +604,7 @@ export class ProcessSupervisor {
       if (process.platform === "win32" && entry.windowsJobWrapper) {
         if (entry.result?.terminationVerified === true) return true;
         if (entry.child.exitCode !== null) {
-          return entry.child.exitCode !== WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE;
+          return !entry.unverifiedJobTermination;
         }
         try {
           // The wrapper reads this control message on its own stdin. The
@@ -607,7 +617,7 @@ export class ProcessSupervisor {
           await delay(25);
         }
         if (entry.child.exitCode !== null) {
-          return entry.child.exitCode !== WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE;
+          return !entry.unverifiedJobTermination;
         }
 
         // If the wrapper does not answer, terminate it. KILL_ON_JOB_CLOSE is
@@ -686,10 +696,11 @@ export class ProcessSupervisor {
       status = "spawn_failed";
       error = error || "The process closed without an exit code.";
     } else if (entry.windowsJobWrapper) {
-      if (exitCode === WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE) {
+      if (entry.unverifiedJobTermination) {
         status = "termination_unconfirmed";
         terminationVerified = null;
-        error = "The Windows Job Object wrapper could not verify that every assigned process had exited.";
+        const diagnostic = redactOutput(Buffer.concat(entry.stderr).toString("utf8").trim()).slice(-1200);
+        error = diagnostic || "The Windows Job Object wrapper could not verify that every assigned process had exited.";
       } else if (!entry.runnerStarted) {
         status = "spawn_failed";
         terminationVerified = true;
