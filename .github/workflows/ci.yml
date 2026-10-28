@@ -48,7 +48,7 @@ jobs:
         run: pnpm --filter @vanessa/desktop build
 
       - name: Test desktop docking and preference persistence
-        run: pnpm --filter @vanessa/desktop test:docking
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts
 
       - name: Test local wake-word routing and PCM framing
         run: pnpm --filter @vanessa/voice-agent test:wake-word
