@@ -689,7 +689,10 @@ export class ProcessSupervisor {
       } else if (!entry.runnerStarted) {
         status = "spawn_failed";
         terminationVerified = true;
-        error = "The Windows Job Object wrapper exited before the registered test executable started.";
+        const diagnostic = redactOutput(Buffer.concat(entry.stderr).toString("utf8").trim()).slice(-1200);
+        error = diagnostic
+          ? `The Windows Job Object wrapper exited before the registered test executable started. Launcher diagnostic: ${diagnostic}`
+          : "The Windows Job Object wrapper exited before the registered test executable started; it did not emit a startup marker.";
       } else {
         // Exit codes other than the reserved 'unverified' code are returned
         // only after the wrapper has confirmed that its Job Object is empty.
