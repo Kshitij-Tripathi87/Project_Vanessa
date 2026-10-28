@@ -7,6 +7,8 @@ import * as path from "node:path";
  * interpolated into PowerShell source. The inner process is created suspended,
  * assigned to a KILL_ON_JOB_CLOSE Job Object, and only then resumed.
  */
+export const WINDOWS_JOB_RUNNER_UNVERIFIED_EXIT_CODE = 71;
+
 export const WINDOWS_JOB_RUNNER_SCRIPT = String.raw`$ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @'
 using System;
