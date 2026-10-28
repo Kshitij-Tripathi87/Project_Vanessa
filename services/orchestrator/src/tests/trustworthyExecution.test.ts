@@ -439,7 +439,20 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       maxOutputBytes: 64 * 1024,
     });
 
-    assert.equal(processResult.status, "exited");
+    assert.equal(
+      processResult.status,
+      "exited",
+      JSON.stringify({
+        status: processResult.status,
+        exitCode: processResult.exitCode,
+        processStarted: processResult.processStarted,
+        terminationVerified: processResult.terminationVerified,
+        error: processResult.error,
+        launcherExecutable: processResult.launcherExecutable,
+        launcherArgs: processResult.launcherArgs,
+        stderr: processResult.stderr,
+      }),
+    );
     assert.equal(processResult.exitCode, 0);
     assert.equal(processResult.processStarted, true);
     assert.equal(processResult.terminationVerified, true);
