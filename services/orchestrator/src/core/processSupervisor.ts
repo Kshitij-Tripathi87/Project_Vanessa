@@ -82,6 +82,7 @@ interface ManagedEntry {
   unverifiedMarkerProbe: string;
   verificationToken: string;
   unverifiedJobTermination: boolean;
+  processClosed: boolean;
   runId: string;
   startedMs: number;
   startedAt: string;
@@ -502,6 +503,7 @@ export class ProcessSupervisor {
         request: normalizedRequest, child, launcherExecutable, launcherArgs, windowsJobWrapper,
         runnerStarted: !windowsJobWrapper, runnerStartProbe: "",
         unverifiedMarkerProbe: "", verificationToken, unverifiedJobTermination: false,
+        processClosed: false,
         runId, startedMs, startedAt, stdout: [], stderr: [],
         stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false,
         timedOut: false, cancellationRequested: false, completion, resolveCompletion,
@@ -532,6 +534,10 @@ export class ProcessSupervisor {
       child.once("error", (error) => { entry.spawnError = error; });
       let timer: NodeJS.Timeout | undefined;
       child.once("close", (exitCode, signal) => {
+        // Node emits all stdio data events before "close". This flag allows a
+        // concurrent terminator to inspect wrapper evidence without waiting for
+        // finish(), which itself may be awaiting the same termination promise.
+        entry.processClosed = true;
         if (timer) clearTimeout(timer);
         void this.finish(entry, exitCode, signal);
       });
@@ -604,12 +610,13 @@ export class ProcessSupervisor {
       if (process.platform === "win32" && entry.windowsJobWrapper) {
         if (entry.result?.terminationVerified === true) return true;
         if (entry.child.exitCode !== null) {
-          // exitCode fires before stdio "close" and before the terminal evidence
-          // reducer necessarily sees the private marker. Never infer proof from
-          // a numeric child exit code while the wrapper result is still pending.
-          const closeDeadline = Date.now() + 1000;
-          while (Date.now() < closeDeadline && !entry.result) await delay(20);
-          return Boolean(entry.result && entry.result.terminationVerified === true);
+          // Do not await finish() here: finish() may already be awaiting this
+          // termination promise. Wait for stdio close so all private wrapper
+          // markers have been observed, then make the proof decision directly.
+          const closeDeadline = Date.now() + 1500;
+          while (Date.now() < closeDeadline && !entry.processClosed) await delay(20);
+          if (!entry.processClosed) return false;
+          return !entry.unverifiedJobTermination;
         }
         try {
           // The wrapper reads this control message on its own stdin. The
@@ -622,12 +629,13 @@ export class ProcessSupervisor {
           await delay(25);
         }
         if (entry.child.exitCode !== null) {
-          // exitCode fires before stdio "close" and before the terminal evidence
-          // reducer necessarily sees the private marker. Never infer proof from
-          // a numeric child exit code while the wrapper result is still pending.
-          const closeDeadline = Date.now() + 1000;
-          while (Date.now() < closeDeadline && !entry.result) await delay(20);
-          return Boolean(entry.result && entry.result.terminationVerified === true);
+          // Do not await finish() here: finish() may already be awaiting this
+          // termination promise. Wait for stdio close so all private wrapper
+          // markers have been observed, then make the proof decision directly.
+          const closeDeadline = Date.now() + 1500;
+          while (Date.now() < closeDeadline && !entry.processClosed) await delay(20);
+          if (!entry.processClosed) return false;
+          return !entry.unverifiedJobTermination;
         }
 
         // If the wrapper does not answer, terminate it. KILL_ON_JOB_CLOSE is
