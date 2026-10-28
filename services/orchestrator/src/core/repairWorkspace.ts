@@ -62,6 +62,24 @@ async function git(cwd: string, args: string[]) {
   }
 }
 
+/** Wait for every fixed Git child to settle before surfacing a preflight error. */
+async function settleGitBatch<T>(operations: Promise<T>[], description: string): Promise<T[]> {
+  const results = await Promise.allSettled(operations);
+  const rejected = results.find((result) => result.status === "rejected");
+  if (rejected?.status === "rejected") {
+    throw new RepairWorkspaceError(
+      `${description}: ${rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason)}`,
+      "GIT_OPERATION_FAILED"
+    );
+  }
+  return results.map((result) => {
+    if (result.status !== "fulfilled") {
+      throw new RepairWorkspaceError(`${description}: a Git check did not settle.`, "GIT_OPERATION_FAILED");
+    }
+    return result.value;
+  });
+}
+
 function safeToken(value: string): string {
   return value
     .normalize("NFKD")
@@ -120,12 +138,12 @@ export class RepairWorkspaceService {
       );
     }
 
-    const [headResult, branchResult, statusResult, commonDirResult] = await Promise.all([
+    const [headResult, branchResult, statusResult, commonDirResult] = await settleGitBatch([
       git(repositoryRoot, ["rev-parse", "HEAD"]),
       git(repositoryRoot, ["branch", "--show-current"]),
       git(repositoryRoot, ["status", "--porcelain=v1", "--untracked-files=all"]),
       git(repositoryRoot, ["rev-parse", "--git-common-dir"]),
-    ]);
+    ], "Base repository preflight");
 
     const baseCommit = headResult.stdout.trim();
     const baseBranch = branchResult.stdout.trim();
@@ -191,12 +209,12 @@ export class RepairWorkspaceService {
 
     await git(repositoryRoot, ["worktree", "add", "-b", branchName, worktreePath, baseCommit]);
 
-    const [worktreeRootResult, worktreeHeadResult, worktreeBranchResult, worktreeStatusResult] = await Promise.all([
+    const [worktreeRootResult, worktreeHeadResult, worktreeBranchResult, worktreeStatusResult] = await settleGitBatch([
       git(worktreePath, ["rev-parse", "--show-toplevel"]),
       git(worktreePath, ["rev-parse", "HEAD"]),
       git(worktreePath, ["branch", "--show-current"]),
       git(worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"]),
-    ]);
+    ], "New worktree validation");
 
     const actualWorktreeRoot = path.resolve(worktreeRootResult.stdout.trim());
     const actualHead = worktreeHeadResult.stdout.trim();
@@ -246,12 +264,12 @@ export class RepairWorkspaceService {
 
   async isBaseCheckoutUnchanged(workspace: RepairWorkspace): Promise<boolean> {
     try {
-      const [headResult, branchResult, statusResult, rootResult] = await Promise.all([
+      const [headResult, branchResult, statusResult, rootResult] = await settleGitBatch([
         git(workspace.repositoryRoot, ["rev-parse", "HEAD"]),
         git(workspace.repositoryRoot, ["branch", "--show-current"]),
         git(workspace.repositoryRoot, ["status", "--porcelain=v1", "--untracked-files=all"]),
         git(workspace.repositoryRoot, ["rev-parse", "--show-toplevel"]),
-      ]);
+      ], "Base checkout isolation verification");
       return (
         path.resolve(rootResult.stdout.trim()) === workspace.repositoryRoot &&
         headResult.stdout.trim() === workspace.baseCommit &&
