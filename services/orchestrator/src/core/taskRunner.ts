@@ -508,7 +508,16 @@ export async function approveTask(taskId: string): Promise<Task | null> {
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
         task.completedAt = Date.now();
-        task.verification = { verified: false, postconditions: ["Execution was cancelled before verification."], exitCode: undefined, outcome: "cancelled" };
+        // Preserve verified process/no-process termination evidence written by
+        // cancelTaskWithProof; do not downgrade it after the agent returns.
+        if (!(task.verification?.outcome === "cancelled" && task.verification?.verified === true)) {
+          task.verification = {
+            verified: false,
+            postconditions: ["Cancellation was requested; termination proof is unavailable in this result."],
+            exitCode: undefined,
+            outcome: "cancelled",
+          };
+        }
         memoryPalace.recordTaskCheckpoint(task, task.parentId);
         eventBus.emitEvent("task:update", task);
         return task;
