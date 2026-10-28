@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 export type ManagedProcessStatus =
   | "exited"
+  | "not_started"
   | "spawn_failed"
   | "timed_out"
   | "cancelled"
@@ -38,6 +39,7 @@ export interface ManagedProcessResult {
   args: string[];
   cwd: string;
   pid?: number;
+  processStarted: boolean;
   startedAt: string;
   finishedAt: string;
   durationMs: number;
@@ -52,6 +54,16 @@ export interface ManagedProcessResult {
   stderrTruncated: boolean;
   outputDigest: string;
   error?: string;
+}
+
+interface StartingReservation {
+  taskId: string;
+  actionId: string;
+  cancelled: boolean;
+  claimed: boolean;
+  completion: Promise<ManagedProcessResult>;
+  resolveCompletion: (result: ManagedProcessResult) => void;
+  result?: ManagedProcessResult;
 }
 
 interface ManagedEntry {
@@ -254,6 +266,7 @@ async function areWindowsProcessesGone(processIds: number[]): Promise<boolean | 
  */
 export class ProcessSupervisor {
   private readonly active = new Map<string, ManagedEntry>();
+  private readonly starting = new Map<string, StartingReservation>();
   private readonly completed = new Map<string, ManagedProcessResult>();
 
   constructor(private readonly workspaceService = repairWorkspaceService) {}
@@ -262,16 +275,118 @@ export class ProcessSupervisor {
     return [...this.active.keys()];
   }
 
+  listStartingTaskIds(): string[] {
+    return [...this.starting.keys()];
+  }
+
   getResult(taskId: string): ManagedProcessResult | undefined {
     return this.active.get(taskId)?.result || this.completed.get(taskId);
+  }
+
+  /**
+   * Reserves a task ID before an agent enters asynchronous preflight. A cancel
+   * received during that window is remembered and must be observed before spawn.
+   */
+  reserve(taskId: string, actionId: string): void {
+    if (!taskId?.trim()) throw new Error("A taskId is required for managed execution.");
+    if (actionId !== "testing.run_incident_lab") {
+      throw new Error(`No startup reservation is registered for action '${actionId}'.`);
+    }
+    if (this.active.has(taskId)) throw new Error(`Task ${taskId} already owns a running process.`);
+    if (this.completed.has(taskId)) throw new Error(`Task ${taskId} already has a terminal execution result.`);
+    const existing = this.starting.get(taskId);
+    if (existing) {
+      if (existing.actionId !== actionId || existing.claimed) {
+        throw new Error(`Task ${taskId} already owns a different or claimed startup reservation.`);
+      }
+      return;
+    }
+    let resolveCompletion!: (result: ManagedProcessResult) => void;
+    const completion = new Promise<ManagedProcessResult>((resolve) => { resolveCompletion = resolve; });
+    this.starting.set(taskId, {
+      taskId, actionId, cancelled: false, claimed: false, completion, resolveCompletion,
+    });
+  }
+
+  /**
+   * Resolves a reservation when an agent exits preflight without reaching the
+   * process supervisor. If cancellation is pending, this is the proof that no
+   * managed process was started for that task.
+   */
+  releaseReservationIfUnused(taskId: string): void {
+    const reservation = this.starting.get(taskId);
+    if (!reservation || this.active.has(taskId)) return;
+    this.finishBeforeStart(
+      reservation,
+      reservation.cancelled
+        ? "Cancellation was confirmed before process launch; no managed process was started."
+        : "The managed action returned before launching a process."
+    );
+  }
+
+  private finishBeforeStart(reservation: StartingReservation, reason: string): ManagedProcessResult {
+    if (reservation.result) return reservation.result;
+    const now = new Date().toISOString();
+    const cancelled = reservation.cancelled;
+    const result: ManagedProcessResult = {
+      runId: randomUUID(),
+      taskId: reservation.taskId,
+      actionId: reservation.actionId,
+      status: cancelled ? "cancelled" : "not_started",
+      executable: "",
+      args: [],
+      cwd: "",
+      processStarted: false,
+      startedAt: now,
+      finishedAt: now,
+      durationMs: 0,
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      cancellationRequested: cancelled,
+      terminationVerified: true,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      outputDigest: createHash("sha256").update("").digest("hex"),
+      error: reason,
+    };
+    reservation.result = result;
+    this.starting.delete(reservation.taskId);
+    this.completed.set(reservation.taskId, result);
+    reservation.resolveCompletion(result);
+    return result;
   }
 
   async run(request: ManagedProcessRequest): Promise<ManagedProcessResult> {
     if (!request.taskId?.trim()) throw new Error("A taskId is required for managed execution.");
     if (!request.actionId?.trim()) throw new Error("An actionId is required for managed execution.");
-    if (!request.executable?.trim() || !Array.isArray(request.args) || request.args.some((arg) => typeof arg !== "string")) {
-      throw new Error("Managed execution requires an executable and a string argument array.");
+    const priorResult = this.completed.get(request.taskId);
+    if (priorResult) return priorResult;
+
+    let reservation = this.starting.get(request.taskId);
+    if (!reservation) {
+      this.reserve(request.taskId, request.actionId);
+      reservation = this.starting.get(request.taskId)!;
+      reservation.claimed = true;
+    } else {
+      if (reservation.actionId !== request.actionId) {
+        throw new Error("Managed execution action does not match its startup reservation.");
+      }
+      if (reservation.claimed) {
+        throw new Error(`Task ${request.taskId} already claimed its managed execution reservation.`);
+      }
+      reservation.claimed = true;
     }
+    if (reservation.cancelled) {
+      return this.finishBeforeStart(reservation, "Cancellation was confirmed before process launch; no managed process was started.");
+    }
+
+    try {
+      if (!request.executable?.trim() || !Array.isArray(request.args) || request.args.some((arg) => typeof arg !== "string")) {
+        throw new Error("Managed execution requires an executable and a string argument array.");
+      }
     const actionPolicy = resolveManagedAction(request.actionId, request.actionParams || {});
     if (!actionPolicy.managed || actionPolicy.blocked || actionPolicy.canonicalId !== request.actionId) {
       throw new Error(actionPolicy.reason || "The process supervisor only accepts canonical registered actions.");
@@ -322,6 +437,11 @@ export class ProcessSupervisor {
       throw new Error("Managed execution timeout must be between 1 ms and 10 minutes.");
     }
     if (this.active.has(request.taskId)) throw new Error(`Task ${request.taskId} already owns a running process.`);
+    // The checks above include asynchronous Git reads. Cancellation may have
+    // arrived while they were in flight; never cross the spawn boundary then.
+    if (reservation.cancelled || reservation.result) {
+      return this.finishBeforeStart(reservation, "Cancellation was confirmed before process launch; no managed process was started.");
+    }
 
     const normalizedRequest = {
       ...request,
@@ -347,16 +467,17 @@ export class ProcessSupervisor {
       });
     } catch (error: any) {
       const now = Date.now();
-      return {
+      const result: ManagedProcessResult = {
         runId, taskId: normalizedRequest.taskId, actionId: normalizedRequest.actionId,
         status: "spawn_failed", executable: normalizedRequest.executable, args: normalizedRequest.args,
-        cwd: normalizedRequest.cwd, startedAt, finishedAt: new Date(now).toISOString(),
+        cwd: normalizedRequest.cwd, processStarted: false, startedAt, finishedAt: new Date(now).toISOString(),
         durationMs: now - startedMs, exitCode: null, signal: null, timedOut: false,
         cancellationRequested: false, terminationVerified: null, stdout: "", stderr: "",
         stdoutTruncated: false, stderrTruncated: false,
         outputDigest: createHash("sha256").update("").digest("hex"),
         error: error?.message || "Process spawn failed.",
       };
+      return result;
     }
 
     const entry: ManagedEntry = {
@@ -365,7 +486,9 @@ export class ProcessSupervisor {
       timedOut: false, cancellationRequested: false, completion, resolveCompletion,
     };
     // Register immediately after spawn and before yielding to any async work.
+    // No await occurs between the last cancellation check and this hand-off.
     this.active.set(normalizedRequest.taskId, entry);
+    this.starting.delete(normalizedRequest.taskId);
 
     child.stdout?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stdout", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
     child.stderr?.on("data", (chunk: Buffer | string) => appendBounded(entry, "stderr", Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), normalizedRequest.maxOutputBytes!));
@@ -390,11 +513,40 @@ export class ProcessSupervisor {
     }, normalizedRequest.timeoutMs);
     void completion.finally(() => { if (timer) clearTimeout(timer); });
     return completion;
+    } catch (error: any) {
+      if (this.starting.get(request.taskId) === reservation && !this.active.has(request.taskId)) {
+        this.finishBeforeStart(
+          reservation,
+          reservation.cancelled
+            ? "Cancellation was confirmed before process launch; no managed process was started."
+            : error?.message || "Managed execution failed before process launch."
+        );
+      }
+      throw error;
+    }
   }
 
-  async cancel(taskId: string): Promise<ManagedProcessResult | undefined> {
+  async cancel(taskId: string, expectedActionId?: string): Promise<ManagedProcessResult | undefined> {
     const entry = this.active.get(taskId);
-    if (!entry) return this.completed.get(taskId);
+    if (!entry) {
+      const reservation = this.starting.get(taskId);
+      if (reservation) {
+        if (expectedActionId && expectedActionId !== reservation.actionId) return undefined;
+        reservation.cancelled = true;
+        // The promise resolves only after run() reaches its pre-spawn check, or
+        // the caller releases the reservation after a preflight early return.
+        return reservation.completion;
+      }
+      const previous = this.completed.get(taskId);
+      if (previous) return previous;
+      if (expectedActionId === "testing.run_incident_lab") {
+        this.reserve(taskId, expectedActionId);
+        const beforeStart = this.starting.get(taskId)!;
+        beforeStart.cancelled = true;
+        return this.finishBeforeStart(beforeStart, "Cancellation was requested before process launch; no managed process was started.");
+      }
+      return undefined;
+    }
     if (entry.result?.status === "termination_unconfirmed") {
       entry.result = undefined;
       this.completed.delete(taskId);
@@ -530,6 +682,7 @@ export class ProcessSupervisor {
       args: [...entry.request.args],
       cwd: entry.request.cwd,
       pid: entry.child.pid,
+      processStarted: entry.child.pid !== undefined,
       startedAt: entry.startedAt,
       finishedAt: new Date(finishedMs).toISOString(),
       durationMs: finishedMs - entry.startedMs,
