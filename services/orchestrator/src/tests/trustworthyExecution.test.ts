@@ -22,6 +22,8 @@ import { resolveManagedAction } from "../core/actionRegistry.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
 import { RepairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
+import { cancelTaskWithProof } from "../core/taskRunner.js";
+import { resourceLockManager } from "../core/resourceLocks.js";
 
 const validTestParams = {
   suiteId: "incident-lab.regression",
@@ -655,6 +657,99 @@ test("coding patch preparation stops before writing when cancellation arrives du
     assert.equal(await fs.readFile(targetPath, "utf8"), original);
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("cancellation does not relabel already-finished supervised processes as cancelled", async () => {
+  const terminalStatuses = ["exited", "timed_out", "spawn_failed", "orphaned_processes"] as const;
+  for (const processStatus of terminalStatuses) {
+    const task: Task = {
+      id: `cancel-race-${processStatus}-${randomUUID()}`,
+      agent: "testing",
+      action: "testing.run_incident_lab",
+      params: validTestParams,
+      dependsOn: [],
+      status: "running",
+      lifecycleState: "running",
+      startedAt: Date.now(),
+    };
+    const fakeSupervisor = {
+      cancel: async () => ({
+        status: processStatus,
+        processStarted: true,
+        terminationVerified: true,
+        exitCode: processStatus === "exited" ? 0 : 1,
+        error: undefined,
+      }),
+    } as any;
+
+    const resolution = await cancelTaskWithProof(task, "cancel race test", fakeSupervisor);
+    assert.equal(resolution, "execution_finished", processStatus);
+    assert.equal(task.status, "running", processStatus);
+    assert.equal(task.lifecycleState, "running", processStatus);
+    assert.notEqual(task.verification?.outcome, "cancelled", processStatus);
+  }
+});
+
+test("verified cancellation is distinct from a completed or timed-out process", async () => {
+  const task: Task = {
+    id: `cancel-verified-${randomUUID()}`,
+    agent: "testing",
+    action: "testing.run_incident_lab",
+    params: validTestParams,
+    dependsOn: [],
+    status: "running",
+    lifecycleState: "running",
+    startedAt: Date.now(),
+  };
+  const resolution = await cancelTaskWithProof(task, "verified cancel test", {
+    cancel: async () => ({
+      status: "cancelled",
+      processStarted: true,
+      terminationVerified: true,
+      exitCode: null,
+      error: undefined,
+    }),
+  } as any);
+
+  assert.equal(resolution, "cancelled");
+  assert.equal(task.status, "cancelled");
+  assert.equal(task.lifecycleState, "cancelled");
+  assert.equal(task.verification?.verified, true);
+  assert.equal(task.verification?.outcome, "cancelled");
+});
+
+test("unconfirmed process termination retains the task's conflicting resource lock", async () => {
+  const taskId = `cancel-unconfirmed-${randomUUID()}`;
+  const lockName = `trustworthy-execution-test:${taskId}`;
+  const task: Task = {
+    id: taskId,
+    agent: "testing",
+    action: "testing.run_incident_lab",
+    params: validTestParams,
+    dependsOn: [],
+    status: "running",
+    lifecycleState: "running",
+    startedAt: Date.now(),
+  };
+  await resourceLockManager.acquireLock(lockName, taskId);
+  try {
+    const resolution = await cancelTaskWithProof(task, "unconfirmed cancel test", {
+      cancel: async () => ({
+        status: "termination_unconfirmed",
+        processStarted: true,
+        terminationVerified: null,
+        exitCode: null,
+        error: "fixture cannot prove process exit",
+      }),
+    } as any);
+
+    assert.equal(resolution, "termination_unconfirmed");
+    assert.equal(task.status, "termination_unconfirmed");
+    assert.equal(task.verification?.outcome, "termination_unconfirmed");
+    assert.equal(resourceLockManager.getHeldLocks()[lockName], taskId);
+  } finally {
+    resourceLockManager.releaseLock(lockName, taskId);
   }
 });
 
