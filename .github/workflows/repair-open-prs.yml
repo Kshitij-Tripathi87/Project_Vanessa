@@ -101,18 +101,19 @@ jobs:
           $hookContent = Get-Content -Raw -LiteralPath $hookPath
           if (-not $hookContent.Contains('export interface WakeWordStatus')) {
             $voiceStatusAnchor = 'export interface VoiceProviderStatus {'
-            $wakeStatusType = @'
-export interface WakeWordStatus {
-  available: boolean;
-  ready: boolean;
-  listening: boolean;
-  keyword: string;
-  reason?: string;
-  state?: string;
-}
-
-export interface VoiceProviderStatus {
-'@
+            $wakeStatusLines = @(
+              'export interface WakeWordStatus {'
+              '  available: boolean;'
+              '  ready: boolean;'
+              '  listening: boolean;'
+              '  keyword: string;'
+              '  reason?: string;'
+              '  state?: string;'
+              '}'
+              ''
+              'export interface VoiceProviderStatus {'
+            )
+            $wakeStatusType = ($wakeStatusLines -join "`n") + "`n"
             if (-not $hookContent.Contains($voiceStatusAnchor)) { throw "Cannot locate VoiceProviderStatus anchor for compatibility type." }
             $hookContent = $hookContent.Replace($voiceStatusAnchor, $wakeStatusType)
             Set-Content -LiteralPath $hookPath -Value $hookContent -NoNewline -Encoding utf8
