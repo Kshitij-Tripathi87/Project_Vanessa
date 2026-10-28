@@ -162,6 +162,29 @@ const switchAnchor = '    switch (action) {';
 agent = replaceOnce(agent, switchAnchor, uiCases.join("\n") + '\n    switch (action) {', "WindowsAgent UI action cases");
 write(agentPath, agent);
 
+// Keep the Control Deck component's standalone type contract without restoring its old app shell.
+const dtsPath = "apps/desktop/src/renderer/vanessa.d.ts";
+let dts = read(dtsPath);
+if (!dts.includes("interface VanessaControlStatus")) {
+  dts = replaceOnce(
+    dts,
+    "declare global {",
+    "declare global {\n  interface VanessaControlStatus {\n" +
+      "    success: boolean;\n" +
+      "    orchestratorOnline: boolean;\n" +
+      "    orchestratorPort: number;\n" +
+      "    activeTasksCount: number;\n" +
+      "    platform: string;\n" +
+      "    autonomousMode?: boolean;\n" +
+      "    allowedFolders: string[];\n" +
+      "    checkedAt: number;\n" +
+      "    errors: string[];\n" +
+      "  }\n",
+    "Control Deck status type"
+  );
+  write(dtsPath, dts);
+}
+
 // Add focused integration tests for the action handler contract using injected adapters.
 // Existing lower-level tests continue to cover the real PowerShell script constraints.
 const testPath = "services/orchestrator/src/tests/windowsAgentUiAutomation.test.ts";
