@@ -27,8 +27,15 @@ export class VanessaOrchestrator {
   private requests = new Map<string, { controller: AbortController; plan?: Plan; updatedAt: number }>();
 
   async cancelRequest(requestId: string): Promise<{ cancelled: number; terminationUnconfirmed: number; planningOnly: boolean }> {
-    const request = this.requests.get(requestId);
+    let request = this.requests.get(requestId);
     if (!request) {
+      // Keep a bounded, time-scoped cancellation tombstone. Otherwise a cancel
+      // that arrives just before submit is forgotten and the same requestId can
+      // start executing afterward.
+      const controller = new AbortController();
+      controller.abort();
+      request = { controller, updatedAt: Date.now() };
+      this.requests.set(requestId, request);
       return { cancelled: 0, terminationUnconfirmed: 0, planningOnly: true };
     }
     request.controller.abort();
@@ -98,6 +105,27 @@ export class VanessaOrchestrator {
     const { command, language = "en", sentiment, envelope, conversationContext = [] } = payload;
     const startTime = Date.now();
     const requestId = payload.requestId || envelope?.requestId;
+    if (request.controller.signal.aborted) {
+      const cancelled: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "Request cancelled before execution. No tasks were started.",
+        verification: {
+          verified: false,
+          postconditions: ["The request was cancelled before task planning or execution."],
+          outcome: "cancelled",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: `request-cancelled-before-submit-${requestId}`,
+        timestamp: startTime,
+        agent: "orchestrator",
+        action: "request.cancelled_before_submit",
+        status: "cancelled",
+        details: "A cancellation tombstone prevented a late or duplicate submission from starting planner work.",
+      });
+      return cancelled;
+    }
     console.log(`[Orchestrator] received request=${requestId} source=${payload.source} characters=${command.length} historyTurns=${conversationContext.length}`);
 
     // 0. Desktop Durable Inbox: Validate schema, expiry and idempotency
