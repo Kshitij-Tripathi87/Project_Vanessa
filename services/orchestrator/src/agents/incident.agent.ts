@@ -27,6 +27,39 @@ export class IncidentAgent {
     }
   }
 
+  private blocked(action: string, reason: string): any {
+    eventBus.emitEvent("audit:log", {
+      id: `incident-blocked-${randomUUID()}`,
+      timestamp: Date.now(),
+      source: "desktop_hud",
+      agent: "incident",
+      action,
+      resource: "incident-agent-dispatch",
+      risk: "high",
+      permission: "blocked",
+      status: "blocked",
+      details: reason,
+    });
+    return {
+      agentId: "incident",
+      status: "blocked",
+      success: false,
+      summary: reason,
+      spokenSummary: "I blocked an incident operation because its action or evidence was not trusted.",
+      error: reason,
+      evidence: [{
+        description: reason,
+        source: "incident-agent-dispatch",
+        timestamp: new Date().toISOString(),
+        confidence: 1,
+        data: { outcome: "blocked", actionId: action, processStarted: false },
+      }],
+      artifacts: [],
+      verification: { passed: false, details: reason },
+      data: { outcome: "blocked", actionId: action, processStarted: false },
+    };
+  }
+
   async execute(action: string, params: Record<string, any> = {}, context?: AgentRunContext): Promise<any> {
     switch (action) {
       case "incident.analyze_repo":
@@ -39,7 +72,7 @@ export class IncidentAgent {
         return this.retrieveMemoryAndRunbook(params);
 
       case "incident.diagnose":
-        return this.correlateEvidence(params);
+        return this.blocked(action, "Direct diagnosis cannot accept caller-supplied evidence. Use incident.investigate to collect evidence from configured repository and log sources.");
 
       case "incident.prepare_and_verify":
         return this.prepareFixAndVerify({ ...params, taskId: params.taskId || context?.task?.id });
@@ -218,7 +251,7 @@ export class IncidentAgent {
   /**
    * Evidence Correlation & Diagnosis
    */
-  async correlateEvidence(evidence: {
+  private async correlateEvidence(evidence: {
     repo?: InvestigationEvidence;
     logs?: InvestigationEvidence;
     memory?: InvestigationEvidence;
