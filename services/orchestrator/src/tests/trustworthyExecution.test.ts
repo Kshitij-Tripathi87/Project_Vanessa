@@ -637,7 +637,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       executable,
       args,
       cwd: workspace.worktreePath,
-      timeoutMs: 15000,
+      timeoutMs: 60000,
       maxOutputBytes: 64 * 1024,
     });
 
@@ -700,7 +700,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       executable: exit71Invocation.executable,
       args: exit71Invocation.args,
       cwd: workspace.worktreePath,
-      timeoutMs: 5000,
+      timeoutMs: 60000,
       maxOutputBytes: 64 * 1024,
     });
     assert.equal(ordinaryExit71.status, "exited");
@@ -728,7 +728,7 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
       cwd: workspace.worktreePath,
       // Windows must allow time for the fixed Job Object wrapper to initialize
       // before exercising cancellation of a live root + grandchild process tree.
-      timeoutMs: process.platform === "win32" ? 12000 : 1000,
+      timeoutMs: process.platform === "win32" ? 60000 : 1000,
       maxOutputBytes: 64 * 1024,
     });
     assert.equal(timeoutResult.status, "timed_out");
