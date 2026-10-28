@@ -201,7 +201,7 @@ jobs:
       - name: Test agent routing and UI automation regressions
         shell: pwsh
         run: |
-          pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts src/tests/agentRouting.test.ts src/tests/browserAgent.unit.test.ts src/tests/fileAgent.test.ts src/tests/folderAgent.test.ts src/tests/planner.browser.test.ts src/tests/taskRunner.result.test.ts src/tests/windowsUiAutomation.test.ts src/tests/windowsAgentUiAutomation.test.ts
+          pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts src/tests/agentRouting.test.ts src/tests/browserAgent.unit.test.ts src/tests/fileAgent.test.ts src/tests/folderAgent.test.ts src/tests/planner.browser.test.ts src/tests/windowsUiAutomation.test.ts src/tests/windowsAgentUiAutomation.test.ts
           if ($LASTEXITCODE -ne 0) { throw "Agent routing/UI Automation tests failed." }
           pnpm --filter @vanessa/orchestrator test:trustworthy-execution
           if ($LASTEXITCODE -ne 0) { throw "Trustworthy-execution tests failed." }
