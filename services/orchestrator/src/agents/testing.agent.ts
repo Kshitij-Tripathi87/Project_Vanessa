@@ -310,20 +310,27 @@ export class TestingAgent implements SpecialistAgent {
 
     const output = diagnosticOutput(processResult);
     const report = parseRegressionSummary(output, processResult.runId);
-    const exitSucceeded = processResult.status === "exited" && processResult.exitCode === 0;
+    const exitSucceeded =
+      processResult.status === "exited" &&
+      processResult.exitCode === 0 &&
+      processResult.processStarted === true &&
+      processResult.terminationVerified === true;
     let baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
     const testSuccess = exitSucceeded && report !== null && !processResult.stdoutTruncated && !processResult.stderrTruncated && baseCheckoutUnchanged;
     const processFailed =
       (processResult.status === "exited" && processResult.exitCode !== 0) ||
-      processResult.status === "orphaned_processes";
+      processResult.status === "orphaned_processes" ||
+      processResult.status === "spawn_failed";
     const outcome = testSuccess ? "succeeded" : processFailed || !baseCheckoutUnchanged ? "failed" : "inconclusive";
     const details = testSuccess
-      ? `Registered incident-lab suite passed ${report!.passed}/${report!.total} tests with exit code 0.`
-      : processFailed
-        ? `Registered incident-lab suite exited with code ${processResult.exitCode}.`
-        : processResult.status === "orphaned_processes"
+      ? `Registered incident-lab suite passed ${report!.passed}/${report!.total} tests with exit code 0 and verified process-tree termination.`
+      : processResult.status === "orphaned_processes"
         ? "The test launcher exited but left descendant processes; the supervisor terminated them, and this run is not eligible for success."
-        : processResult.status === "timed_out"
+        : processResult.status === "spawn_failed"
+          ? "The registered test executable failed to start; no regression success is claimed."
+          : processFailed
+            ? `Registered incident-lab suite exited with code ${processResult.exitCode}.`
+            : processResult.status === "timed_out"
           ? "The registered test process timed out; passing results were not established."
           : processResult.status === "termination_unconfirmed"
             ? "Termination could not be verified; the task must not be treated as safely cancelled."
@@ -348,6 +355,9 @@ export class TestingAgent implements SpecialistAgent {
         baseCheckoutUnchanged,
         executable: processResult.executable,
         args: processResult.args,
+        launcherExecutable: processResult.launcherExecutable,
+        launcherArgs: processResult.launcherArgs,
+        processStarted: processResult.processStarted,
         cwd: processResult.cwd,
         pid: processResult.pid,
         startedAt: processResult.startedAt,
