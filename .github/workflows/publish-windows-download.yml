@@ -1,0 +1,60 @@
+name: Publish Windows installer download
+on:
+  push:
+    branches: [Vanessa-Prototype-1-MAIN]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-windows-download
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[publish-stable-download]')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download previously verified Windows installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Vanessa-Windows-Installers-f58d43bf37d7081e55658546ba2cbd8719d8969e
+          run-id: 40671472244
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          path: dist
+      - name: Verify installer payload
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist/windows-installer/Vanessa-Setup-x64.msi',
+            'dist/windows-installer/Vanessa-Setup-x64.exe',
+            'dist/windows/Vanessa-Windows-Bootstrap-f58d43b.zip'
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing release asset: $file" }
+          }
+          $msiSize = (Get-Item 'dist/windows-installer/Vanessa-Setup-x64.msi').Length
+          if ($msiSize -lt 1000000) { throw 'MSI file is unexpectedly small; refusing to publish.' }
+          Write-Host "[OK] Verified MSI exists ($msiSize bytes), along with EXE and bootstrap ZIP."
+      - name: Publish permanent GitHub Release download links
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-installer-preview
+          target_commitish: f58d43bf37d7081e55658546ba2cbd8719d8969e
+          name: Vanessa Windows Installer (Preview)
+          body: |
+            Downloadable Windows installer preview built and install/uninstall-tested by GitHub Actions from commit f58d43bf37d7081e55658546ba2cbd8719d8969e on Vanessa-Prototype-1-MAIN.
+            
+            Direct downloads:
+            - Vanessa-Setup-x64.msi (Windows Installer)
+            - Vanessa-Setup-x64.exe (companion installer)
+            - Vanessa-Windows-Bootstrap-f58d43b.zip (bootstrap fallback)
+            
+            This preview is unsigned because a publisher code-signing certificate is not configured. First-run setup downloads local runtimes and AI models and therefore requires internet access. This is not a fully offline installer.
+          draft: false
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/windows-installer/Vanessa-Setup-x64.msi
+            dist/windows-installer/Vanessa-Setup-x64.exe
+            dist/windows/Vanessa-Windows-Bootstrap-f58d43b.zip
