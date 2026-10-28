@@ -487,3 +487,59 @@ test("real worktree runner binds to the patch digest, redacts output, and kills 
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("cancellation during the pre-launch reservation prevents the test executable from starting", async () => {
+  const supervisor = new ProcessSupervisor(new RepairWorkspaceService());
+  const taskId = `cancel-before-launch-${randomUUID()}`;
+  const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-cancel-before-launch-"));
+  const sentinelPath = path.join(tempRoot, "process-started.txt");
+
+  try {
+    // This is the reservation taskRunner installs before the testing agent's
+    // asynchronous workspace preflight begins.
+    supervisor.reserve(taskId, "testing.run_incident_lab");
+    const cancellation = supervisor.cancel(taskId, "testing.run_incident_lab");
+
+    const result = await supervisor.run({
+      taskId,
+      actionId: "testing.run_incident_lab",
+      actionParams: validTestParams,
+      executable: process.execPath,
+      args: [
+        "-e",
+        `require("node:fs").writeFileSync(${JSON.stringify(sentinelPath)}, "process started")`,
+      ],
+      cwd: tmpdir(),
+      timeoutMs: 1000,
+    });
+    const cancellationResult = await cancellation;
+
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.processStarted, false);
+    assert.equal(result.terminationVerified, true);
+    assert.equal(result.cancellationRequested, true);
+    assert.equal(cancellationResult?.status, "cancelled");
+    assert.equal(cancellationResult?.processStarted, false);
+    assert.equal(await fs.stat(sentinelPath).then(() => true, () => false), false);
+    assert.equal(supervisor.listActiveTaskIds().includes(taskId), false);
+    assert.equal(supervisor.listStartingTaskIds().includes(taskId), false);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("cancellation is resolved when a reserved action exits preflight without reaching process launch", async () => {
+  const supervisor = new ProcessSupervisor(new RepairWorkspaceService());
+  const taskId = `cancel-preflight-return-${randomUUID()}`;
+
+  supervisor.reserve(taskId, "testing.run_incident_lab");
+  const cancellation = supervisor.cancel(taskId, "testing.run_incident_lab");
+  supervisor.releaseReservationIfUnused(taskId);
+
+  const result = await cancellation;
+  assert.equal(result?.status, "cancelled");
+  assert.equal(result?.processStarted, false);
+  assert.equal(result?.terminationVerified, true);
+  assert.equal(supervisor.listStartingTaskIds().includes(taskId), false);
+});
+
