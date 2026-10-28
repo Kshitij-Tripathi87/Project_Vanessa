@@ -209,7 +209,7 @@ export class PlaywrightBrowserAgent {
       const body = (await page.locator("body").innerText({ timeout: 5000 })).slice(0, 12000);
       const links = await page.locator("a[href]").evaluateAll((anchors) => anchors.slice(0, 50).map((anchor) => ({
         text: (anchor.textContent || "").trim().slice(0, 200),
-        url: (anchor as HTMLAnchorElement).href,
+        url: (anchor as unknown as { href: string }).href,
       })).filter((link) => Boolean(link.text || link.url)));
       return { success: true, title, url: currentUrl, text: body, links };
     } catch (error) {
