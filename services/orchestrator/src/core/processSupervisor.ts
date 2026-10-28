@@ -408,13 +408,22 @@ export class ProcessSupervisor {
       if (cwd !== path.resolve(workspace.worktreePath) || fs.realpathSync(workspace.worktreePath) !== cwd) {
         throw new Error("Process cwd does not match the registered repair worktree.");
       }
-      const [rootResult, headResult, branchResult, diffResult, namesResult] = await Promise.all([
+      // Promise.all rejects as soon as one command fails, while sibling Git
+      // children can continue running. Wait for all bounded preflight children
+      // before returning any cancellation/failure result.
+      const checks = await Promise.allSettled([
         execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["rev-parse", "HEAD"], { cwd, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["branch", "--show-current"], { cwd, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["diff", "--no-ext-diff", "--", "packages/incident-lab/src/checkout.ts"], { cwd, timeout: 5000, encoding: "utf8" }),
         execFileAsync("git", ["diff", "--name-only"], { cwd, timeout: 5000, encoding: "utf8" }),
       ]);
+      const failedCheck = checks.find((check) => check.status === "rejected");
+      if (failedCheck?.status === "rejected") throw failedCheck.reason;
+      const [rootResult, headResult, branchResult, diffResult, namesResult] = checks.map((check) => {
+        if (check.status !== "fulfilled") throw new Error("A Git preflight command did not settle successfully.");
+        return check.value;
+      });
       const actualDiffHash = createHash("sha256").update(diffResult.stdout).digest("hex");
       const changedFiles = namesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
       if (
