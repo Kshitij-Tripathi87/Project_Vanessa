@@ -75,7 +75,7 @@ function interruptedPatchResult(
       outcome: "inconclusive",
       cancellationRequested: true,
       patchApplied,
-      processStarted: false,
+      patchWriteStarted: patchApplied,
       workspaceId: workspace?.taskId,
       workspacePath: workspace?.worktreePath,
       branch: workspace?.branchName,
