@@ -264,11 +264,8 @@ public static class VanessaWindowsJobRunner
         IntPtr environment = IntPtr.Zero;
         IntPtr nullInput = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
-        bool processCreated = false;
-        bool processAssigned = false;
         bool cancelRequested = false;
         object cancelLock = new object();
-        bool launchBoundaryCrossed = false;
 
         try
         {
@@ -312,7 +309,7 @@ public static class VanessaWindowsJobRunner
             lock (cancelLock)
             {
                 if (cancelRequested) return 130;
-                launchBoundaryCrossed = true;
+                // Launch may proceed only after this cancellation check.
             }
 
             SECURITY_ATTRIBUTES nullSecurity = new SECURITY_ATTRIBUTES();
@@ -350,7 +347,7 @@ public static class VanessaWindowsJobRunner
                 CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
                 environment, workingDirectory, ref startup, out processInfo);
             if (!created) return Fail("CreateProcess for the registered runner failed.", 126);
-            processCreated = true;
+
 
             if (!AssignProcessToJobObject(job, processInfo.hProcess))
             {
@@ -358,7 +355,7 @@ public static class VanessaWindowsJobRunner
                 WaitForSingleObject(processInfo.hProcess, 3000);
                 return Fail("AssignProcessToJobObject failed.", 126);
             }
-            processAssigned = true;
+
 
             lock (cancelLock)
             {
