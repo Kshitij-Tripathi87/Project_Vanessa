@@ -11,7 +11,7 @@ import {
   SpecialistAgent,
 } from "@vanessa/shared";
 import { eventBus } from "../core/eventBus.js";
-import { repairWorkspaceService } from "../core/repairWorkspace.js";
+import { repairWorkspaceService, type RepairWorkspace, type RepairWorkspaceService } from "../core/repairWorkspace.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +26,63 @@ function findRepositoryRoot(start: string): string {
   throw new Error(`Could not locate monorepo root from ${start}.`);
 }
 
+
+function isCancellationRequested(task?: { status?: string; lifecycleState?: string }): boolean {
+  const status = task?.status as string | undefined;
+  const lifecycle = task?.lifecycleState as string | undefined;
+  return status === "cancelled" ||
+    status === "termination_unconfirmed" ||
+    lifecycle === "cancel_requested" ||
+    lifecycle === "cancelled" ||
+    lifecycle === "termination_unconfirmed";
+}
+
+function interruptedPatchResult(
+  taskId: string,
+  workspace: RepairWorkspace | undefined,
+  patchApplied: boolean,
+): AgentResult {
+  const detail = patchApplied
+    ? "Cancellation was observed after the candidate patch was written. The isolated worktree is retained, but patch verification did not complete."
+    : "Cancellation was observed before patch write. No repair was applied.";
+  return {
+    agentId: "coding",
+    status: "partial",
+    success: false,
+    summary: detail,
+    spokenSummary: patchApplied
+      ? "I stopped after cancellation. A candidate patch remains isolated for review, but I have not verified it."
+      : "I stopped before applying the repair because the task was cancelled.",
+    error: detail,
+    evidence: [{
+      description: detail,
+      source: "coding.cancellation",
+      timestamp: new Date().toISOString(),
+      confidence: 1,
+      data: {
+        taskId,
+        cancellationRequested: true,
+        patchApplied,
+        workspaceId: workspace?.taskId,
+        worktreePath: workspace?.worktreePath,
+        branch: workspace?.branchName,
+        baseCommit: workspace?.baseCommit,
+      },
+    }],
+    artifacts: workspace ? [`worktree:${workspace.worktreePath}`, `branch:${workspace.branchName}`] : [],
+    verification: { passed: false, details: detail },
+    data: {
+      outcome: "inconclusive",
+      cancellationRequested: true,
+      patchApplied,
+      processStarted: false,
+      workspaceId: workspace?.taskId,
+      workspacePath: workspace?.worktreePath,
+      branch: workspace?.branchName,
+      baseCommit: workspace?.baseCommit,
+    },
+  };
+}
 
 export class CodingAgent implements SpecialistAgent {
   id = "coding";
@@ -49,7 +106,7 @@ export class CodingAgent implements SpecialistAgent {
   private workspaceRoot: string;
   private incidentLabDir: string;
 
-  constructor() {
+  constructor(private readonly workspaceService: RepairWorkspaceService = repairWorkspaceService) {
     try { this.workspaceRoot = findRepositoryRoot(process.cwd()); }
     catch { this.workspaceRoot = process.cwd(); }
     this.incidentLabDir = path.resolve(this.workspaceRoot, "packages", "incident-lab");
@@ -188,13 +245,15 @@ export class CodingAgent implements SpecialistAgent {
       patchContract: task!.approvalPatchContract!,
     };
     let workspace;
-    try { workspace = await repairWorkspaceService.create(taskId, expected); }
+    try { workspace = await this.workspaceService.create(taskId, expected); }
     catch (error: any) {
       const reason = typeof error?.message === "string" ? error.message : "Isolated repair workspace could not be created.";
       return { agentId: this.id, status: "blocked", success: false, summary: reason, spokenSummary: reason, error: reason,
         evidence: [{ description: reason, source: "repair-workspace", timestamp: startedAt, confidence: 1, data: { outcome: "blocked" } }],
         artifacts: [], verification: { passed: false, details: reason }, data: { outcome: "blocked", patchApplied: false } };
     }
+    if (isCancellationRequested(task)) return interruptedPatchResult(taskId, workspace, false);
+
     const relativeTarget = "packages/incident-lab/src/checkout.ts";
     const checkoutFile = path.resolve(workspace.worktreePath, relativeTarget);
     if (!fs.existsSync(checkoutFile)) {
@@ -220,6 +279,11 @@ export class CodingAgent implements SpecialistAgent {
         evidence: [], artifacts: [`worktree:${workspace.worktreePath}`], verification: { passed: false, details: reason },
         data: { outcome: "inconclusive", workspaceId: workspace.taskId, patchApplied: false } };
     }
+    // Recheck immediately before the first write. No await is allowed between
+    // this check and the patch write, so a concurrent cancel cannot slip into
+    // this synchronous mutation boundary.
+    if (isCancellationRequested(task)) return interruptedPatchResult(taskId, workspace, false);
+
     try {
       fs.writeFileSync(checkoutFile, patched, "utf8");
       if (fs.readFileSync(checkoutFile, "utf8") !== patched || !patched.includes(replacement)) throw new Error("On-disk readback mismatch.");
@@ -234,9 +298,12 @@ export class CodingAgent implements SpecialistAgent {
       const diffResult = await execFileAsync("git", ["diff", "--no-ext-diff", "--", relativeTarget], {
         cwd: workspace.worktreePath, timeout: 10000, maxBuffer: 512 * 1024, windowsHide: true, encoding: "utf8" });
       diff = diffResult.stdout;
+      if (isCancellationRequested(task)) return interruptedPatchResult(taskId, workspace, true);
+
       const names = await execFileAsync("git", ["diff", "--name-only"], {
         cwd: workspace.worktreePath, timeout: 10000, maxBuffer: 64 * 1024, windowsHide: true, encoding: "utf8" });
       changedFiles = names.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+      if (isCancellationRequested(task)) return interruptedPatchResult(taskId, workspace, true);
     } catch (error: any) {
       const reason = `Patch diff inspection failed: ${error?.message || "unknown error"}`;
       return { agentId: this.id, status: "partial", success: false, summary: reason, spokenSummary: reason, error: reason,
@@ -244,7 +311,8 @@ export class CodingAgent implements SpecialistAgent {
         data: { outcome: "inconclusive", workspaceId: workspace.taskId, patchApplied: false } };
     }
     const diffHash = createHash("sha256").update(diff).digest("hex");
-    const baseCheckoutUnchanged = await repairWorkspaceService.isBaseCheckoutUnchanged(workspace);
+    const baseCheckoutUnchanged = await this.workspaceService.isBaseCheckoutUnchanged(workspace);
+    if (isCancellationRequested(task)) return interruptedPatchResult(taskId, workspace, true);
     const verified = Boolean(diff.trim()) && changedFiles.length === 1 && changedFiles[0] === relativeTarget && baseCheckoutUnchanged;
     const details = verified ? "Patch was read back and independently observed in the isolated worktree diff. Regression tests have not run."
       : "Diff or base-checkout isolation verification failed.";
