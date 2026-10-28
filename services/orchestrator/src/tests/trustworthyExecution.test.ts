@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
-import type { Task } from "@vanessa/shared";
+import type { AgentRunContext, Task } from "@vanessa/shared";
 import { parseRegressionSummary, validateRegressionRequest, validateTestingApproval, TestingAgent } from "../agents/testing.agent.js";
 import { CodingAgent } from "../agents/coding.agent.js";
 import { DeveloperAgent } from "../agents/developer.agent.js";
@@ -541,5 +541,80 @@ test("cancellation is resolved when a reserved action exits preflight without re
   assert.equal(result?.processStarted, false);
   assert.equal(result?.terminationVerified, true);
   assert.equal(supervisor.listStartingTaskIds().includes(taskId), false);
+});
+
+test("coding patch preparation stops before writing when cancellation arrives during worktree creation", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-coding-cancel-"));
+  const worktreePath = path.join(tempRoot, "repair-worktree");
+  const relativeTarget = path.join("packages", "incident-lab", "src", "checkout.ts");
+  const targetPath = path.join(worktreePath, relativeTarget);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const original = [
+    "export function calculateDiscount(subtotal: number, promo: any) {",
+    "  const discount = (subtotal * promo.discountRate) / 100;",
+    "  return discount;",
+    "}",
+    "",
+  ].join("\n");
+  await fs.writeFile(targetPath, original, "utf8");
+
+  const taskId = `coding-cancel-${randomUUID()}`;
+  const task: Task = {
+    id: taskId,
+    agent: "coding",
+    action: "coding.prepare_patch",
+    params: { taskId },
+    dependsOn: [],
+    status: "running",
+    approvalDigest: "d".repeat(64),
+    approvalConsumedAt: Date.now(),
+    approvalExpiresAt: Date.now() + 60_000,
+    approvalPolicyVersion: "trustworthy-execution-v1",
+    approvalRepositoryRoot: tempRoot,
+    approvalBranch: "main",
+    approvalBaseCommit: "base-commit-for-fixture",
+    approvalWorkingTreeDigest: "e".repeat(64),
+    approvalTarget: "packages/incident-lab/src/checkout.ts",
+    approvalPatchContract: "incident-lab.checkout-promo-null-guard.v1",
+  };
+
+  const workspace: RepairWorkspace = {
+    taskId,
+    repositoryRoot: tempRoot,
+    worktreePath,
+    branchName: "vanessa/repair/cancelled-fixture",
+    baseCommit: "base-commit-for-fixture",
+    baseBranch: "main",
+    baseStatus: "",
+    createdAt: new Date().toISOString(),
+  };
+  const fakeWorkspaceService = {
+    create: async () => {
+      // Simulate the task runner receiving cancellation while the async Git
+      // worktree-creation operation was in progress.
+      task.lifecycleState = "cancel_requested";
+      return workspace;
+    },
+    isBaseCheckoutUnchanged: async () => true,
+  } as unknown as RepairWorkspaceService;
+
+  try {
+    const agent = new CodingAgent(fakeWorkspaceService);
+    const result = await agent.execute(
+      "coding.prepare_patch",
+      { taskId },
+      { task } as AgentRunContext,
+    );
+
+    assert.equal(result.status, "partial");
+    assert.equal(result.success, false);
+    assert.equal((result.data as Record<string, any>)?.outcome, "inconclusive");
+    assert.equal((result.data as Record<string, any>)?.patchApplied, false);
+    assert.equal((result.data as Record<string, any>)?.cancellationRequested, true);
+    assert.match(result.summary || "", /cancellation/i);
+    assert.equal(await fs.readFile(targetPath, "utf8"), original);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
