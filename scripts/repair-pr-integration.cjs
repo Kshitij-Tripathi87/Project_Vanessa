@@ -20,7 +20,7 @@ function restoreTarget(paths) {
   git(["restore", "--source", targetSnapshot, "--staged", "--worktree", "--", ...paths]);
 }
 function read(relative) {
-  return fs.readFileSync(path.join(root, relative), "utf8");
+  return fs.readFileSync(path.join(root, relative), "utf8").replace(/\r\n/g, "\n");
 }
 function write(relative, content) {
   fs.writeFileSync(path.join(root, relative), content, "utf8");
@@ -184,7 +184,7 @@ const testLines = [
 '});',
 '',
 'test("ui.click separates accepted InvokePattern invocation from unverified visual state", async () => {',
-'  let seenRequest: Record<string, unknown> | undefined;',
+'  let seenRequest: { windowHandle?: string } | undefined;',
 '  const agent = new WindowsAgent(undefined, undefined, async () => ({ success: false, error: "not used" }), async (request) => {',
 '    seenRequest = request;',
 '    return { success: true, windowTitle: "Settings", processId: 42, invocationAccepted: true, postClickStateVerified: false, message: "InvokePattern accepted" };',
