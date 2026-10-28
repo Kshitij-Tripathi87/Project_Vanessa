@@ -180,7 +180,6 @@ export async function createVoiceAgentServer() {
       defaultAsr: process.env.VOICE_ASR_PROVIDER || "fish",
       defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish",
       readiness: readiness.state,
-      wakeWord: getWakeWordReadiness(),
       providers: readiness.providers,
       configValidation: {
         valid: configValidation.valid,
@@ -201,34 +200,19 @@ export async function createVoiceAgentServer() {
     return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
   });
 
-  // Local microphone frames are processed on-device for wake detection. Audio is
-  // forwarded to the configured ASR provider only after a wake word or explicit PTT.
+  // WhisperFlow-compatible Real-time WebSocket streaming endpoint
   fastify.get("/ws", { websocket: true }, (socket, req) => {
     const origin = req.headers.origin;
-    if (origin && !["http://localhost:5173", "http://127.0.0.1:5173", "file://"].includes(origin)) {
+    if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
       socket.close(1008, "Origin not allowed");
       return;
     }
-
-    let asrListening = false;
-    let wakeMonitoringEnabled = false;
-    let wakeActivationPending = false;
-    let wakeDetectorResult: Awaited<ReturnType<typeof createWakeWordDetector>> = null;
-    let wakeDetectorError: string | undefined;
-    const wakeReadiness = getWakeWordReadiness();
-    const wakePreRoll: AudioChunk[] = [];
-    const maxPreRollChunks = 150; // 3 seconds of 20ms 16kHz mono PCM, kept on this machine only.
-    const accumulator = new PcmFrameAccumulator(320);
-
     const session = new VanessaVoiceSession({
       handlers: {
         onError: (message) => sendJson(socket, { type: "voice_error", message }),
         onStateChange: (state) => {
           console.log(`[Voice] state=${state}`);
           sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
-          if (state === "idle" && wakeMonitoringEnabled) {
-            sendJson(socket, { type: "wake_status", available: Boolean(wakeDetectorResult), ready: Boolean(wakeDetectorResult), listening: Boolean(wakeDetectorResult), keyword: wakeDetectorResult?.keyword || wakeReadiness.keyword, reason: wakeDetectorError || wakeReadiness.reason });
-          }
         },
         onPartialTranscript: (text) => {
           sendJson(socket, { type: "transcript_partial", text });
@@ -255,7 +239,7 @@ export async function createVoiceAgentServer() {
       },
     });
 
-    void session.start().catch((err) => {
+    session.start().catch((err) => {
       console.warn("[VoiceAgentServer] Session start error:", err.message);
     });
 
@@ -277,65 +261,8 @@ export async function createVoiceAgentServer() {
       timestamp: Date.now(),
     });
 
-    const emitWakeStatus = () => {
-      sendJson(socket, {
-        type: "wake_status",
-        available: Boolean(wakeDetectorResult),
-        ready: Boolean(wakeDetectorResult),
-        listening: wakeMonitoringEnabled && Boolean(wakeDetectorResult),
-        keyword: wakeDetectorResult?.keyword || wakeReadiness.keyword,
-        reason: wakeDetectorError || (!wakeDetectorResult ? wakeReadiness.reason : undefined),
-        timestamp: Date.now(),
-      });
-    };
-
-    // Initialization is asynchronous; install the message handler first so that
-    // a very fast PTT click cannot be lost while the native model loads.
-    void (async () => {
-      if (!wakeReadiness.available) {
-        emitWakeStatus();
-        return;
-      }
-      try {
-        wakeDetectorResult = await createWakeWordDetector();
-        if (!wakeDetectorResult) wakeDetectorError = getWakeWordReadiness().reason || "The local wake-word engine is not configured.";
-      } catch (error) {
-        wakeDetectorError = error instanceof Error ? error.message : String(error);
-        console.warn("[VoiceAgentServer] Local wake-word initialization failed:", wakeDetectorError);
-      }
-      emitWakeStatus();
-    })();
-
-    console.log("[VoiceAgentServer] Desktop client connected to /ws session");
-
-    const activateFromWakeWord = async () => {
-      if (!wakeDetectorResult || wakeActivationPending || asrListening || session.getState() !== "idle") return;
-      wakeActivationPending = true;
-      const replay = wakePreRoll.slice(-125); // Replay only the recent 2.5s around the wake phrase.
-      try {
-        await session.activateSession(25000);
-        sendJson(socket, {
-          type: "wake_word_detected",
-          keyword: wakeDetectorResult.keyword,
-          state: "listening",
-          timestamp: Date.now(),
-        });
-        // This short ring buffer never leaves the local process until wake is detected.
-        for (const chunk of replay) {
-          await session.processAudioChunk(chunk);
-        }
-        wakePreRoll.length = 0;
-      } catch (error) {
-        asrListening = false;
-        sendJson(socket, {
-          type: "voice_error",
-          message: "Wake word detected, but speech recognition could not start. Check ASR configuration.",
-          detail: error instanceof Error ? error.message : String(error),
-        });
-      } finally {
-        wakeActivationPending = false;
-      }
-    };
+    console.log(`[VoiceAgentServer] Desktop client connected to /ws session`);
+    const accumulator = new PcmFrameAccumulator(320);
 
     socket.on("message", async (data: any, isBinary: boolean) => {
       try {
@@ -386,55 +313,6 @@ export async function createVoiceAgentServer() {
             // HUD text is explicit user intent; it does not need an ambient wake phrase.
             await session.handleFinalUtterance(json.text, language, turnId, true);
           }
-          return;
-        }
-
-        const json = JSON.parse(data.toString());
-        if (json.type === "activate" || json.type === "reset") {
-          accumulator.reset();
-          asrListening = true;
-          try {
-            await session.activateSession(25000);
-            sendJson(socket, { type: "state_change", state: "listening", timestamp: Date.now() });
-          } catch (err: any) {
-            asrListening = false;
-            console.warn("[VoiceAgentServer] ASR activation failed:", err.message);
-            sendJson(socket, {
-              type: "voice_error",
-              message: "Speech recognition could not start. Check the configured ASR provider and try again.",
-            });
-          }
-        } else if (json.type === "wake_monitor_start") {
-          if (!wakeDetectorResult) {
-            emitWakeStatus();
-          } else {
-            wakeMonitoringEnabled = true;
-            wakePreRoll.length = 0;
-            sendJson(socket, {
-              type: "wake_status",
-              available: true,
-              ready: true,
-              listening: true,
-              keyword: wakeDetectorResult.keyword,
-              timestamp: Date.now(),
-            });
-          }
-        } else if (json.type === "wake_monitor_stop") {
-          wakeMonitoringEnabled = false;
-          wakePreRoll.length = 0;
-          sendJson(socket, { type: "wake_status", available: Boolean(wakeDetectorResult), ready: Boolean(wakeDetectorResult), listening: false, keyword: wakeDetectorResult?.keyword || wakeReadiness.keyword, timestamp: Date.now() });
-        } else if (json.type === "finalize") {
-          session.finalizeTurn();
-        } else if (json.type === "deactivate") {
-          accumulator.reset();
-          asrListening = false;
-          session.stop();
-        } else if (json.type === "barge_in" || json.type === "interrupt") {
-          asrListening = false;
-          session.interrupt();
-          sendJson(socket, { type: "barge_in_acknowledged", timestamp: Date.now() });
-        } else if (json.type === "transcript_final" && json.text) {
-          await session.handleFinalUtterance(json.text, json.language || "en");
         }
       } catch (err: any) {
         console.warn("[VoiceAgentServer] Message processing error:", safeProviderDetail(err.message));
@@ -443,10 +321,6 @@ export async function createVoiceAgentServer() {
     });
 
     socket.on("close", () => {
-      wakeMonitoringEnabled = false;
-      wakePreRoll.length = 0;
-      wakeDetectorResult?.detector.release();
-      wakeDetectorResult = null;
       session.stop();
     });
   });

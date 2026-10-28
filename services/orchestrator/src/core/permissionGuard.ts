@@ -92,14 +92,10 @@ export class PermissionGuard {
     // Enforce the approved-folder policy on filesystem and cloud-file actions.
     const isFileAccess = task.agent === "files" || /^(file|folder|directory)\./i.test(actionKey) || actionKey === "drive.upload";
     if (isFileAccess) {
-      const pathKeys = ["path", "targetPath", "filePath", "basePath", "sourceDir", "oldPath", "newPath", "file", "target"];
-      const filePaths = pathKeys.flatMap((key) => {
-        const value = task.params?.[key];
-        if (typeof value !== "string" || value.trim().length === 0) return [];
-        // Folder Agent resolves bare names only inside approved roots; check absolute and path-like targets here.
-        if (key === "target" && !path.isAbsolute(value) && !/[\\/]/.test(value)) return [];
-        return [value];
-      });
+      const pathKeys = ["path", "targetPath", "filePath", "basePath", "sourceDir", "oldPath", "newPath", "file"];
+      const filePaths = pathKeys
+        .map((key) => task.params?.[key])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
       if (actionKey === "folder.create") {
         const folderName = task.params?.name || task.params?.path;
         if (typeof folderName === "string" && folderName.trim()) {

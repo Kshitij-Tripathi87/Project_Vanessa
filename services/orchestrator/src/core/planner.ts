@@ -362,15 +362,6 @@ export class VanessaPlanner {
       return plan;
     }
 
-    // Common one-action Windows requests are routed to the Windows Agent
-    // without relying on an LLM to invent an action/parameter pair.
-    const windowsControl = inferWindowsControl(command);
-    if (windowsControl) {
-      const plan = this.createWindowsActionPlan(command, windowsControl.action, windowsControl.params, planId, recentContext, workspaceRoot);
-      eventBus.emitEvent("plan:created", plan);
-      return plan;
-    }
-
     // Attempt LLM call via router
     const runtimeContext = JSON.stringify({
       projectPath: workspaceRoot,

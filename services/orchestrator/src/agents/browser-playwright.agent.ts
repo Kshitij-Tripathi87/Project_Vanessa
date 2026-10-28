@@ -110,16 +110,6 @@ export function normalizeRemoteBrowserUrl(input: string, allowLocal = process.en
   return parsed.toString();
 }
 
-/** Apply the full host policy, including DNS resolution, before handing a URL to any browser. */
-export async function validateRemoteBrowserUrl(
-  input: string,
-  allowLocal = process.env.BROWSER_ALLOW_LOCAL_URLS === "true",
-): Promise<string> {
-  const normalized = normalizeRemoteBrowserUrl(input, allowLocal);
-  await assertAllowedRemoteHost(new URL(normalized), allowLocal);
-  return normalized;
-}
-
 export class PlaywrightBrowserAgent {
   id = "browser-playwright";
   capabilities = ["browser_navigation", "web_search", "page_inspection", "automation"];

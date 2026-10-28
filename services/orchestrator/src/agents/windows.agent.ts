@@ -1,4 +1,5 @@
 import { runPowerShell } from "./powershell.js";
+import { inspectForegroundWindow, invokeForegroundControl, type ForegroundWindowInspection, type UiAutomationClickRequest, type UiAutomationClickResult } from "./windows-ui-automation.js";
 import { executeWindowsAudio, type WindowsAudioRequest, type WindowsAudioResult } from "./windows-audio.js";
 import { executeWindowsControl, type WindowsControlRequest, type WindowsControlResult } from './windows-controls.js';
 import * as os from "node:os";
@@ -15,6 +16,8 @@ export class WindowsAgent implements SpecialistAgent {
   constructor(
     private readonly audioControl: (request: WindowsAudioRequest) => Promise<WindowsAudioResult> = executeWindowsAudio,
     private readonly control: (request: WindowsControlRequest) => Promise<WindowsControlResult> = executeWindowsControl,
+    private readonly inspectForeground: () => Promise<ForegroundWindowInspection> = () => inspectForegroundWindow(runPowerShell),
+    private readonly invokeForeground: (request: UiAutomationClickRequest) => Promise<UiAutomationClickResult> = (request) => invokeForegroundControl(runPowerShell, request),
   ) {}
   id = "windows";
   capabilities = [
@@ -22,7 +25,6 @@ export class WindowsAgent implements SpecialistAgent {
     "bluetooth_control",
     "brightness_control",
     "volume_control",
-    "brightness_control",
     "application_launch",
     "screenshot_capture",
     "ui_inspection",
@@ -33,25 +35,9 @@ export class WindowsAgent implements SpecialistAgent {
     "windows_setting_toggle",
     "net_adapter_control",
     "audio_volume_set",
-    "display_brightness_control",
     "process_control",
     "windows_ui_automation",
   ];
-
-  private simulatedOutcome(action: string, extraData: Record<string, unknown> = {}): AgentResult {
-    const details = "FAKE mode: " + action + " was simulated for testing. No real Windows state was changed or verified.";
-    return {
-      agentId: this.id,
-      status: "partial",
-      success: true,
-      summary: details,
-      spokenSummary: "This action was simulated for testing. No real Windows state was changed or verified.",
-      evidence: [],
-      artifacts: [],
-      verification: { passed: false, details },
-      data: { simulated: true, actualStateChanged: false, actualStateVerified: false, actualObservations: details, failures: [], ...extraData },
-    };
-  }
 
   async execute(
     actionOrTask: string | AgentTask,
@@ -65,54 +51,86 @@ export class WindowsAgent implements SpecialistAgent {
     switch (action) {
       case "ui.inspect":
       case "windows.ui_inspect": {
-        if (this.fakeMode) return this.simulatedOutcome("Active-window UI Automation inspection", { windowTitle: "", controls: [], valuesRead: false });
-        let inspected;
-        try {
-          inspected = await inspectForegroundWindow(this.powerShellRunner);
-        } catch (error) {
-          const detail = "Foreground-window inspection failed: " + (error instanceof Error ? error.message : String(error));
-          return {
-            agentId: this.id,
-            status: "failed",
-            success: false,
-            summary: detail,
-            spokenSummary: "I could not inspect the active Windows window.",
-            evidence: [],
-            artifacts: [],
-            verification: { passed: false, details: detail },
-            error: detail,
-            data: { output: detail, controls: [], valuesRead: false, error: detail },
-          };
-        }
-        if (!inspected.success || !inspected.windowHandle || !/^\d+$/.test(inspected.windowHandle) ||
-            !inspected.windowTitle?.trim() || !Number.isInteger(inspected.processId)) {
-          const detail = inspected.error || "Windows did not return a complete foreground-window identity.";
-          return {
-            agentId: this.id,
-            status: "failed",
-            success: false,
-            summary: detail,
-            spokenSummary: "I could not identify the active Windows window safely.",
-            evidence: [],
-            artifacts: [],
-            verification: { passed: false, details: detail },
-            error: detail,
-            data: { output: detail, controls: [], valuesRead: false, error: detail },
-          };
-        }
-        const cleanText = (value: string) => privacyGuard.redactSensitiveData(value).cleanText;
-        const windowTitle = cleanText(inspected.windowTitle).slice(0, 180);
-        const controls = (inspected.controls || []).slice(0, 120).map((control) => ({
-          name: cleanText(String(control.name || "")).slice(0, 140),
-          automationId: cleanText(String(control.automationId || "")).slice(0, 100),
-          controlType: String(control.controlType || ""),
-          className: cleanText(String(control.className || "")).slice(0, 100),
-          isEnabled: control.isEnabled === true,
-          isOffscreen: control.isOffscreen === true,
-          depth: Number.isInteger(control.depth) ? control.depth : 0,
-        }));
-        const output = "Inspected foreground window \"" + windowTitle + "\"; found " + controls.length +
-          " accessibility controls" + (inspected.truncated ? " (list truncated)." : ".") + " No input-field values were read.";
+        const result = await this.inspectForeground();
+        const controls = Array.isArray(result.controls) ? result.controls : [];
+        const verified = result.success === true && result.valuesRead === false;
+        const title = typeof result.windowTitle === "string" && result.windowTitle ? result.windowTitle : "the foreground window";
+        const summary = verified
+          ? "Inspected " + title + " and found " + controls.length + " accessible controls. Input-field values were not read."
+          : "Foreground-window inspection was not verified: " + (result.error || "Windows returned incomplete inspection data") + ".";
+        return {
+          agentId: this.id,
+          status: verified ? "completed" : "failed",
+          success: verified,
+          summary,
+          spokenSummary: summary,
+          evidence: verified ? [{ description: summary, source: "windows-ui-automation.inspect", timestamp: startTime, confidence: 1, data: result }] : [],
+          artifacts: [],
+          verification: { passed: verified, details: summary },
+          data: {
+            outcome: verified ? "succeeded" : "failed",
+            windowTitle: result.windowTitle,
+            windowHandle: result.windowHandle,
+            processId: result.processId,
+            controls,
+            truncated: result.truncated === true,
+            valuesRead: result.valuesRead,
+            actionsAttempted: ["Inspect foreground UI Automation Control View"],
+            actualObservations: summary,
+            failures: verified ? [] : [result.error || "UI Automation inspection was not verified"],
+          },
+        };
+      }
+
+      case "ui.click":
+      case "windows.ui_click": {
+        const request: UiAutomationClickRequest = {
+          windowHandle: typeof params.windowHandle === "string" ? params.windowHandle : "",
+          expectedWindowTitle: typeof params.expectedWindowTitle === "string" ? params.expectedWindowTitle : "",
+          expectedProcessId: Number(params.expectedProcessId),
+          ...(typeof params.automationId === "string" && params.automationId ? { automationId: params.automationId } : {}),
+          ...(typeof params.name === "string" && params.name ? { name: params.name } : {}),
+          ...(typeof params.controlType === "string" && params.controlType ? { controlType: params.controlType } : {}),
+        };
+        const result = await this.invokeForeground(request);
+        const accepted = result.success === true && result.invocationAccepted === true;
+        const summary = accepted
+          ? "Windows accepted the UI Automation invoke request. The resulting visual state was not independently verified."
+          : "UI Automation invocation failed: " + (result.error || result.message || "the target control was not uniquely and safely invokable") + ".";
+        return {
+          agentId: this.id,
+          status: accepted ? "completed" : "failed",
+          success: accepted,
+          summary,
+          spokenSummary: summary,
+          evidence: [{ description: summary, source: "windows-ui-automation.invoke", timestamp: startTime, confidence: accepted ? 1 : 0, data: { request, result } }],
+          artifacts: [],
+          verification: { passed: accepted && result.postClickStateVerified === true, details: summary },
+          data: {
+            outcome: accepted ? "invocation_accepted" : "failed",
+            invocationAccepted: accepted,
+            postClickStateVerified: result.postClickStateVerified === true,
+            actionsAttempted: ["Invoke UI Automation control"],
+            actualObservations: summary,
+            failures: accepted ? [] : [result.error || result.message || "UI Automation invocation was not accepted"],
+            control: result.control,
+            matches: result.matches,
+          },
+        };
+      }
+
+      case "wifi.restart_adapter":
+      case "windows.wifi_restart": {
+        const res = await this.restartWifiAdapter();
+        const evidence: AgentEvidence[] = [
+          {
+            description: res.output,
+            source: "PowerShell NetAdapter",
+            timestamp: startTime,
+            confidence: 1.0,
+            data: res,
+          },
+        ];
         return {
           agentId: this.id,
           status: res.simulated ? "partial" : res.success ? "completed" : "failed",
@@ -143,31 +161,24 @@ export class WindowsAgent implements SpecialistAgent {
 
       case "wifi.status":
       case "windows.wifi_status": {
-        if (this.fakeMode) return this.simulatedOutcome("Wi-Fi status read", { status: "Unknown" });
         const res = await this.wifiStatus();
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
+          status: "completed",
           success: res.success,
-          summary: res.success ? "Wi-Fi adapter status: " + res.status : "Wi-Fi adapter status could not be verified.",
+          summary: `Wi-Fi adapter status: ${res.status}`,
           spokenSummary: res.spokenSummary,
-          evidence: res.success ? [{
-            description: "Observed Wi-Fi adapter status: " + res.status + ".",
-            source: "PowerShell NetAdapter",
-            timestamp: startTime,
-            confidence: 1,
-            data: { status: res.status },
-          }] : [],
+          evidence: [],
           artifacts: [],
           data: {
-            actionsAttempted: ["Read the observed Wi-Fi adapter status"],
-            actualObservations: "Wi-Fi status: " + res.status,
-            failures: res.success ? [] : [res.spokenSummary],
+            actionsAttempted: ["Get-NetAdapter Wi-Fi Status"],
+            actualObservations: `Wi-Fi status: ${res.status}`,
+            failures: [],
             status: res.status,
           },
           verification: {
             passed: res.success && res.status !== "Unknown",
-            details: "Observed Wi-Fi adapter status: " + res.status + ".",
+            details: `Observed Wi-Fi adapter status: ${res.status}.`,
           },
         };
       }
@@ -217,72 +228,6 @@ export class WindowsAgent implements SpecialistAgent {
         };
       }
 
-      case "brightness.set":
-      case "windows.brightness_set": {
-        const level = Number(params.level);
-        if (this.fakeMode) return this.simulatedOutcome("Display brightness change", { requestedLevel: level, readBackVerified: false });
-        const res = await this.changeBrightness(level, "set");
-        return {
-          agentId: this.id,
-          status: res.success ? "completed" : "failed",
-          success: res.success,
-          summary: res.output,
-          spokenSummary: res.success
-            ? "Display brightness set to " + res.level + " percent."
-            : "I could not verify the requested display brightness.",
-          evidence: res.success ? [{
-            description: res.output,
-            source: "Windows WMI brightness read-back",
-            timestamp: startTime,
-            confidence: 1,
-            data: { requestedLevel: level, observedLevel: res.level },
-          }] : [],
-          artifacts: [],
-          verification: { passed: res.success, details: res.output },
-          data: {
-            actionsAttempted: ["Set supported Windows display brightness to " + level + "%"],
-            actualObservations: res.output,
-            failures: res.success ? [] : [res.output],
-            requestedLevel: level,
-            actualObservedLevel: res.level,
-            readBackVerified: res.success,
-          },
-        };
-      }
-
-      case "brightness.adjust":
-      case "windows.brightness_adjust": {
-        const delta = Number(params.delta ?? 10);
-        if (this.fakeMode) return this.simulatedOutcome("Display brightness adjustment", { requestedDelta: delta, readBackVerified: false });
-        const res = await this.changeBrightness(delta, "adjust");
-        return {
-          agentId: this.id,
-          status: res.success ? "completed" : "failed",
-          success: res.success,
-          summary: res.output,
-          spokenSummary: res.success
-            ? "Display brightness is now " + res.level + " percent."
-            : "I could not verify the display brightness adjustment.",
-          evidence: res.success ? [{
-            description: res.output,
-            source: "Windows WMI brightness read-back",
-            timestamp: startTime,
-            confidence: 1,
-            data: { observedLevel: res.level },
-          }] : [],
-          artifacts: [],
-          verification: { passed: res.success, details: res.output },
-          data: {
-            actionsAttempted: ["Adjust supported Windows display brightness by " + delta + " percentage points"],
-            actualObservations: res.output,
-            failures: res.success ? [] : [res.output],
-            requestedDelta: delta,
-            actualObservedLevel: res.level,
-            readBackVerified: res.success,
-          },
-        };
-      }
-
       case "volume.set":
       case "windows.volume_set":
       case "volume.get":
@@ -310,7 +255,6 @@ export class WindowsAgent implements SpecialistAgent {
             data: { operation: request, observed, device: res.device, error: res.error },
           }],
           artifacts: [],
-          verification: { passed: res.success, details: res.output },
           data: {
             outcome: res.success ? "succeeded" : "failed",
             actionsAttempted: [JSON.stringify(request)],
@@ -325,26 +269,19 @@ export class WindowsAgent implements SpecialistAgent {
       case "app.open":
       case "windows.app_open": {
         const appName = params.appName || params.name || params.app || "notepad";
-        if (this.fakeMode) return this.simulatedOutcome("Application launch", { appName });
         const res = await this.openApp(appName);
         return {
           agentId: this.id,
-          status: res.success ? "completed" : "failed",
+          status: "completed",
           success: res.success,
-          summary: res.success ? "Windows accepted the launch request for " + appName : "Could not launch " + appName,
-          spokenSummary: res.success ? "I launched " + appName + "." : "I could not launch " + appName + ".",
-          evidence: res.success ? [{
-            description: res.output,
-            source: "Windows process launch",
-            timestamp: startTime,
-            confidence: 0.9,
-          }] : [],
+          summary: res.success ? `Windows accepted the launch request for ${appName}` : `Could not launch ${appName}`,
+          spokenSummary: res.success ? `I launched ${appName}.` : `I could not launch ${appName}.`,
+          evidence: [],
           artifacts: [],
           data: {
-            actionsAttempted: ["Start-Process with the resolved app executable"],
+            actionsAttempted: [`Start-Process '${appName}'`],
             actualObservations: res.output,
             failures: res.success ? [] : [res.output],
-            launchAccepted: res.success,
           },
           verification: {
             passed: res.success,
@@ -355,8 +292,7 @@ export class WindowsAgent implements SpecialistAgent {
 
       case "app.close":
       case "windows.app_close": {
-        const appName = String(params.appName || params.name || "");
-        if (this.fakeMode) return this.simulatedOutcome("Application close", { appName });
+        const appName = params.appName || params.name;
         const res = await this.closeApp(appName);
         const detail = res.output;
         return {
@@ -376,13 +312,11 @@ export class WindowsAgent implements SpecialistAgent {
             processStateVerified: res.success,
             failures: res.success ? [] : [detail],
           },
-          verification: { passed: res.success, details: res.output },
         };
       }
 
       case "screenshot.capture":
       case "windows.screenshot_capture": {
-        if (this.fakeMode) return this.simulatedOutcome("Desktop screenshot", { path: "" });
         const res = await this.captureScreenshot();
         const detail = res.success
           ? "Captured and verified a non-empty Windows desktop screenshot at " + res.path + "."
@@ -455,9 +389,7 @@ export class WindowsAgent implements SpecialistAgent {
       return {
         success: status !== "Unknown",
         status,
-        spokenSummary: status === "Unknown"
-          ? "I could not verify the Wi-Fi adapter status."
-          : "The Wi-Fi adapter status is " + status + ".",
+        spokenSummary: `Wi-Fi is ${status.toLowerCase() === "up" ? "connected and operational" : status}.`,
       };
     } catch {
       return { success: false, status: "Unknown", spokenSummary: "I could not verify the Wi-Fi adapter status." };
@@ -474,10 +406,6 @@ export class WindowsAgent implements SpecialistAgent {
       terminal: "wt.exe",
       chrome: "chrome.exe",
       edge: "msedge.exe",
-      taskmgr: "taskmgr.exe",
-      "task manager": "taskmgr.exe",
-      "file explorer": "explorer.exe",
-      settings: "ms-settings:",
       vscode: "code.cmd",
     };
     const key = typeof appName === "string" ? appName.trim().toLowerCase() : "";
@@ -531,7 +459,7 @@ export class WindowsAgent implements SpecialistAgent {
   }
 
   private async captureScreenshot(): Promise<{ success: boolean; path: string }> {
-    const screenshotPath = path.join(os.tmpdir(), "vanessa_screenshot_" + Date.now() + ".png");
+    const screenshotPath = path.join(os.tmpdir(), `vanessa_screenshot_${Date.now()}.png`);
     const psCommand = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height); $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); $bitmap.Save($env:VANESSA_SCREENSHOT); $graphics.Dispose(); $bitmap.Dispose()";
     try {
       await runPowerShell(psCommand, { VANESSA_SCREENSHOT: screenshotPath }, 10000);
