@@ -50,16 +50,6 @@ const validateInspection = (params: Record<string, any>) => {
   }
   return undefined;
 };
-const validateDiagnosis = (params: Record<string, any>) => {
-  const unknown = onlyKeys(params, ["repo", "logs", "memory"]);
-  if (unknown) return unknown;
-  for (const key of ["repo", "logs", "memory"]) {
-    if (params[key] !== undefined && (params[key] === null || typeof params[key] !== "object")) {
-      return `${key} must be an evidence object.`;
-    }
-  }
-  return undefined;
-};
 const validateDiff = (params: Record<string, any>) => {
   const unknown = onlyKeys(params, ["target"]);
   if (unknown) return unknown;
@@ -135,7 +125,7 @@ const policyList: ManagedActionPolicy[] = [
   { canonicalId: "incident.analyze_repo", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: noParams },
   { canonicalId: "incident.analyze_logs", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: noParams },
   { canonicalId: "incident.retrieve_memory", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: noParams },
-  { canonicalId: "incident.diagnose", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: validateDiagnosis },
+  { canonicalId: "incident.diagnose", aliases: [], approvalRequired: false, sideEffectClass: "read_only", blocked: true, validate: () => "Direct diagnosis cannot accept caller-supplied evidence; use incident.investigate to collect evidence from configured sources." },
   { canonicalId: "incident.investigate", aliases: [], approvalRequired: false, sideEffectClass: "read_only", validate: taskIdOnly },
   { canonicalId: "incident.prepare_and_verify", aliases: [], approvalRequired: true, sideEffectClass: "isolated_write", blocked: true, validate: taskIdOnly },
   { canonicalId: "terminal.run_command", aliases: [], approvalRequired: true, sideEffectClass: "machine_state", blocked: true, validate: () => "Arbitrary shell execution is disabled until routed through a registered executor." },
