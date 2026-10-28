@@ -321,10 +321,12 @@ async function cancelTaskWithProofInternal(
     task.completedAt = Date.now();
     task.verification = {
       verified: true,
-      postconditions: ["Process supervisor confirmed the managed process stopped."],
+      postconditions: [result.processStarted
+        ? "Process supervisor verified the managed process tree stopped."
+        : "Process supervisor confirmed cancellation before process launch; no managed process was started."],
       exitCode: result.exitCode ?? undefined,
       outcome: "cancelled",
-      details: `Process status: ${result.status}; cancellation verified.`,
+      details: result.error || `Process status: ${result.status}; cancellation verified.`,
     };
     resourceLockManager.releaseAllForTask(task.id);
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
@@ -490,6 +492,8 @@ export async function approveTask(taskId: string): Promise<Task | null> {
   const locks = resolveTaskLocks(task);
   const acquiredLocks: string[] = [];
   let acquiredSlot = false;
+  const managedTestAction = task.action === "testing.run_incident_lab";
+  let managedReservationCreated = false;
 
   try {
     const agent = agentRegistry[task.agent];
@@ -530,11 +534,26 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       ],
     };
 
-    await resourceLockManager.acquireSlot();
+    // Register the managed action before any asynchronous scheduler/lock wait.
+    // A cancellation while queued can now be proven to have launched no child.
+    if (managedTestAction) {
+      processSupervisor.reserve(task.id, task.action);
+      managedReservationCreated = true;
+    }
+    const slotAcquired = await resourceLockManager.acquireSlot(task.id);
+    if (!slotAcquired) return task;
     acquiredSlot = true;
     for (const l of locks) {
-      await resourceLockManager.acquireLock(l, task.id);
-      acquiredLocks.push(l);
+      const lockAcquired = await resourceLockManager.acquireLock(l, task.id);
+      if (!lockAcquired) return task;
+      if (resourceLockManager.getHeldLocks()[l] === task.id && !acquiredLocks.includes(l)) {
+        acquiredLocks.push(l);
+      }
+      if (
+        (task.status as string) === "cancelled" ||
+        (task.status as string) === "termination_unconfirmed" ||
+        (task.lifecycleState as string) === "cancel_requested"
+      ) return task;
     }
 
     // Cancellation may arrive while waiting for a slot/lock. Check the
@@ -560,22 +579,14 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       throw new Error("Approval binding changed or expired before process launch.");
     }
 
-    // Reserve supervised test execution before entering the agent's async
-    // workspace validation. Cancellation during that preflight must prevent spawn.
-    const managedTestAction = task.action === "testing.run_incident_lab";
-    if (managedTestAction) processSupervisor.reserve(task.id, task.action);
     let result: any;
-    try {
-      result = await agent.execute(task.action, resolvedParams, {
-        planId: plan.id,
-        command: plan.command,
-        workingMemory: workingMemory.getSnapshot(),
-        task,
-        agentTask,
-      });
-    } finally {
-      if (managedTestAction) processSupervisor.releaseReservationIfUnused(task.id);
-    }
+    result = await agent.execute(task.action, resolvedParams, {
+      planId: plan.id,
+      command: plan.command,
+      workingMemory: workingMemory.getSnapshot(),
+      task,
+      agentTask,
+    });
 
     const managedProcessStatus = managedTestAction ? result?.data?.processStatus : undefined;
     const managedProcessTerminationVerified = result?.data?.terminationVerified === true;
@@ -695,10 +706,11 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     };
     memoryPalace.recordTaskCheckpoint(task, task.parentId);
   } finally {
+    if (managedTestAction && managedReservationCreated) {
+      processSupervisor.releaseReservationIfUnused(task.id);
+    }
     if (task.verification?.outcome !== "termination_unconfirmed" && (task.status as string) !== "termination_unconfirmed") {
-      for (const l of acquiredLocks) {
-        resourceLockManager.releaseLock(l, task.id);
-      }
+      for (const l of acquiredLocks) resourceLockManager.releaseLock(l, task.id);
     }
     if (acquiredSlot) resourceLockManager.releaseSlot();
   }
@@ -907,13 +919,32 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     const executionRisk = task.risk;
     const executionAllowedToolsJson = stableJson(task.allowedTools || []);
 
-    await resourceLockManager.acquireSlot();
     const locks = resolveTaskLocks(task);
-    for (const l of locks) {
-      await resourceLockManager.acquireLock(l, task.id);
-    }
+    const acquiredLocks: string[] = [];
+    const managedTestAction = task.action === "testing.run_incident_lab";
+    let managedReservationCreated = false;
+    let acquiredSlot = false;
 
     try {
+      if (managedTestAction) {
+        processSupervisor.reserve(task.id, task.action);
+        managedReservationCreated = true;
+      }
+      const slotAcquired = await resourceLockManager.acquireSlot(task.id);
+      if (!slotAcquired) return;
+      acquiredSlot = true;
+      for (const l of locks) {
+        const lockAcquired = await resourceLockManager.acquireLock(l, task.id);
+        if (!lockAcquired) return;
+        if (resourceLockManager.getHeldLocks()[l] === task.id && !acquiredLocks.includes(l)) {
+          acquiredLocks.push(l);
+        }
+        if (
+          (task.status as string) === "cancelled" ||
+          (task.status as string) === "termination_unconfirmed" ||
+          (task.lifecycleState as string) === "cancel_requested"
+        ) return;
+      }
       if (
         (task.status as string) === "cancelled" ||
         (task.status as string) === "termination_unconfirmed" ||
@@ -966,22 +997,13 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         ],
       };
 
-      // Keep the same preflight/cancellation barrier for every orchestration
-      // entry path, including low-risk tasks and plan-driven execution.
-      const managedTestAction = task.action === "testing.run_incident_lab";
-      if (managedTestAction) processSupervisor.reserve(task.id, task.action);
-      let result: any;
-      try {
-        result = await agent.execute(task.action, resolvedParams, {
-          planId: plan.id,
-          command: plan.command,
-          workingMemory: workingMemory.getSnapshot(),
-          task,
-          agentTask,
-        });
-      } finally {
-        if (managedTestAction) processSupervisor.releaseReservationIfUnused(task.id);
-      }
+      const result: any = await agent.execute(task.action, resolvedParams, {
+        planId: plan.id,
+        command: plan.command,
+        workingMemory: workingMemory.getSnapshot(),
+        task,
+        agentTask,
+      });
 
       if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Cancellation requested but the supervisor could not prove that the
@@ -1075,14 +1097,15 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       eventBus.emitEvent("task.failed", { taskId: task.id, agentId: task.agent, error: task.error });
       memoryPalace.recordTaskCheckpoint(task, plan.id);
     } finally {
+      if (managedTestAction && managedReservationCreated) {
+        processSupervisor.releaseReservationIfUnused(task.id);
+      }
       if ((task.status as string) !== "termination_unconfirmed" && task.verification?.outcome !== "termination_unconfirmed") {
-        for (const l of locks) {
-          resourceLockManager.releaseLock(l, task.id);
-        }
+        for (const l of acquiredLocks) resourceLockManager.releaseLock(l, task.id);
       }
       // A worker slot is a scheduler capacity token, not the resource itself;
       // the conflicting resource locks stay held for unresolved processes.
-      resourceLockManager.releaseSlot();
+      if (acquiredSlot) resourceLockManager.releaseSlot();
     }
 
     eventBus.emitEvent("task:update", task);

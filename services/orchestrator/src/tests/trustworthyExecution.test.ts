@@ -21,10 +21,10 @@ import { buildPowerShellEnvironment } from "../agents/powershell.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
 import { catalogAccepts, getCatalogAction } from "../agents/agentCatalog.js";
 import { recordAgentResult } from "../core/agentResult.js";
-import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
-import { RepairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
+import { getIncidentLabTestInvocation, ProcessSupervisor, processSupervisor } from "../core/processSupervisor.js";
+import { RepairWorkspaceService, repairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
 import { activeTasks, approveTask, cancelTaskWithProof, computeApprovalDigest, runPlan } from "../core/taskRunner.js";
-import { resourceLockManager } from "../core/resourceLocks.js";
+import { ResourceLockManager, resourceLockManager } from "../core/resourceLocks.js";
 
 const validTestParams = {
   suiteId: "incident-lab.regression",
@@ -200,6 +200,96 @@ test("approved parameters mutated while queued are rejected before executor disp
     while (resourceLockManager.getActiveSlotCount() > baselineSlots) {
       resourceLockManager.releaseSlot();
     }
+  }
+});
+
+test("cancelled slot and resource-lock waiters resolve as not acquired", async () => {
+  const manager = new ResourceLockManager();
+  for (let slot = 0; slot < 4; slot += 1) {
+    assert.equal(await manager.acquireSlot(`slot-owner-${slot}`), true);
+  }
+
+  const slotWaiter = manager.acquireSlot("cancelled-slot-waiter");
+  manager.releaseAllForTask("cancelled-slot-waiter");
+  assert.equal(await slotWaiter, false);
+  assert.equal(manager.getActiveSlotCount(), 4);
+  for (let slot = 0; slot < 4; slot += 1) manager.releaseSlot();
+
+  assert.equal(await manager.acquireLock("shared-repo", "lock-owner"), true);
+  const lockWaiter = manager.acquireLock("shared-repo", "cancelled-lock-waiter");
+  manager.releaseAllForTask("cancelled-lock-waiter");
+  assert.equal(await lockWaiter, false);
+  assert.equal(manager.getHeldLocks()["shared-repo"], "lock-owner");
+  manager.releaseLock("shared-repo", "lock-owner");
+});
+
+test("approved test action cancelled while queued never starts a managed process", async () => {
+  const baselineSlots = resourceLockManager.getActiveSlotCount();
+  assert.equal(baselineSlots, 0, "execution slot state must be isolated for this test");
+
+  const workspaceId = `prelaunch-workspace-${randomUUID()}`;
+  const taskId = `prelaunch-queued-${randomUUID()}`;
+  const workspace: RepairWorkspace = {
+    taskId: workspaceId,
+    repositoryRoot: process.cwd(),
+    worktreePath: path.join(tmpdir(), `nonexistent-worktree-${randomUUID()}`),
+    branchName: `vanessa/repair/test-${randomUUID()}`,
+    baseCommit: "a".repeat(40),
+    baseBranch: "Vanessa-Prototype-1-MAIN",
+    baseStatus: "",
+    createdAt: new Date().toISOString(),
+  };
+  const workspaceMap = (repairWorkspaceService as any).workspaces as Map<string, RepairWorkspace>;
+  const previousWorkspace = workspaceMap.get(workspaceId);
+  workspaceMap.set(workspaceId, workspace);
+
+  const spec = getCatalogAction("testing", "testing.run_incident_lab");
+  assert.ok(spec);
+  const expiresAt = Date.now() + 60_000;
+  const task = {
+    id: taskId,
+    agent: "testing",
+    action: "testing.run_incident_lab",
+    params: {
+      suiteId: "incident-lab.regression",
+      workspaceId,
+      expectedDiffHash: "a".repeat(64),
+    },
+    dependsOn: [],
+    acceptanceCriteria: [],
+    status: "awaiting_approval",
+    lifecycleState: "awaiting_approval",
+    risk: spec.risk,
+    allowedTools: [...spec.tools],
+    approvalExpiresAt: expiresAt,
+    approvalPolicyVersion: "trustworthy-execution-v1",
+  } as unknown as Task;
+  task.approvalDigest = computeApprovalDigest(task, expiresAt);
+  activeTasks.set(taskId, task);
+
+  try {
+    for (let slot = 0; slot < 4; slot += 1) {
+      assert.equal(await resourceLockManager.acquireSlot(`queue-owner-${slot}`), true);
+    }
+
+    // approveTask should reserve the managed action synchronously, then queue.
+    const approvalPromise = approveTask(taskId);
+    const cancellation = await cancelTaskWithProof(task, "cancel while waiting for scheduler capacity");
+    assert.equal(cancellation, "cancelled");
+    assert.equal(task.status, "cancelled");
+    assert.equal(task.verification?.verified, true);
+    assert.ok(task.verification?.postconditions?.some((value) => /before process launch|no managed process was started/i.test(value)));
+
+    const result = await approvalPromise;
+    assert.equal(result?.status, "cancelled");
+    assert.equal(result?.verification?.outcome, "cancelled");
+    assert.equal(processSupervisor.listStartingTaskIds().includes(taskId), false);
+    assert.equal(processSupervisor.listActiveTaskIds().includes(taskId), false);
+  } finally {
+    activeTasks.delete(taskId);
+    if (previousWorkspace) workspaceMap.set(workspaceId, previousWorkspace);
+    else workspaceMap.delete(workspaceId);
+    while (resourceLockManager.getActiveSlotCount() > baselineSlots) resourceLockManager.releaseSlot();
   }
 });
 
@@ -681,7 +771,9 @@ test("cancellation during the pre-launch reservation prevents the test executabl
     // This is the reservation taskRunner installs before the testing agent's
     // asynchronous workspace preflight begins.
     supervisor.reserve(taskId, "testing.run_incident_lab");
-    const cancellation = supervisor.cancel(taskId, "testing.run_incident_lab");
+    // This must resolve immediately for an unclaimed reservation; otherwise a
+    // cancelled task can hang waiting for its scheduler turn.
+    const cancellationResult = await supervisor.cancel(taskId, "testing.run_incident_lab");
 
     const result = await supervisor.run({
       taskId,
@@ -695,7 +787,6 @@ test("cancellation during the pre-launch reservation prevents the test executabl
       cwd: tmpdir(),
       timeoutMs: 1000,
     });
-    const cancellationResult = await cancellation;
 
     assert.equal(result.status, "cancelled");
     assert.equal(result.processStarted, false);

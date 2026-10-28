@@ -576,8 +576,17 @@ export class ProcessSupervisor {
       if (reservation) {
         if (expectedActionId && expectedActionId !== reservation.actionId) return undefined;
         reservation.cancelled = true;
-        // The promise resolves only after run() reaches its pre-spawn check, or
-        // the caller releases the reservation after a preflight early return.
+        // If no run() call has claimed the reservation, no child can exist yet.
+        // Complete cancellation immediately so scheduler-queued tasks do not
+        // wait for an unrelated execution slot before proving no process started.
+        if (!reservation.claimed) {
+          return this.finishBeforeStart(
+            reservation,
+            "Cancellation was confirmed before process launch; no managed process was started.",
+          );
+        }
+        // A claimed run() call owns preflight; let it observe cancellation and
+        // resolve the shared completion promise before the caller reports stop.
         return reservation.completion;
       }
       const previous = this.completed.get(taskId);
