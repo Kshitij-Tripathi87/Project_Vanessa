@@ -473,7 +473,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
     if (
       (task.status as string) === "cancelled" ||
       (task.status as string) === "termination_unconfirmed" ||
-      task.lifecycleState === "cancel_requested"
+      (task.lifecycleState as string) === "cancel_requested"
     ) return task;
     if (
       task.approvalDigest &&
@@ -778,7 +778,7 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
       if (
         (task.status as string) === "cancelled" ||
         (task.status as string) === "termination_unconfirmed" ||
-        task.lifecycleState === "cancel_requested"
+        (task.lifecycleState as string) === "cancel_requested"
       ) return;
       const agent = agentRegistry[task.agent];
       if (!agent) {
