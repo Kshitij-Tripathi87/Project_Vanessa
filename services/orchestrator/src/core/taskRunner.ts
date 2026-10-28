@@ -294,8 +294,7 @@ async function cancelTaskWithProofInternal(
       return "execution_finished";
     }
 
-    const stopped = Boolean(result && result.status === "cancelled" && result.terminationVerified === true);
-    if (!stopped) {
+    if (!result || result.status !== "cancelled" || result.terminationVerified !== true) {
       markTerminationUnconfirmed(
         task,
         result?.error || "Vanessa cannot prove this task's process tree has stopped. Conflicting resource locks remain held.",
@@ -600,7 +599,7 @@ export async function approveTask(taskId: string): Promise<Task | null> {
 
     if (
       managedExecutionFinishedWithoutCancellation &&
-      task.lifecycleState === "cancel_requested" &&
+      (task.lifecycleState as string) === "cancel_requested" &&
       (task.status as string) !== "termination_unconfirmed"
     ) {
       // The operation reached a verified terminal process state before the
