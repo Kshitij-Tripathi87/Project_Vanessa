@@ -159,7 +159,7 @@ const uiCases = [
 '',
 ];
 const switchAnchor = '    switch (action) {';
-agent = replaceOnce(agent, switchAnchor, uiCases.join("\n") + '\n    switch (action) {', "WindowsAgent UI action cases");
+agent = replaceOnce(agent, switchAnchor, switchAnchor + "\n" + uiCases.join("\n"), "WindowsAgent UI action cases");
 write(agentPath, agent);
 
 // Keep the Control Deck component's standalone type contract without restoring its old app shell.
