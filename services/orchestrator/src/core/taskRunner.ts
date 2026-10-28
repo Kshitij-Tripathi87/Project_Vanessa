@@ -556,13 +556,68 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       if (managedTestAction) processSupervisor.releaseReservationIfUnused(task.id);
     }
 
+    const managedProcessStatus = managedTestAction ? result?.data?.processStatus : undefined;
+    const managedProcessTerminationVerified = result?.data?.terminationVerified === true;
+
+    // The process supervisor is authoritative for managed test lifecycle. Do
+    // not let a cancellation race overwrite an unconfirmed process tree or
+    // treat a timed-out/exited process as a successful cancellation.
+    if (managedTestAction && managedProcessStatus === "termination_unconfirmed") {
+      markTerminationUnconfirmed(
+        task,
+        typeof result?.summary === "string" && result.summary.trim()
+          ? result.summary
+          : "The test process tree could not be verified as stopped. Conflicting resource locks remain held.",
+      );
+      return task;
+    }
+
+    if (managedTestAction && managedProcessStatus === "cancelled" && managedProcessTerminationVerified) {
+      task.status = "cancelled";
+      task.lifecycleState = "cancelled";
+      task.error = "The managed test process was cancelled and its termination was verified.";
+      task.completedAt = Date.now();
+      task.result = result?.data ?? result;
+      task.evidence = Array.isArray(result?.evidence) ? result.evidence : [];
+      task.artifacts = Array.isArray(result?.artifacts) ? result.artifacts : [];
+      task.spokenSummary = result?.spokenSummary || task.error;
+      task.verification = {
+        verified: true,
+        postconditions: ["The process supervisor reported cancellation with terminationVerified=true."],
+        exitCode: result?.data?.exitStatus ?? undefined,
+        outcome: "cancelled",
+        details: `Managed process status: ${managedProcessStatus}; termination verified.`,
+      };
+      memoryPalace.recordTaskCheckpoint(task, plan.id);
+      eventBus.emitEvent("task:update", task);
+      return task;
+    }
+
+    const managedExecutionFinishedWithoutCancellation =
+      managedTestAction &&
+      ["exited", "timed_out", "spawn_failed", "orphaned_processes"].includes(managedProcessStatus) &&
+      managedProcessTerminationVerified;
+
+    if (
+      managedExecutionFinishedWithoutCancellation &&
+      task.lifecycleState === "cancel_requested" &&
+      (task.status as string) !== "termination_unconfirmed"
+    ) {
+      // The operation reached a verified terminal process state before the
+      // cancellation handshake won. Let its actual exit/report determine the
+      // task outcome rather than allowing the kill-switch flag to relabel it.
+      task.lifecycleState = "verifying";
+      task.error = undefined;
+      task.verification = undefined;
+    }
+
       if ((task.status as string) === "termination_unconfirmed" || task.verification?.outcome === "termination_unconfirmed") {
         // Do not overwrite an unresolved process state with a convenient terminal status.
         memoryPalace.recordTaskCheckpoint(task, plan.id);
         eventBus.emitEvent("task:update", task);
         return task;
       }
-      if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
+      if ((isKillSwitchEngaged && !managedExecutionFinishedWithoutCancellation) || ((task.status as string) === "cancelled" && !managedExecutionFinishedWithoutCancellation)) {
         task.status = "cancelled";
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
