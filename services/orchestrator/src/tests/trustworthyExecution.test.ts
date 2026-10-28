@@ -19,11 +19,11 @@ import { WindowsAgent } from "../agents/windows.agent.js";
 import { FolderAgent } from "../agents/folder.agent.js";
 import { buildPowerShellEnvironment } from "../agents/powershell.js";
 import { resolveManagedAction } from "../core/actionRegistry.js";
-import { catalogAccepts } from "../agents/agentCatalog.js";
+import { catalogAccepts, getCatalogAction } from "../agents/agentCatalog.js";
 import { recordAgentResult } from "../core/agentResult.js";
 import { getIncidentLabTestInvocation, ProcessSupervisor } from "../core/processSupervisor.js";
 import { RepairWorkspaceService, type RepairWorkspace } from "../core/repairWorkspace.js";
-import { cancelTaskWithProof, runPlan } from "../core/taskRunner.js";
+import { activeTasks, approveTask, cancelTaskWithProof, computeApprovalDigest, runPlan } from "../core/taskRunner.js";
 import { resourceLockManager } from "../core/resourceLocks.js";
 
 const validTestParams = {
@@ -149,6 +149,58 @@ test("runPlan blocks a high-risk action when task metadata attempts to downgrade
   assert.equal(results[0].status, "blocked");
   assert.equal(results[0].verification?.outcome, "blocked");
   assert.match(results[0].error || "", /reviewed, selectable agent catalog/i);
+});
+
+test("approved parameters mutated while queued are rejected before executor dispatch", async () => {
+  const baselineSlots = resourceLockManager.getActiveSlotCount();
+  assert.equal(baselineSlots, 0, "execution slot state must be isolated for this test");
+
+  const spec = getCatalogAction("developer", "codex.open");
+  assert.ok(spec, "interactive Codex action must be present in the reviewed catalog");
+  const taskId = `approval-queue-mutation-${randomUUID()}`;
+  const expiresAt = Date.now() + 60_000;
+  const task = {
+    id: taskId,
+    agent: "developer",
+    action: "codex.open",
+    params: { projectPath: process.cwd(), prompt: "original approved prompt" },
+    dependsOn: [],
+    acceptanceCriteria: [],
+    status: "awaiting_approval",
+    lifecycleState: "awaiting_approval",
+    risk: spec.risk,
+    allowedTools: [...spec.tools],
+    approvalExpiresAt: expiresAt,
+    approvalPolicyVersion: "trustworthy-execution-v1",
+  } as unknown as Task;
+  task.approvalDigest = computeApprovalDigest(task, expiresAt);
+  activeTasks.set(taskId, task);
+
+  try {
+    // Fill every execution slot so approveTask passes its initial approval
+    // verification but must suspend before it can call the action executor.
+    for (let slot = 0; slot < 4; slot += 1) {
+      await resourceLockManager.acquireSlot();
+    }
+
+    const approvalPromise = approveTask(taskId);
+    task.params = { ...task.params, prompt: "mutated while waiting for an execution slot" };
+    resourceLockManager.releaseSlot();
+
+    const result = await approvalPromise;
+    assert.equal(result?.status, "failed");
+    assert.match(result?.error || "", /Approval binding changed or expired before process launch/);
+    assert.equal(result?.verification?.outcome, "failed");
+    assert.notEqual(task.approvalDigest, computeApprovalDigest({
+      ...task,
+      approvalConsumedAt: undefined,
+    } as Task, expiresAt));
+  } finally {
+    activeTasks.delete(taskId);
+    while (resourceLockManager.getActiveSlotCount() > baselineSlots) {
+      resourceLockManager.releaseSlot();
+    }
+  }
 });
 
 test("managed actions without evidence cannot turn a positive flag into success", () => {
