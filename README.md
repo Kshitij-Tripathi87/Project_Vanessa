@@ -139,3 +139,12 @@ The current Setup EXE is an online bootstrap, not a fully offline/self-contained
 The Windows installer workflow publishes both `Vanessa-Setup-x64.exe` and `Vanessa-Setup-x64.msi` as GitHub Actions artifacts, and includes both files in versioned GitHub Releases. The MSI creates a Start Menu shortcut and supports Windows Installer install/uninstall operations. CI runs separate install/uninstall smoke tests for the EXE and MSI.
 
 Both installers currently install the sanitized Vanessa application payload, not every runtime/model dependency. First-run setup still needs an internet connection to download the configured local speech/language runtime and models; the MSI is not yet a fully offline bundle. See [Windows distribution gates](docs/WINDOWS-DISTRIBUTION.md).
+
+
+## Download Vanessa for Windows
+
+**Direct MSI download:** [Vanessa-Setup-x64.msi](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-installer-preview/Vanessa-Setup-x64.msi)
+
+**Direct EXE download:** [Vanessa-Setup-x64.exe](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-installer-preview/Vanessa-Setup-x64.exe)
+
+These links point to the downloadable assets published by the Windows installer workflow. This is an unsigned preview package; first-run setup requires internet access for runtime dependencies and local AI models. It is not a fully offline or production-signed release.
