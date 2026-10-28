@@ -467,8 +467,14 @@ export async function approveTask(taskId: string): Promise<Task | null> {
       acquiredLocks.push(l);
     }
 
-    // Cancellation may arrive while waiting for a slot/lock.
-    if ((task.status as string) === "cancelled" || (task.status as string) === "termination_unconfirmed") return task;
+    // Cancellation may arrive while waiting for a slot/lock. Check the
+    // request state as well as the terminal status so no executor can launch
+    // during the async process-termination handshake.
+    if (
+      (task.status as string) === "cancelled" ||
+      (task.status as string) === "termination_unconfirmed" ||
+      task.lifecycleState === "cancel_requested"
+    ) return task;
     if (
       task.approvalDigest &&
       (task.approvalPolicyVersion !== APPROVAL_POLICY_VERSION ||
@@ -769,7 +775,11 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     }
 
     try {
-      if ((task.status as string) === "cancelled") return;
+      if (
+        (task.status as string) === "cancelled" ||
+        (task.status as string) === "termination_unconfirmed" ||
+        task.lifecycleState === "cancel_requested"
+      ) return;
       const agent = agentRegistry[task.agent];
       if (!agent) {
         throw new Error(`Unknown agent: ${task.agent}`);
