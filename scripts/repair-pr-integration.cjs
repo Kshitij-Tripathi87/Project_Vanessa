@@ -251,5 +251,17 @@ const testLines = [
 '',
 ];
 write(testPath, testLines.join("\n"));
-git(["add", "--", packagePath, agentPath, testPath]);
+
+// The feature's external-launcher test is retained, but the product contract intentionally
+// reports browser search/playback as partial until playback itself is independently verified.
+const browserTestPath = "services/orchestrator/src/tests/browserAgent.unit.test.ts";
+let browserTests = read(browserTestPath);
+browserTests = replaceOnce(
+  browserTests,
+  '  assert.equal(result.success, true);\n  assert.equal(launched.length, 1);',
+  '  assert.equal(result.success, false);\n  assert.equal(result.status, "partial");\n  assert.equal(launched.length, 1);',
+  "Browser handoff remains partial until playback is verified"
+);
+write(browserTestPath, browserTests);
+git(["add", "--", packagePath, agentPath, testPath, catalogPath, browserTestPath]);
 console.log("[OK] Restored current desktop/agent contracts, declared Playwright, wired safe foreground UI actions, and staged focused tests.");
