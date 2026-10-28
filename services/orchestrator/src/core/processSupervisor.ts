@@ -519,7 +519,7 @@ export class ProcessSupervisor {
           const text = buffer.toString("utf8");
           if (!entry.runnerStarted) {
             entry.runnerStartProbe = (entry.runnerStartProbe + text).slice(-4096);
-            if (entry.runnerStartProbe.includes(`VANESSA_JOB_RUNNER_STARTED:${entry.runId}`)) {
+            if (entry.runnerStartProbe.includes(`VANESSA_JOB_RUNNER_STARTED:${entry.verificationToken}`)) {
               entry.runnerStarted = true;
             }
           }
@@ -604,7 +604,12 @@ export class ProcessSupervisor {
       if (process.platform === "win32" && entry.windowsJobWrapper) {
         if (entry.result?.terminationVerified === true) return true;
         if (entry.child.exitCode !== null) {
-          return !entry.unverifiedJobTermination;
+          // exitCode fires before stdio "close" and before the terminal evidence
+          // reducer necessarily sees the private marker. Never infer proof from
+          // a numeric child exit code while the wrapper result is still pending.
+          const closeDeadline = Date.now() + 1000;
+          while (Date.now() < closeDeadline && !entry.result) await delay(20);
+          return Boolean(entry.result && entry.result.terminationVerified === true);
         }
         try {
           // The wrapper reads this control message on its own stdin. The
@@ -617,7 +622,12 @@ export class ProcessSupervisor {
           await delay(25);
         }
         if (entry.child.exitCode !== null) {
-          return !entry.unverifiedJobTermination;
+          // exitCode fires before stdio "close" and before the terminal evidence
+          // reducer necessarily sees the private marker. Never infer proof from
+          // a numeric child exit code while the wrapper result is still pending.
+          const closeDeadline = Date.now() + 1000;
+          while (Date.now() < closeDeadline && !entry.result) await delay(20);
+          return Boolean(entry.result && entry.result.terminationVerified === true);
         }
 
         // If the wrapper does not answer, terminate it. KILL_ON_JOB_CLOSE is
@@ -753,7 +763,9 @@ export class ProcessSupervisor {
     const stdout = redactOutput(stdoutBuffer.toString("utf8"));
     const rawStderr = stderrBuffer.toString("utf8");
     const stderr = redactOutput(entry.windowsJobWrapper
-      ? rawStderr.replaceAll(`VANESSA_JOB_RUNNER_STARTED:${entry.runId}`, "")
+      ? rawStderr
+          .replaceAll(`VANESSA_JOB_RUNNER_STARTED:${entry.verificationToken}`, "")
+          .replaceAll(`VANESSA_JOB_RUNNER_UNVERIFIED:${entry.verificationToken}:`, "VANESSA_JOB_RUNNER_UNVERIFIED:")
       : rawStderr);
     const digest = createHash("sha256").update(stdout).update("\\0").update(stderr).digest("hex");
     const finishedMs = Date.now();
