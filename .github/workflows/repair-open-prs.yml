@@ -131,7 +131,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Could not restore target Windows agent/planner contracts." }
 
           $featureFiles = @(
-            @{ Source = 'feat/issue-18-browser-folder-handoff'; Path = 'services/orchestrator/src/agents/browser.agent.ts' },
             @{ Source = 'feat/issue-18-browser-folder-handoff'; Path = 'services/orchestrator/src/agents/browser-playwright.agent.ts' },
             @{ Source = 'feat/issue-18-browser-folder-handoff'; Path = 'services/orchestrator/src/tests/browserAgent.unit.test.ts' },
             @{ Source = 'feat/windows-ui-automation-agent'; Path = 'services/orchestrator/src/core/agentRouting.ts' },
