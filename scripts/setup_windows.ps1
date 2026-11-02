@@ -74,7 +74,7 @@ $allowAsrFallback = (Get-EnvSetting 'VOICE_ALLOW_FALLBACK' 'true').ToLowerInvari
 $plannerProvider = (Get-EnvSetting 'PLANNER_PROVIDER' 'ollama').ToLowerInvariant()
 $conversationProvider = (Get-EnvSetting 'CONVERSATION_PROVIDER' (Get-EnvSetting 'SARVAM_CHAT_PROVIDER' $plannerProvider)).ToLowerInvariant()
 $voiceModel = Get-EnvSetting 'VOICE_MODEL' 'base'
-$ollamaModel = Get-EnvSetting 'OLLAMA_MODEL' 'qwen2.5:3b'
+$ollamaModel = Get-EnvSetting 'OLLAMA_MODEL' 'qwen3.5:4b'
 $ollamaBase = Get-EnvSetting 'OLLAMA_BASE_URL' 'http://127.0.0.1:11434'
 
 Write-Host ''
@@ -162,7 +162,7 @@ if ($needsOllama) {
     $hasModel = $false
     foreach ($item in $tagResponse.models) { if ($item.name -eq $ollamaModel) { $hasModel = $true; break } }
     if (-not $hasModel -and -not $SkipModelDownloads) {
-        Write-Host "Pulling local model '$ollamaModel' (the default qwen2.5:3b is about 2 GB)..." -ForegroundColor Yellow
+        Write-Host "Pulling local model '$ollamaModel' (the default qwen3.5:4b is about 3.3–4.0 GB)..." -ForegroundColor Yellow
         Invoke-Checked "ollama pull $ollamaModel" $ollamaExePath @('pull', $ollamaModel)
     } elseif (-not $hasModel) {
         Write-Host "[SKIP] Model '$ollamaModel' not installed because -SkipModelDownloads was provided." -ForegroundColor Yellow
