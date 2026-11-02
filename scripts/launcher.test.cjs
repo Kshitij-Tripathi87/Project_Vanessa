@@ -32,7 +32,7 @@ test('default install uses local Whisper, Ollama and browser TTS with no provide
   assert.equal(defaults.ttsFallback, true);
   assert.equal(defaults.planner, 'ollama');
   assert.equal(defaults.conversation, 'ollama');
-  assert.equal(defaults.ollamaModel, 'qwen2.5:3b');
+  assert.equal(defaults.ollamaModel, 'qwen3.5:4b');
   assert(defaults.localAsr);
   const text = config({}, ['--text-only']);
   assert.equal(text.voice, false);
