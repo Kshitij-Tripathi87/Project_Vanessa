@@ -134,7 +134,7 @@ async function assertOllamaReady(config) {
   if (parsed.protocol !== 'http:' || !localHosts.has(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
     throw new Error('OLLAMA_BASE_URL must be a local loopback HTTP origin, for example http://127.0.0.1:11434. Vanessa will not send local prompts to remote hosts.');
   }
-  const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen2.5:3b').trim();
+  const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen3.5:4b').trim();
   let response;
   try { response = await fetch(parsed.origin + '/api/tags', { signal: AbortSignal.timeout(2500) }); }
   catch { throw new Error('Local Ollama is not reachable at ' + parsed.origin + '. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.'); }
