@@ -53,9 +53,9 @@ export class OllamaClient {
         body: JSON.stringify({
           model: this.model,
           messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }],
-          stream: false,
+          stream: false,\n          keep_alive: process.env.OLLAMA_KEEP_ALIVE?.trim() || "30m",
           ...(json ? { format: "json" } : {}),
-          options: { temperature: json ? 0.1 : 0.3, num_predict: json ? 4096 : 256 },
+          options: {\n            temperature: json ? 0.1 : 0.3,\n            num_ctx: Number(process.env.OLLAMA_NUM_CTX || 8192),\n            num_predict: Number(json ? process.env.OLLAMA_PLANNER_MAX_TOKENS || 1024 : process.env.OLLAMA_CONVERSATION_MAX_TOKENS || 192),\n          },
         }),
         signal: controller.signal,
       });
