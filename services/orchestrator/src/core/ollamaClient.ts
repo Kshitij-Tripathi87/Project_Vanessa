@@ -1,4 +1,4 @@
-export const DEFAULT_OLLAMA_MODEL = "qwen2.5:3b";
+export const DEFAULT_OLLAMA_MODEL = "qwen3.5:4b";
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
