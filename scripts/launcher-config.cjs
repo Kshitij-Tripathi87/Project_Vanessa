@@ -13,7 +13,7 @@ function launcherConfig(env, args, root, exists) {
   if (voice && !['fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const ttsFallback = (env.VOICE_TTS_FALLBACK_PROVIDER || 'browser') === 'browser';
   const ollamaBaseUrl = (env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').trim();
-  const ollamaModel = (env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
+  const ollamaModel = (env.OLLAMA_MODEL || 'qwen3.5:4b').trim();
   const missing = [];
   const addMissing = (item) => { if (!missing.includes(item)) missing.push(item); };
   const configured = (value) => Boolean(value?.trim()) && !/placeholder|replace[-_ ]with|your[_-]/i.test(value);
