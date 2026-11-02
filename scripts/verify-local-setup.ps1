@@ -57,7 +57,7 @@ if (($planner -eq 'ollama') -or ($conversation -eq 'ollama')) {
     }
     try { $tags = Invoke-RestMethod -Method Get -Uri "$base/api/tags" -TimeoutSec 3 }
     catch { Fail-Preflight 'The Ollama local service is not ready.' }
-    $model = Get-EnvSetting 'OLLAMA_MODEL' 'qwen2.5:3b'
+    $model = Get-EnvSetting 'OLLAMA_MODEL' 'qwen3.5:4b'
     $found = $false
     foreach ($item in $tags.models) { if ($item.name -eq $model) { $found = $true; break } }
     if (-not $found) { Fail-Preflight "The local language model '$model' is not installed." }
