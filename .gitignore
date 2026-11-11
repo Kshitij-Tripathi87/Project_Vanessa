@@ -62,6 +62,11 @@ data/
 # Local scratch output and tool state
 /tmp/
 /eval/results/
+/.toolchain/
+local.properties
+.gradle/
+**/.gradle/
+*.iml
 .opencode/
 
 # OS & Editor

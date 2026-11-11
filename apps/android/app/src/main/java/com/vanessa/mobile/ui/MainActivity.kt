@@ -2,137 +2,159 @@ package com.vanessa.mobile.ui
 
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
-import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.viewModelScope
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.vanessa.mobile.R
-import com.vanessa.mobile.bridge.VanessaBridgeClient
-import com.vanessa.mobile.di.PairingRepository
+import com.vanessa.mobile.bridge.ConnectionState
 import com.vanessa.mobile.viewmodel.PairingViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import io.reactivex.rxjava3.annotations.NonNull
-import io.reactivex.rxjava3.core.CompletableObserver
-import io.reactivex.rxjava3.core.Single
-import io.reactivex.rxjava3.core.SingleObserver
-import io.reactivex.rxjava3.disposables.Disposable
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.observeAsState
-import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
-    private lateinit var viewModel: PairingViewModel
-    private var qrScanJob: kotlinx.coroutines.Job? = null
+    private val viewModel: PairingViewModel by viewModels()
 
-    private val _bridgeState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    val bridgeState: StateFlow<ConnectionState> = _bridgeState
+    private val scanLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val payload = result.data?.getStringExtra(QrScannerActivity.EXTRA_SCANNED_PAYLOAD)
+        if (result.resultCode == RESULT_OK && payload != null) {
+            viewModel.onPairingPayloadScanned(payload)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        viewModel = PairingViewModel(
-            PairingRepository(),
-            VanessaBridgeClient()
-        )
-
-        // Handle back press - if connected, disconnect instead
-        val backPressedCallback = object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (_bridgeState.value is ConnectionState.Connected) {
-                    viewModel.forgetDevice()
-                } else {
-                    cancel()
-                }
-            }
-        }
-        addOnBackPressedCallback(backPressedCallback)
-
-        // Setup pairing observation
-        setupPairingObservation()
-
-        // Start with existing pairing check
-        viewModel.checkExistingPairing()
-    }
-
-    private fun setupPairingObservation() {
-        lifecycleScope.launch {
-            viewModel.status.observeAsState(this@MainActivity).collect { status ->
-                when (status) {
-                    is PairingStatus.Pairing -> {
-                        showPairingUI(status)
-                    }
-                    is PairingStatus.Success -> {
-                        showConnectedUI(status)
-                        // Auto-connect in background
-                        bridgeClient.connect(
-                            (status as PairingStatus.Success).deviceId,
-                            /* we need the secret from repo */
-                        )
-                    }
-                    is PairingStatus.Error -> {
-                        showErrorUI(status)
-                    }
-                }
-            }
-        }
-
-        viewModel.pairingCode.observeAsState(this@MainActivity).collect { code ->
-            if (code != null) {
-                showPairingCode(code)
-            }
-        }
-    }
-
-    private fun showPairingUI(status: PairingStatus.Pairing) {
-        // Display QR code and pairing info
-        Log.d("MainActivity", "Showing pairing UI for IP: ${status.pcIp}:${status.port}")
-        // TODO: Update UI to show QR code
-    }
-
-    private fun showConnectedUI(status: PairingStatus.Success) {
-        Log.d("MainActivity", "Connected successfully, device: ${status.deviceId}")
-        // TODO: Update UI to show connected state
-    }
-
-    private fun showErrorUI(status: PairingStatus.Error) {
-        Log.e("MainActivity", "Pairing error: ${status.message}")
-        // TODO: Show error to user
-    }
-
-    private fun showPairingCode(code: String) {
-        Log.d("MainActivity", "Pairing code: $code")
-        // TODO: Show pairing code on screen
-    }
-
-    /**
-     * Start QR code scanning
-     */
-    fun startQrScanner() {
-        qrScanJob = kotlinx.coroutines.runBlocking {
-            val intent = Intent(this, QrScannerActivity::class.java)
-            startActivityForResult(intent, 1)
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1 && resultCode == RESULT_OK && data != null) {
-            val scannedCode = data.getStringExtra("scanned_code")
-            if (scannedCode != null) {
-                // Handle the scanned pairing code
-                viewModel.completePairing(
-                    deviceId = "device_${System.currentTimeMillis()}",
-                    deviceSecret = scannedCode
+        setContent {
+            val state by viewModel.state.collectAsState()
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = colorResource(R.color.vanessa_primary),
+                    secondary = colorResource(R.color.vanessa_secondary),
+                    background = colorResource(R.color.vanessa_background),
+                    surface = colorResource(R.color.vanessa_surface),
+                    onPrimary = colorResource(R.color.vanessa_on_primary),
+                    onSurface = colorResource(R.color.vanessa_on_surface),
+                    error = colorResource(R.color.vanessa_error),
                 )
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    PairingScreen(
+                        state = state,
+                        onScanQr = {
+                            scanLauncher.launch(Intent(this@MainActivity, QrScannerActivity::class.java))
+                        },
+                        onForgetDevice = { viewModel.forgetDevice() },
+                    )
+                }
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        qrScanJob?.cancel()
     }
 }
+
+@Composable
+private fun PairingScreen(
+    state: PairingViewModel.UiState,
+    onScanQr: () -> Unit,
+    onForgetDevice: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = stringResourceText(R.string.pairing_title),
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = stringResourceText(R.string.pairing_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Text(
+            text = when (state.status) {
+                PairingViewModel.Status.Idle -> "Not paired"
+                PairingViewModel.Status.CodeScanned -> "Pairing code captured"
+                PairingViewModel.Status.Error -> "Error"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = when (state.status) {
+                PairingViewModel.Status.Error -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.onSurface
+            }
+        )
+
+        state.pairing?.let { pairing ->
+            Text("PC: ${pairing.pcIp}:${pairing.port}", color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                text = "Code valid until ${java.util.Date(pairing.expiresAt)}",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Text(
+            text = when (val connection = state.connection) {
+                is ConnectionState.Connected -> "Gateway connected to ${connection.pcIP}"
+                ConnectionState.Connecting -> "Connecting to gateway…"
+                ConnectionState.Disconnected -> "Gateway disconnected"
+                is ConnectionState.Error -> "Gateway error: ${connection.message}"
+            },
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        state.message?.let { message ->
+            Text(text = message, color = MaterialTheme.colorScheme.secondary)
+        }
+
+        Button(onClick = onScanQr, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Scan PC pairing code")
+        }
+
+        if (state.pairing != null) {
+            OutlinedButton(onClick = onForgetDevice) {
+                Text(stringResourceText(R.string.forget_device))
+            }
+        }
+
+        Text(
+            text = stringResourceText(R.string.tools_empty),
+            color = Color.Gray,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 16.dp)
+        )
+    }
+}
+
+@Composable
+private fun stringResourceText(id: Int): String = androidx.compose.ui.res.stringResource(id)

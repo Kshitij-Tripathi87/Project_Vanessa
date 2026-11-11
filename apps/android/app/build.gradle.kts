@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.dagger.hilt.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     kotlin("kapt")
@@ -59,6 +58,9 @@ android {
 }
 
 dependencies {
+    // Generated protocol contract (single source of truth for the wire format)
+    implementation(project(":core:protocol"))
+
     // Kotlin
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
@@ -69,6 +71,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
+
+    // Material theme (Theme.Vanessa extends Theme.Material3)
+    implementation("com.google.android.material:material:1.11.0")
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
@@ -96,12 +101,10 @@ dependencies {
 
     // QR Code Scanner
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
-
-    // Biometric
-    implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.0.0")

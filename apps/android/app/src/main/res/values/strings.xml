@@ -6,7 +6,7 @@
     <string name="pairing_expires">Expires in 5 minutes</string>
     <string name="connected">Connected</string>
     <string name="disconnected">Disconnected</string>
-    <string name="connecting">Connecting&hellip;</string>
+    <string name="connecting">Connecting…</string>
     <string name="tools_title">Available Tools</string>
     <string name="tools_empty">No tools available. Connect to PC.</string>
     <string name="task_submit">Run Tool</string>

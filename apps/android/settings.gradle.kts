@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Vanessa"
 include(":app")
+include(":core:protocol")

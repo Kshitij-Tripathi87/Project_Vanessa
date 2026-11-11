@@ -7,9 +7,6 @@ import io.ktor.client.plugins.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import android.util.Log
 import org.json.JSONObject
 import javax.crypto.Mac
@@ -55,11 +52,6 @@ data class ToolDefinition(
 @Singleton
 class VanessaBridgeClient @Inject constructor() {
     private val TAG = "VanessaBridge"
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
 
     private val client = HttpClient(Android) {
         install(WebSockets) {
@@ -231,53 +223,64 @@ class VanessaBridgeClient @Inject constructor() {
      */
     private suspend fun handleMessage(text: String) {
         try {
-            val message = json.decodeFromString<Map<String, Any>>(text)
-            val type = message["type"] as? String ?: return
+            val message = JSONObject(text)
+            val type = message.optString("type")
+            if (type.isEmpty()) return
 
             when (type) {
                 "manifest.sync" -> {
-                    val tools = (message["tools"] as? List<Map<String, Any>>)?.map {
-                        ToolDefinition(
-                            name = it["name"] as? String ?: "",
-                            description = it["description"] as? String ?: "",
-                            tier = it["tier"] as? String ?: "T0",
-                            timeout = (it["timeout"] as? Number)?.toInt() ?: 30
-                        )
-                    } ?: emptyList()
+                    val array = message.optJSONArray("tools")
+                    val tools = buildList {
+                        for (index in 0 until (array?.length() ?: 0)) {
+                            val item = array?.optJSONObject(index) ?: continue
+                            add(
+                                ToolDefinition(
+                                    name = item.optString("name"),
+                                    description = item.optString("description"),
+                                    tier = item.optString("tier", "T0"),
+                                    timeout = item.optInt("timeout", 30)
+                                )
+                            )
+                        }
+                    }
 
                     _events.emit(BridgeEvent.ManifestReceived(tools))
                 }
 
                 "task.accepted" -> {
-                    val taskId = message["taskId"] as? String ?: return
+                    val taskId = message.optString("taskId")
+                    if (taskId.isEmpty()) return
                     _events.emit(BridgeEvent.TaskAccepted(taskId))
                 }
 
                 "task.progress" -> {
-                    val taskId = message["taskId"] as? String ?: return
-                    val state = message["state"] as? String ?: ""
-                    val msg = message["message"] as? String
+                    val taskId = message.optString("taskId")
+                    if (taskId.isEmpty()) return
+                    val state = message.optString("state")
+                    val msg = message.optString("message").ifEmpty { null }
                     _events.emit(BridgeEvent.TaskProgress(taskId, state, msg))
                 }
 
                 "task.result" -> {
-                    val taskId = message["taskId"] as? String ?: return
-                    val result = message["result"] ?: emptyMap<String, Any>()
+                    val taskId = message.optString("taskId")
+                    if (taskId.isEmpty()) return
+                    val result = message.opt("result") ?: emptyMap<String, Any>()
                     _events.emit(BridgeEvent.TaskResult(taskId, result))
                 }
 
                 "task.error" -> {
-                    val taskId = message["taskId"] as? String
-                    val code = message["code"] as? String ?: "UNKNOWN"
-                    val msg = message["message"] as? String ?: "Unknown error"
+                    val taskId = message.optString("taskId").ifEmpty { null }
+                    val code = message.optString("code", "UNKNOWN")
+                    val msg = message.optString("message", "Unknown error")
                     _events.emit(BridgeEvent.TaskError(taskId, code, msg))
                 }
 
                 "task.confirm_required" -> {
-                    val taskId = message["taskId"] as? String ?: return
-                    val summary = message["summary"] as? String ?: ""
-                    val actionHash = message["actionHash"] as? String ?: ""
-                    val expiresAt = (message["expiresAt"] as? Number)?.toLong() ?: 0L
+                    val taskId = message.optString("taskId")
+                    if (taskId.isEmpty()) return
+                    val summary = message.optString("summary")
+                    val actionHash = message.optString("actionHash")
+                    val expiresAt = message.optLong("expiresAt", 0L)
                     _events.emit(BridgeEvent.ConfirmationRequired(taskId, summary, actionHash, expiresAt))
                 }
 
@@ -299,8 +302,8 @@ class VanessaBridgeClient @Inject constructor() {
      */
     private suspend fun sendMessage(message: Map<String, Any>) {
         try {
-            val json = json.encodeToString(message)
-            session?.send(Frame.Text(json))
+            val payload = JSONObject(message as Map<*, *>).toString()
+            session?.send(Frame.Text(payload))
             Log.d(TAG, "Sent: ${message["type"]}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send message", e)
@@ -327,7 +330,7 @@ class VanessaBridgeClient @Inject constructor() {
 
         // Generate HMAC-SHA256 signature
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
-        mac.init(javax.crypto.SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
+        mac.init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
         val signature = mac.doFinal(canonical.toByteArray()).joinToString("") { "%02x".format(it) }
 
         // Build the final protocol message with signature and nonce

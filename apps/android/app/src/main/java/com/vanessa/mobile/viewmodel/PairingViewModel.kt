@@ -1,150 +1,111 @@
 package com.vanessa.mobile.viewmodel
 
-import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vanessa.mobile.bridge.ConnectionState
 import com.vanessa.mobile.bridge.VanessaBridgeClient
 import com.vanessa.mobile.di.PairingRepository
-import com.vanessa.mobile.bridge.ConnectionState
+import com.vanessa.mobile.di.StoredPairing
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import javax.inject.Inject
-import dagger.hilt.android.lifecycle.HiltViewModel
 
 /**
- * ViewModel for pairing flow
+ * Drives the pairing screen.
+ *
+ * The QR payload carries a single-use pairing code, never the HMAC secret. The
+ * secret is only issued when the PC redeems the code, and the gateway does not
+ * expose that redemption yet, so a scanned code leaves the app waiting rather
+ * than fabricating a connected session.
  */
 @HiltViewModel
 class PairingViewModel @Inject constructor(
     private val pairingRepository: PairingRepository,
-    private val bridgeClient: VanessaBridgeClient
+    private val bridgeClient: VanessaBridgeClient,
 ) : ViewModel() {
 
-    // QR code data
-    private val _qrCodeData = MutableStateFlow<String?>(null)
-    val qrCodeData: StateFlow<String?> = _qrCodeData
+    enum class Status { Idle, CodeScanned, Error }
 
-    // Pairing code display
-    private val _pairingCode = MutableStateFlow<String?>(null)
-    val pairingCode: StateFlow<String?> = _pairingCode
+    data class UiState(
+        val status: Status = Status.Idle,
+        val pairing: StoredPairing? = null,
+        val connection: ConnectionState = ConnectionState.Disconnected,
+        val message: String? = null,
+    )
 
-    // PC info
-    private val _pcIp = MutableStateFlow<String?>(null)
-    val pcIp: StateFlow<String?> = _pcIp
+    private val _state = MutableStateFlow(UiState())
+    val state: StateFlow<UiState> = _state.asStateFlow()
 
-    // Status
-    private val _status = MutableStateFlow<PairingStatus>(PairingStatus.Idle)
-    val status: StateFlow<PairingStatus> = _status
+    init {
+        pairingRepository.pairing
+            .onEach { pairing ->
+                _state.value = _state.value.copy(
+                    pairing = pairing,
+                    status = when {
+                        pairing == null -> Status.Idle
+                        pairing.expiresAt > System.currentTimeMillis() -> Status.CodeScanned
+                        else -> Status.Idle
+                    },
+                )
+            }
+            .launchIn(viewModelScope)
 
-    sealed interface PairingStatus {
-        data class Pairing(val pcIp: String, val port: Int, val pairingCode: String, val expiresAt: Long) : PairingStatus
-        data class Success(val deviceId: String) : PairingStatus
-        data class Error(val message: String) : PairingStatus
-        object Idle : PairingStatus
+        bridgeClient.connectionState
+            .onEach { connection -> _state.value = _state.value.copy(connection = connection) }
+            .launchIn(viewModelScope)
     }
 
-    /**
-     * Start pairing with a PC
-     */
-    fun startPairing(pcIp: String, port: Int = 8765) {
-        viewModelScope.launch {
-            _status.value = PairingStatus.Pairing(pcIp, port, "", 0)
-            _pcIp.value = pcIp
-
-            // In a real implementation, we'd get this from the PC via a pairing endpoint
-            // For now, we generate a mock pairing code
-            val pairingCode = generatePairingCode()
-            val expiresAt = System.currentTimeMillis() + 5 * 60 * 1000 // 5 minutes
-
-            _pairingCode.value = pairingCode
-            _status.value = PairingStatus.Pairing(pcIp, port, pairingCode, expiresAt)
-
-            // Build QR code data
-            val qrData = buildQrCodeData(pcIp, port, pairingCode)
-            _qrCodeData.value = qrData
+    fun onPairingPayloadScanned(raw: String) {
+        val parsed = runCatching { JSONObject(raw) }.getOrNull()
+        if (parsed == null) {
+            fail("That QR code is not a Vanessa pairing code.")
+            return
         }
-    }
+        val type = parsed.optString("type", "vanessa_pairing")
+        val version = parsed.optInt("version", 1)
+        val pcIp = parsed.optString("pcIP").ifBlank { parsed.optString("pcIp") }
+        val port = parsed.optInt("port", 8765)
+        val code = parsed.optString("pairingCode")
+        val expiresAt = parsed.optLong("expiresAt", 0L)
 
-    /**
-     * Complete pairing after user scans QR and confirms on PC
-     */
-    fun completePairing(deviceId: String, deviceSecret: String) {
+        if (type != "vanessa_pairing" || version != 1) {
+            fail("Unsupported pairing payload (type=$type version=$version).")
+            return
+        }
+        if (pcIp.isBlank() || code.isBlank()) {
+            fail("The pairing code is missing the PC address or code.")
+            return
+        }
+        if (expiresAt in 1..System.currentTimeMillis()) {
+            fail("That pairing code has expired. Show a fresh code on the PC.")
+            return
+        }
+
         viewModelScope.launch {
             pairingRepository.savePairing(
-                pcIp = _pcIp.value ?: "",
-                pcPort = 8765,
-                deviceId = deviceId,
-                deviceSecret = deviceSecret
-            ).subscribe(
-                onSuccess = {
-                    _status.value = PairingStatus.Success(deviceId)
-                    // Connect to gateway
-                    bridgeClient.connect(_pcIp.value!!, 8765, deviceSecret)
-                },
-                onError = { error ->
-                    _status.value = PairingStatus.Error(error.message ?: "Pairing failed")
-                }
+                StoredPairing(pcIp = pcIp, port = port, pairingCode = code, expiresAt = expiresAt)
+            )
+            _state.value = _state.value.copy(
+                status = Status.CodeScanned,
+                message = "Pairing code captured for $pcIp:$port. The PC still has to redeem it before the gateway accepts this phone.",
             )
         }
     }
 
-    /**
-     * Forget paired device
-     */
     fun forgetDevice() {
         viewModelScope.launch {
-            pairingRepository.clearPairing().subscribe(
-                onSuccess = { _status.value = PairingStatus.Idle },
-                onError = { _status.value = PairingStatus.Error(it.message ?: "Failed to forget device") }
-            )
-            bridgeClient.disconnect()
+            pairingRepository.clear()
+            _state.value = _state.value.copy(status = Status.Idle, message = null)
         }
     }
 
-    /**
-     * Check existing pairing
-     */
-    fun checkExistingPairing() {
-        viewModelScope.launch {
-            pairingRepository.isPaired().subscribe(
-                onSuccess = { isPaired ->
-                    if (isPaired) {
-                        pairingRepository.getPairedPcIp().subscribe(
-                            onSuccess = { ip ->
-                                if (ip != null) {
-                                    pairingRepository.getPairedDeviceSecret().subscribe(
-                                        onSuccess = { secret ->
-                                            if (secret != null) {
-                                                bridgeClient.connect(ip, 8765, secret)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
-            )
-        }
-    }
-
-    private fun generatePairingCode(): String {
-        // Generate a secure random pairing code
-        val bytes = java.security.SecureRandom().run { nextBytes(ByteArray(16)); this }
-        return bytes.let { Base64.encodeToString(it, Base64.URL_SAFE or Base64.NO_WRAP) }
-    }
-
-    private fun buildQrCodeData(pcIp: String, port: Int, pairingCode: String): String {
-        return """
-            {
-                "type": "vanessa_pairing",
-                "version": 1,
-                "pcIp": "$pcIp",
-                "port": $port,
-                "pairingCode": "$pairingCode",
-                "timestamp": ${System.currentTimeMillis()}
-            }
-        """.trimIndent()
+    private fun fail(message: String) {
+        _state.value = _state.value.copy(status = Status.Error, message = message)
     }
 }
