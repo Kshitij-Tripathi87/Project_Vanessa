@@ -209,7 +209,7 @@ test('Windows: dist-only fresh actual executor, no inherited process policy/prof
   try {
     const source=fileURLToPath(new URL('../../dist/agents/',import.meta.url));
     const agents=join(dir,'agents');await mkdir(agents);
-    for(const file of ['powershell-executor.js','powershell-runner.js','windows-controls.js','windows-controls-backend.js','windows-controls-controller.js','windows-audio.js']) await cp(join(source,file),join(agents,file));
+    for(const file of ['powershell.js','powershell-executor.js','powershell-runner.js','windows-controls.js','windows-controls-backend.js','windows-controls-controller.js','windows-audio.js']) await cp(join(source,file),join(agents,file));
     await cp(join(source,'windows-audio'),join(agents,'windows-audio'),{recursive:true});
     await import('node:fs/promises').then(fs=>fs.writeFile(join(dir,'package.json'),'{"type":"module"}'));
     const code=`

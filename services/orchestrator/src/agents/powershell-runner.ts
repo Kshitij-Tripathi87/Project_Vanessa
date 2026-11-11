@@ -8,6 +8,7 @@ function Write-VexEvent($value) {
   [System.IO.File]::AppendAllText($env:VANESSA_EXEC_EVENTS, (($value | ConvertTo-Json -Compress -Depth 8) + [Environment]::NewLine), $vexEncoding)
 }
 if ($vexRequest.workingDirectory) { Set-Location -LiteralPath $vexRequest.workingDirectory }
+$vexMax = if ($null -ne $vexRequest.maxOutputBytes) { [int]$vexRequest.maxOutputBytes } else { 65536 }
 $vexNativeBreakpoint = Set-PSBreakpoint -Variable LASTEXITCODE -Mode Write -Action {
   if ($null -ne $global:LASTEXITCODE -and $global:LASTEXITCODE -ne 0 -and $null -eq $global:vexNativeFailure) {
     $global:vexNativeFailure = $global:LASTEXITCODE
@@ -26,9 +27,9 @@ foreach ($vexStep in $vexRequest.steps) {
     . $vexBlock *>&1 | ForEach-Object {
       $vexIsError = $_ -is [System.Management.Automation.ErrorRecord]
       if ($vexIsError) { $vexFailed = $true }
-      if ($vexCount -lt 65536) {
+      if ($vexCount -lt $vexMax) {
         $vexText = ($_ | Out-String -Width 200).TrimEnd([char[]]@(13, 10)) + [Environment]::NewLine
-        $vexText = $vexText.Substring(0, [Math]::Min($vexText.Length, 65536 - $vexCount))
+        $vexText = $vexText.Substring(0, [Math]::Min($vexText.Length, $vexMax - $vexCount))
         $vexCount += $vexText.Length
         Write-VexEvent @{ type = 'output'; id = $vexStep.id; stream = $(if ($vexIsError) { 'stderr' } else { 'stdout' }); text = $vexText }
       }
@@ -40,7 +41,7 @@ foreach ($vexStep in $vexRequest.steps) {
   $vexCode = $global:LASTEXITCODE
   if ($null -ne $global:vexNativeFailure) { $vexCode = $global:vexNativeFailure }
   if ($null -ne $vexCode -and $vexCode -ne 0) { $vexFailed = $true }
-  Write-VexEvent @{ type = 'end'; id = $vexStep.id; failed = $vexFailed; exitCode = $vexCode; durationMs = $vexWatch.ElapsedMilliseconds; cwd = (Get-Location).Path; outputTruncated = ($vexCount -ge 65536) }
+  Write-VexEvent @{ type = 'end'; id = $vexStep.id; failed = $vexFailed; exitCode = $vexCode; durationMs = $vexWatch.ElapsedMilliseconds; cwd = (Get-Location).Path; outputTruncated = ($vexCount -ge $vexMax) }
   if ($vexFailed) { break }
 }
 Remove-PSBreakpoint -Breakpoint $vexNativeBreakpoint

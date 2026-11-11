@@ -9,6 +9,9 @@ export interface PowerShellRequest {
   steps: Array<{ id: string; command: string }>;
   workingDirectory?: string;
   timeoutMs?: number;
+  /** Per-step stdout/stderr cap. Defaults to 64 KiB; callers that need to return
+   * a bounded binary payload (e.g. a scaled screenshot) may raise it explicitly. */
+  maxOutputBytes?: number;
 }
 export interface PowerShellStepResult {
   id: string;
@@ -40,6 +43,8 @@ export async function executePowerShellSteps(request: PowerShellRequest): Promis
   }
   const timeoutMs = request.timeoutMs ?? 30000;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 300000) throw new Error('timeoutMs must be an integer between 100 and 300000');
+  const maxOutputBytes = request.maxOutputBytes ?? 65536;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > 1048576) throw new Error('maxOutputBytes must be an integer between 1024 and 1048576');
   let cwd: string | undefined;
   if (request.workingDirectory !== undefined) {
     if (typeof request.workingDirectory !== 'string' || !request.workingDirectory.trim()) throw new Error('workingDirectory must be an existing directory');
@@ -54,7 +59,7 @@ export async function executePowerShellSteps(request: PowerShellRequest): Promis
   let failure: string | undefined;
   let shellCode: number | null = null;
   try {
-    await writeFile(input, JSON.stringify({ steps: request.steps, workingDirectory: cwd }), 'utf8');
+    await writeFile(input, JSON.stringify({ steps: request.steps, workingDirectory: cwd, maxOutputBytes }), 'utf8');
     // EncodedCommand contains only the fixed runner, never request commands.
     await new Promise<void>((finish) => {
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(powerShellRunner, 'utf16le').toString('base64')], {
@@ -119,7 +124,7 @@ export function decodePowerShellJournal(
         }
         else if (event.type === 'output' && active && ['stdout', 'stderr'].includes(event.stream) && typeof event.text === 'string') {
           const stream = event.stream as 'stdout' | 'stderr';
-          result[stream] = (result[stream] + event.text).slice(0, 70000);
+          result[stream] = (result[stream] + event.text).slice(0, 1100000);
         } else if (event.type === 'end' && active && typeof event.failed === 'boolean' && Number.isFinite(event.durationMs) && event.durationMs >= 0 && (event.exitCode === null || Number.isInteger(event.exitCode))) {
           if (!event.failed && event.exitCode !== null && event.exitCode !== 0) throw new Error('Nonzero exit code reported as success');
           result.status = event.failed ? 'failed' : 'completed';

@@ -34,6 +34,7 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "ws": "^8.18.0",
+    "zod": "^3.25.76",
     "playwright": "^1.40.0"
   },
   "devDependencies": {

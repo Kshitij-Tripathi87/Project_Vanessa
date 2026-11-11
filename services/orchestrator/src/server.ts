@@ -4,6 +4,7 @@ import websocket from "@fastify/websocket";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { isIPv4 } from "node:net";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
@@ -13,6 +14,9 @@ import { permissionGuard } from "./core/permissionGuard.js";
 import { memoryPalace } from "./memory/memoryPalace.js";
 import { getRemotePwaHtml } from "./remotePwa.js";
 import { modelRouter } from "./core/router.js";
+import { MobileGateway } from "./core/mobileGateway.js";
+import { MobileTaskEngine } from "./core/mobileTaskEngine.js";
+import { validateToken, pairDevice, revokeDevice, getDeviceQuotaUsage, DEFAULT_PAIRING_CODE, seedPairingCode } from "./auth/authService.js";
 
 // Load .env searching current and parent directories
 let envDir = process.cwd();
@@ -28,6 +32,8 @@ for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
 const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
 const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
+let mobileGateway: MobileGateway | undefined;
+let mobileTaskEngine: MobileTaskEngine | undefined;
 
 await fastify.register(cors, {
   // Only the local desktop development renderer needs browser access. The
@@ -200,6 +206,11 @@ fastify.get("/api/audit", async (request) => {
   return eventBus.getRecentEvents(limit);
 });
 
+fastify.get("/api/mobile/audit", async (request) => {
+  const limit = (request.query as any)?.limit ? parseInt((request.query as any).limit, 10) : 100;
+  return mobileTaskEngine?.recentAudit(limit) ?? [];
+});
+
 fastify.get("/api/memory", async () => {
   return memoryPalace.retrieve("", 50);
 });
@@ -342,6 +353,71 @@ fastify.post("/api/remote/pair", async (request, reply) => {
   return reply.status(401).send({ error: "Invalid pairing code or token." });
 });
 
+// ── Device pairing (single‑use code → session token) ────────────────────
+// POST /api/device/pair
+// Body: { code: "vanessa-2026-11-05-abcd1234" }
+// Returns: { success: true, deviceId, token } or { success: false, reason }
+// The pairing code is taken from .env PAIRING_CODE (or generated randomly on first start).
+// After first successful pair the code is consumed and cannot be reused.
+fastify.post("/api/device/pair", async (request, reply) => {
+  const body = request.body as { code?: string };
+  const code = typeof body?.code === "string" ? body.code : undefined;
+  const pairResult = pairDevice(code ?? DEFAULT_PAIRING_CODE);
+  if (!pairResult) {
+    return reply.status(400).send({ success: false, reason: "INVALID_OR_EXPIRED_CODE" });
+  }
+  return reply.send({ success: true, deviceId: pairResult.deviceId, token: pairResult.token });
+});
+
+// GET /api/device/usage — quota display for the paired device
+// Requires a valid Bearer token (enforced by the preHandler hook).
+fastify.get("/api/device/usage", async (request, reply) => {
+  const deviceId = (request.body as any)?.deviceId;
+  if (!deviceId) {
+    return reply.status(401).send({ error: "UNAUTHORIZED_DEVICE" });
+  }
+  const usage = getDeviceQuotaUsage(deviceId);
+  return reply.send({ deviceId, ...usage });
+});
+
+fastify.post("/api/device/revoke", async (request, reply) => {
+  const body = request.body as { deviceId?: string };
+  const deviceId = body?.deviceId || (request.body as any)?.deviceId;
+  if (!deviceId) {
+    return reply.status(400).send({ error: "MISSING_DEVICE_ID" });
+  }
+  const ok = revokeDevice(deviceId);
+  return reply.send({ success: ok });
+});
+
+// POST /api/device/usage/report — report characters consumed by a voice session
+// Body: { charsUsed: number }
+// Requires a valid Bearer token (enforced by the preHandler hook).
+fastify.post("/api/device/usage/report", async (request, reply) => {
+  const body = request.body as { charsUsed?: number };
+  const deviceId = (request.body as any)?.deviceId;
+  if (!deviceId) {
+    return reply.status(401).send({ error: "UNAUTHORIZED_DEVICE" });
+  }
+  const chars = Number(body?.charsUsed) || 0;
+  if (chars <= 0) {
+    return reply.status(400).send({ error: "INVALID_CHARS_USED" });
+  }
+  const result = validateToken(
+    (request.headers.authorization || "").startsWith("Bearer ")
+      ? (request.headers.authorization as string).slice(7)
+      : "",
+    chars
+  );
+  if (!result.valid) {
+    return reply.status(401).send({ error: result.reason || "INVALID_TOKEN" });
+  }
+  const usage = getDeviceQuotaUsage(result.deviceId);
+  return reply.send({ deviceId: result.deviceId, ...usage });
+});
+
+// POST /api/device/revoke — revoke a device's session token
+
 fastify.post("/api/remote/command", async (request, reply) => {
   const body = request.body as { command: string; token?: string; language?: string };
   if (!remoteAccessEnabled) {
@@ -402,6 +478,29 @@ fastify.post("/api/remote/reject", async (request, reply) => {
   }
   const task = await orchestrator.reject(body.taskId);
   return reply.send({ success: !!task, task });
+});
+
+// ── Session token validation ────────────────────────────────────────────
+// Seed the single‑use pairing code at startup so the first device can pair.
+seedPairingCode();
+
+// Fastify preHandler hook that validates a Bearer token on every request.
+// If the token is present but invalid/expired the request is rejected with
+// 401.  If no token is present the request is allowed through (some routes
+// like /api/device/pair and /health don't need a token).
+// The validated deviceId is attached to request.body.deviceId for handlers.
+fastify.addHook("preHandler", async (request, reply) => {
+  const authorization = request.headers.authorization;
+  const bearerToken = typeof authorization === "string" && authorization.startsWith("Bearer ")
+    ? authorization.slice(7)
+    : undefined;
+  if (!bearerToken) return; // no token → allow through
+  const result = validateToken(bearerToken);
+  if (result.valid) {
+    ;(request as any).body = { ...(request.body || {}), deviceId: result.deviceId };
+    return;
+  }
+  reply.status(401).send({ error: result.reason || "INVALID_TOKEN" });
 });
 
 // Serve Mobile Companion Phone PWA
@@ -470,6 +569,39 @@ export async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: "127.0.0.1" });
     console.log(`[Vanessa Orchestrator] Online at http://127.0.0.1:${PORT}`);
+    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, ephemeralResult }) => {
+      mobileGateway?.publishTask({ ...task, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
+      const auditRow = mobileTaskEngine?.recentAudit(100).find((row: any) => row.taskId === task.taskId && row.state === task.state) as any;
+      eventBus.emitEvent("audit:log", {
+        id: `mobile-${task.taskId}-${task.state}`,
+        timestamp: Date.now(), taskId: task.taskId, source: "phone", agent: "mobile_gateway", action: task.tool,
+        permission: task.state === "awaiting_confirm" ? "blocked" : "allowed",
+        status: task.state === "done" ? "success" : ["failed", "timed_out"].includes(task.state) ? "error" : task.state === "cancelled" ? "blocked" : "info",
+        details: { state: task.state, ...(auditRow ? { args: auditRow.args, ...(auditRow.resultSummary ? { summary: auditRow.resultSummary } : {}) } : {}), ...(task.error ? { error: task.error } : {}) },
+      });
+    } });
+    if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true") {
+      const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
+      if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");
+      const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+      const octets = host.split(".").map(Number);
+      const tailscaleAddress = isIPv4(host) && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+      if (!loopback && (!tailscaleAddress || process.env.VANESSA_MOBILE_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE !== "true")) {
+        throw new Error("Remote binding requires a Tailscale IPv4 address and explicit unauthenticated Phase 2 opt-in; keep this disabled until pairing is implemented.");
+      }
+      const port = Number(process.env.VANESSA_MOBILE_GATEWAY_PORT || "4320");
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid mobile gateway port.");
+      mobileGateway = new MobileGateway({
+        host, port,
+        getManifest: () => mobileTaskEngine!.getManifest(),
+        submitTask: (message, clientId) => mobileTaskEngine!.submit({ requestId: message.id, idempotencyKey: message.idempotencyKey, tool: message.tool, args: message.args, deviceId: clientId }),
+        cancelTask: (taskId) => mobileTaskEngine!.cancel(taskId),
+        confirmTask: (message) => mobileTaskEngine!.confirm(message),
+      });
+      const socketServer = mobileGateway.createServer();
+      socketServer.on("listening", () => console.log(`[Vanessa Mobile Gateway] ws://${host}:${port}`));
+      socketServer.on("error", (error) => console.error(`[Vanessa Mobile Gateway] ${error.message}`));
+    }
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
