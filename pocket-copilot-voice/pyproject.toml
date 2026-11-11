@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pocket-copilot-voice"
+version = "0.1.0"
+description = "Proposal-only voice action contract and synthetic SFT/evaluation data tools"
+requires-python = ">=3.10"
+dependencies = ["jsonschema>=4.20,<5"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+pocket-copilot-generate = "pocket_copilot_voice.generate:main"
+pocket-copilot-evaluate = "pocket_copilot_voice.evaluate:main"
+pocket-copilot-format-sft = "pocket_copilot_voice.format_sft:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+pocket_copilot_voice = ["schemas/*.json"]

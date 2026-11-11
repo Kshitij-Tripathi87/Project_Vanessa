@@ -45,6 +45,9 @@ __pycache__/
 target/
 **/target/
 
+# Model weights (large binaries, re-download with pocket-copilot download_models.py)
+*.gguf
+
 # Media, database and temporary artifacts
 *.mp3
 *.wav

@@ -1,0 +1,1433 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pocket-copilot.local/schemas/action.schema.json",
+  "title": "Pocket Co-pilot On-device Action Interpretation Contract",
+  "description": "Proposal-only contract. The on-device model interprets a transcript; trusted host policy remains the sole authority for state resolution, approval, and execution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision",
+    "action",
+    "clarification",
+    "handoff",
+    "refusal",
+    "interpretation_confidence",
+    "authority",
+    "host_required",
+    "execution_permitted"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "pocket-copilot.action/v1"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "propose_action",
+        "clarify",
+        "handoff",
+        "refuse",
+        "no_action"
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/action"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "clarification": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/clarification"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "handoff": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/handoff"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "refusal": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/refusal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "interpretation_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Model estimate for abstention/evaluation only; never an authorization signal."
+    },
+    "authority": {
+      "const": "none"
+    },
+    "host_required": {
+      "const": true
+    },
+    "execution_permitted": {
+      "const": false
+    }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_type",
+        "raw_mention",
+        "canonical_name"
+      ],
+      "properties": {
+        "entity_type": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "service",
+                "alert"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "raw_mention": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exact entity text grounded in the transcript."
+        },
+        "canonical_name": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only from an exact/alias match in the supplied cached catalog; the host must resolve it again."
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "target",
+        "parameters",
+        "missing_slots"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "get_service_status",
+            "list_services",
+            "get_recent_logs",
+            "get_metrics",
+            "run_diagnostic",
+            "restart_service",
+            "scale_service",
+            "deploy_release",
+            "rollback_release",
+            "create_incident",
+            "acknowledge_alert",
+            "silence_alert"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "missing_slots": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "target",
+              "target_resolution",
+              "window_minutes",
+              "metrics",
+              "diagnostic_type",
+              "replicas",
+              "version",
+              "environment",
+              "title",
+              "severity",
+              "alert_id",
+              "duration_minutes",
+              "transcript_confirmation"
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "get_service_status"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/emptyParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "list_services"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/listServicesParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "get_recent_logs"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/logParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "get_metrics"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/metricsParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "run_diagnostic"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/diagnosticParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "restart_service"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/restartParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "scale_service"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/scaleParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "deploy_release"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/releaseParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "rollback_release"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/releaseParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "create_incident"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/incidentParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "acknowledge_alert"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/emptyParameters"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "silence_alert"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parameters": {
+                "$ref": "#/$defs/silenceParameters"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "emptyParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "listServicesParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "degraded",
+            "stopped",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "logParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "window_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "max_lines": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 200
+        }
+      }
+    },
+    "metricsParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "cpu_percent",
+              "memory_percent",
+              "request_rate",
+              "error_rate",
+              "p95_latency_ms"
+            ]
+          }
+        },
+        "window_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        }
+      }
+    },
+    "diagnosticParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "type": "string",
+          "enum": [
+            "health",
+            "connectivity",
+            "dependencies",
+            "capacity"
+          ]
+        }
+      }
+    },
+    "restartParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "scaleParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      }
+    },
+    "releaseParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "environment": {
+          "type": "string",
+          "enum": [
+            "development",
+            "staging",
+            "production"
+          ]
+        }
+      }
+    },
+    "incidentParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "silenceParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        }
+      }
+    },
+    "clarification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question",
+        "reason"
+      ],
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing_required_slot",
+            "ambiguous_reference",
+            "low_asr_confidence",
+            "ambiguous_command"
+          ]
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "needs_host_reasoning",
+            "needs_live_state",
+            "unsupported_capability",
+            "low_interpretation_confidence"
+          ]
+        }
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "secret_exfiltration",
+            "policy_bypass",
+            "unsupported_destructive_action",
+            "unsafe_request"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/action"
+              },
+              {
+                "properties": {
+                  "missing_slots": {
+                    "maxItems": 0
+                  }
+                },
+                "required": [
+                  "missing_slots"
+                ]
+              }
+            ]
+          },
+          "clarification": {
+            "type": "null"
+          },
+          "handoff": {
+            "type": "null"
+          },
+          "refusal": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "clarify"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/action"
+              },
+              {
+                "properties": {
+                  "missing_slots": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "missing_slots"
+                ]
+              }
+            ]
+          },
+          "clarification": {
+            "$ref": "#/$defs/clarification"
+          },
+          "handoff": {
+            "type": "null"
+          },
+          "refusal": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "handoff"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "type": "null"
+          },
+          "clarification": {
+            "type": "null"
+          },
+          "handoff": {
+            "$ref": "#/$defs/handoff"
+          },
+          "refusal": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "refuse"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "type": "null"
+          },
+          "clarification": {
+            "type": "null"
+          },
+          "handoff": {
+            "type": "null"
+          },
+          "refusal": {
+            "$ref": "#/$defs/refusal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "no_action"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "type": "null"
+          },
+          "clarification": {
+            "type": "null"
+          },
+          "handoff": {
+            "type": "null"
+          },
+          "refusal": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "get_service_status"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "list_services"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "type": "null"
+                  },
+                  "raw_mention": {
+                    "type": "null"
+                  },
+                  "canonical_name": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "get_recent_logs"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "window_minutes"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "get_metrics"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "metrics"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "run_diagnostic"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "check"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "restart_service"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "scale_service"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "replicas"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "deploy_release"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "version",
+                  "environment"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "rollback_release"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "version",
+                  "environment"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "service"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "create_incident"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "title",
+                  "severity"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "type": "null"
+                  },
+                  "raw_mention": {
+                    "type": "null"
+                  },
+                  "canonical_name": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "acknowledge_alert"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "alert"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "propose_action"
+          },
+          "action": {
+            "properties": {
+              "name": {
+                "const": "silence_alert"
+              }
+            }
+          }
+        },
+        "required": [
+          "decision",
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": {
+              "parameters": {
+                "required": [
+                  "duration_minutes"
+                ]
+              },
+              "target": {
+                "properties": {
+                  "entity_type": {
+                    "const": "alert"
+                  },
+                  "raw_mention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "canonical_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "entity_type",
+                  "raw_mention",
+                  "canonical_name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

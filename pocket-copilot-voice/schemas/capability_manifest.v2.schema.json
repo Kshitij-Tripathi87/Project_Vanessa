@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pocket-copilot.local/schemas/capability_manifest.v2.schema.json",
+  "title": "Pocket Co-pilot Laptop Capability Manifest v2",
+  "description": "Full capability registry published by the laptop agent. The phone receives a shortlist (subset) per request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "generated_at",
+    "capabilities"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing version. Incremented on any capability add/remove/change."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this manifest was generated."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability_id",
+          "version",
+          "display_name",
+          "description",
+          "adapter_id",
+          "adapter_version",
+          "platforms",
+          "input_schema",
+          "output_schema",
+          "required_scopes",
+          "risk",
+          "approval",
+          "timeout_ms",
+          "supports_preview",
+          "supports_cancel",
+          "health",
+          "availability_reason",
+          "data_access_scope",
+          "network_policy",
+          "side_effect_class",
+          "rollback_support",
+          "idempotency",
+          "max_output_bytes"
+        ],
+        "properties": {
+          "capability_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_*]*)+$",
+            "description": "Stable namespaced identifier (e.g., filesystem.search, project.run_tests, browser.open_url)."
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$",
+            "description": "Semantic version of this capability definition."
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Description for the model. This is untrusted data, not instructions."
+          },
+          "adapter_id": {
+            "type": "string",
+            "description": "Internal adapter identifier (e.g., filesystem-adapter, workflo-runtime)."
+          },
+          "adapter_version": {
+            "type": "string",
+            "description": "Version of the adapter implementation."
+          },
+          "platforms": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["windows", "macos", "linux"] },
+            "minItems": 1,
+            "description": "Platforms where this capability is available."
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "JSON Schema for input arguments. Must have additionalProperties: false."
+          },
+          "output_schema": {
+            "type": "object",
+            "description": "JSON Schema for output (for model awareness and validation)."
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Scopes the device must have to invoke this capability."
+          },
+          "risk": {
+            "type": "string",
+            "enum": ["read_only", "low_impact", "modification", "sensitive", "high_impact"],
+            "description": "Risk classification for policy enforcement."
+          },
+          "approval": {
+            "type": "string",
+            "enum": ["none", "preview", "explicit", "strong"],
+            "description": "Approval requirement: none=auto, preview=show preview, explicit=user confirm, strong=biometric+laptop confirm."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 1800000,
+            "default": 30000
+          },
+          "supports_preview": {
+            "type": "boolean",
+            "default": false
+          },
+          "supports_cancel": {
+            "type": "boolean",
+            "default": false
+          },
+          "health": {
+            "type": "string",
+            "enum": ["ready", "degraded", "unavailable"],
+            "default": "ready"
+          },
+          "availability_reason": {
+            "type": "string",
+            "description": "Human-readable reason if health is not ready."
+          },
+          "data_access_scope": {
+            "type": "string",
+            "enum": ["none", "approved_roots", "workspace", "user_home", "system"],
+            "description": "Highest data access level this capability requires."
+          },
+          "network_policy": {
+            "type": "string",
+            "enum": ["none", "local_only", "restricted", "unrestricted"],
+            "default": "none",
+            "description": "Network access granted to the capability's worker process."
+          },
+          "side_effect_class": {
+            "type": "string",
+            "enum": ["none", "file_write", "process_spawn", "network_request", "ui_interaction", "system_state_change"],
+            "description": "Class of side effects for audit and policy."
+          },
+          "rollback_support": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the capability supports rollback on failure."
+          },
+          "idempotency": {
+            "type": "string",
+            "enum": ["none", "at_most_once", "exactly_once"],
+            "default": "none",
+            "description": "Idempotency guarantee for safe retries."
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 104857600,
+            "default": 1048576,
+            "description": "Maximum output size in bytes."
+          }
+        }
+      }
+    }
+  }
+}

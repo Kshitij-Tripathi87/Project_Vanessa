@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pocket-copilot.local/schemas/action.v2.schema.json",
+  "title": "Pocket Co-pilot On-device Controller Output v2",
+  "description": "Proposal-only contract for the mobile controller model. The model interprets a transcript and capability shortlist into exactly one structured decision. It never executes, approves, or claims success. All operations require host resolution and policy enforcement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision",
+    "invocation",
+    "delegation",
+    "clarification",
+    "refusal",
+    "interpretation_confidence",
+    "authority",
+    "host_required",
+    "execution_permitted"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "pocket-copilot.action/v2"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "invoke_capability",
+        "delegate_task",
+        "clarify",
+        "refuse",
+        "no_action"
+      ],
+      "description": "The single decision for this request."
+    },
+    "invocation": {
+      "oneOf": [
+        { "$ref": "#/$defs/invocation" },
+        { "type": "null" }
+      ],
+      "description": "Present when decision is invoke_capability; null otherwise."
+    },
+    "delegation": {
+      "oneOf": [
+        { "$ref": "#/$defs/delegation" },
+        { "type": "null" }
+      ],
+      "description": "Present when decision is delegate_task; null otherwise."
+    },
+    "clarification": {
+      "oneOf": [
+        { "$ref": "#/$defs/clarification" },
+        { "type": "null" }
+      ],
+      "description": "Present when decision is clarify; null otherwise."
+    },
+    "refusal": {
+      "oneOf": [
+        { "$ref": "#/$defs/refusal" },
+        { "type": "null" }
+      ],
+      "description": "Present when decision is refuse; null otherwise."
+    },
+    "interpretation_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Model's confidence in its interpretation. Never an authorization signal."
+    },
+    "authority": {
+      "const": "none",
+      "description": "Invariant: the phone model has no authority."
+    },
+    "host_required": {
+      "const": true,
+      "description": "Invariant: every action requires host resolution."
+    },
+    "execution_permitted": {
+      "const": false,
+      "description": "Invariant: the phone model cannot permit execution."
+    }
+  },
+  "$defs": {
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "capability_version",
+        "arguments",
+        "missing_arguments",
+        "user_visible_summary"
+      ],
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_*]*)+$",
+          "description": "Must exactly match a capability_id from the request's capability_manifest."
+        },
+        "capability_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Must match the version from the manifest."
+        },
+        "arguments": {
+          "type": "object",
+          "description": "Typed arguments matching the capability's input_schema. Validated by host against capability manifest."
+        },
+        "missing_arguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of required arguments the model could not extract. Empty for invoke_capability; non-empty triggers clarify instead."
+        },
+        "user_visible_summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Concise human-readable description of what will be proposed to the host."
+        }
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_request",
+        "reason"
+      ],
+      "properties": {
+        "original_request": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "The complete user request to delegate to the laptop's planner."
+        },
+        "conversation_context_ref": {
+          "type": "string",
+          "description": "Optional reference to conversation context for the laptop planner."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "multi_step_task",
+            "missing_capability",
+            "complex_reasoning",
+            "needs_live_state",
+            "unsupported_capability",
+            "low_interpretation_confidence",
+            "needs_host_reasoning"
+          ],
+          "description": "Why the model chose to delegate rather than invoke a capability."
+        }
+      }
+    },
+    "clarification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question",
+        "reason",
+        "missing_argument_names"
+      ],
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Specific question to ask the user to resolve ambiguity or missing information."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing_required_argument",
+            "ambiguous_entity_reference",
+            "low_asr_confidence",
+            "ambiguous_command",
+            "transcript_confirmation_needed",
+            "capability_not_in_manifest"
+          ],
+          "description": "Category of clarification needed."
+        },
+        "missing_argument_names": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of arguments that could not be resolved (for missing_required_argument)."
+        },
+        "candidate_entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string" },
+              "display": { "type": "string" }
+            },
+            "required": ["type", "display"]
+          },
+          "description": "Candidate entities for user selection (for ambiguous_entity_reference)."
+        }
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "secret_exfiltration",
+            "policy_bypass",
+            "unsupported_destructive_action",
+            "unsafe_request",
+            "credential_request",
+            "persistence_attempt",
+            "security_control_bypass"
+          ],
+          "description": "Categorized refusal reason."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "User-facing explanation."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "decision": { "const": "invoke_capability" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "invocation": { "$ref": "#/$defs/invocation" },
+          "delegation": { "type": "null" },
+          "clarification": { "type": "null" },
+          "refusal": { "type": "null" }
+        },
+        "required": ["invocation"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "delegate_task" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "invocation": { "type": "null" },
+          "delegation": { "$ref": "#/$defs/delegation" },
+          "clarification": { "type": "null" },
+          "refusal": { "type": "null" }
+        },
+        "required": ["delegation"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "clarify" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "invocation": { "type": "null" },
+          "delegation": { "type": "null" },
+          "clarification": { "$ref": "#/$defs/clarification" },
+          "refusal": { "type": "null" }
+        },
+        "required": ["clarification"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "refuse" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "invocation": { "type": "null" },
+          "delegation": { "type": "null" },
+          "clarification": { "type": "null" },
+          "refusal": { "$ref": "#/$defs/refusal" }
+        },
+        "required": ["refusal"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "no_action" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "invocation": { "type": "null" },
+          "delegation": { "type": "null" },
+          "clarification": { "type": "null" },
+          "refusal": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": { "const": "invoke_capability" },
+          "invocation": { "properties": { "missing_arguments": { "minItems": 1 } } }
+        },
+        "required": ["decision", "invocation"]
+      },
+      "then": {
+        "properties": {
+          "decision": { "const": "clarify" }
+        }
+      }
+    }
+  ]
+}

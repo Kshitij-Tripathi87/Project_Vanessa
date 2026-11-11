@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pocket-copilot.local/schemas/proposal_envelope.v2.schema.json",
+  "title": "Pocket Co-pilot Proposal Envelope v2",
+  "description": "Transport envelope that binds the controller's decision to the request identity, laptop session, and manifest version. This is what the phone sends to the laptop over the authenticated channel.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "envelope_id",
+    "request_id",
+    "session_id",
+    "device_id",
+    "laptop_id",
+    "manifest_version",
+    "issued_at",
+    "expires_at",
+    "nonce",
+    "payload_hash",
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "2.0",
+      "description": "Protocol version for envelope compatibility."
+    },
+    "envelope_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this envelope."
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Must match the request_id from the original request."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Active laptop session identifier."
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Paired phone device identity (public key fingerprint)."
+    },
+    "laptop_id": {
+      "type": "string",
+      "description": "Paired laptop device identity (public key fingerprint)."
+    },
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Capability manifest version this proposal is bound to."
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Envelope creation timestamp (UTC)."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Envelope expiry timestamp (UTC). Short TTL to prevent replay."
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9+/=]+$",
+      "description": "Cryptographic nonce for replay prevention."
+    },
+    "payload_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the canonicalized payload for integrity."
+    },
+    "payload": {
+      "type": "object",
+      "description": "The controller's action.v2 decision object.",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "decision",
+        "invocation",
+        "delegation",
+        "clarification",
+        "refusal",
+        "interpretation_confidence",
+        "authority",
+        "host_required",
+        "execution_permitted"
+      ],
+      "properties": {
+        "schema_version": { "const": "pocket-copilot.action/v2" },
+        "decision": {
+          "type": "string",
+          "enum": ["invoke_capability", "delegate_task", "clarify", "refuse", "no_action"]
+        },
+        "invocation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capability_id", "capability_version", "arguments", "missing_arguments", "user_visible_summary"],
+              "properties": {
+                "capability_id": { "type": "string" },
+                "capability_version": { "type": "string" },
+                "arguments": { "type": "object" },
+                "missing_arguments": { "type": "array", "items": { "type": "string" } },
+                "user_visible_summary": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "delegation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["original_request", "reason"],
+              "properties": {
+                "original_request": { "type": "string" },
+                "conversation_context_ref": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "clarification": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["question", "reason", "missing_argument_names"],
+              "properties": {
+                "question": { "type": "string" },
+                "reason": { "type": "string" },
+                "missing_argument_names": { "type": "array", "items": { "type": "string" } },
+                "candidate_entities": { "type": "array" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "refusal": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "type": "string" },
+                "message": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "interpretation_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "authority": { "const": "none" },
+        "host_required": { "const": true },
+        "execution_permitted": { "const": false }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "description": "Ed25519 signature of the envelope (excluding signature field) by the device's private key."
+    }
+  }
+}

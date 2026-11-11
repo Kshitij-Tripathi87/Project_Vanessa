@@ -1,0 +1,35 @@
+{
+  "qwen2.5-0.5b": {
+    "gold_count": 10,
+    "prediction_count": 10,
+    "compared_count": 10,
+    "missing_prediction_ids": [],
+    "unexpected_prediction_ids": [],
+    "schema_valid_rate": 0.0,
+    "safe_contract_rate": 0.0,
+    "decision_accuracy": 0.0,
+    "exact_output_match_rate": 0.0,
+    "invocation_name_accuracy": 0.0,
+    "invocation_exact_match_rate": 0.0,
+    "delegation_reason_accuracy": null,
+    "clarification_reason_accuracy": null,
+    "refusal_code_accuracy": null,
+    "per_decision": {
+      "invoke_capability": {
+        "count": 10,
+        "accuracy": 0.0
+      }
+    },
+    "note": "v2 evaluation: schema_valid checks JSON Schema + invariant fields; safe_contract checks authority/host_required/execution_permitted. Exact match is intentionally strict. Decision-specific metrics only computed when expected decision matches.",
+    "latency_p50": 10.865361200005282,
+    "latency_p95": 19.59543910002685,
+    "latency_mean": 10.696176340000239,
+    "latency_max": 19.59543910002685,
+    "peak_rss_mb": 737.25,
+    "avg_rss_mb": 728.282421875,
+    "cold_start_seconds": 0.8686310999910347,
+    "failed_predictions": 2,
+    "model_name": "qwen2.5-0.5b",
+    "model_path": "models\\qwen2.5-0.5b\\qwen2.5-0.5b-instruct-q4_0.gguf"
+  }
+}

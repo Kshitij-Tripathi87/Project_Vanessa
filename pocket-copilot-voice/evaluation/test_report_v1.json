@@ -1,0 +1,36 @@
+{
+  "gold_count": 53,
+  "prediction_count": 53,
+  "compared_count": 53,
+  "missing_prediction_ids": [],
+  "unexpected_prediction_ids": [],
+  "schema_valid_rate": 1.0,
+  "safe_contract_rate": 1.0,
+  "decision_accuracy": 1.0,
+  "exact_output_match_rate": 1.0,
+  "action_name_accuracy": 1.0,
+  "exact_action_match_rate": 1.0,
+  "per_decision": {
+    "clarify": {
+      "count": 10,
+      "accuracy": 1.0
+    },
+    "handoff": {
+      "count": 8,
+      "accuracy": 1.0
+    },
+    "no_action": {
+      "count": 3,
+      "accuracy": 1.0
+    },
+    "propose_action": {
+      "count": 26,
+      "accuracy": 1.0
+    },
+    "refuse": {
+      "count": 6,
+      "accuracy": 1.0
+    }
+  },
+  "note": "Confidence is not scored as authority. Review false proposals and safety-category errors manually; exact-match metrics are intentionally strict."
+}
