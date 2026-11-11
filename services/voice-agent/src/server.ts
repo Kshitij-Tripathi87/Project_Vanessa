@@ -6,6 +6,7 @@ import { VanessaVoiceSession } from "./session/voiceSession.js";
 import { PcmFrameAccumulator } from "./audio/capture.js";
 import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
 import { getVoiceUsageBudget } from "./usageBudget.js";
+import { checkDeviceQuota, reportUsage } from "./quotaGuard.js";
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -207,6 +208,17 @@ export async function createVoiceAgentServer() {
       socket.close(1008, "Origin not allowed");
       return;
     }
+    const orchestratorUrl = process.env.VANESSA_ORCHESTRATOR_URL || "http://127.0.0.1:4319";
+    // Read the Bearer token from the query string; the preHandler hook on the
+    // orchestrator will validate it.  The client attaches it via
+    // Authorization: Bearer <token> in the WebSocket upgrade handshake.
+    // We also look at query params as a fallback.
+    const authHeader = req.headers.authorization;
+    const sessionToken = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : undefined;
+    const sessionDeviceToken = sessionToken;
+
     const session = new VanessaVoiceSession({
       handlers: {
         onError: (message) => sendJson(socket, { type: "voice_error", message }),
@@ -219,6 +231,12 @@ export async function createVoiceAgentServer() {
         },
         onFinalTranscript: (text, requestId) => {
           console.log(`[Voice] transcript committed request=${requestId} characters=${text.length}`);
+          // Report character usage back to the orchestrator so the per-device
+          // ledger stays accurate.  Fire-and-forget; the local UsageBudget
+          // remains the source of truth during local testing.
+          if (sessionDeviceToken) {
+            reportUsage(orchestratorUrl, sessionDeviceToken, text.length);
+          }
           sendJson(socket, { type: "transcript_final", text, requestId });
         },
         onAudioChunkOut: (chunk) => {
