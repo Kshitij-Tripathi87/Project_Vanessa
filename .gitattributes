@@ -1,0 +1,10 @@
+# The Gradle wrapper shell script must stay LF or it fails on Linux runners.
+apps/android/gradlew text eol=lf
+
+# Windows batch files stay CRLF.
+*.bat text eol=crlf
+
+# Binary generated artifacts
+*.jar binary
+*.png binary
+*.pptx binary
