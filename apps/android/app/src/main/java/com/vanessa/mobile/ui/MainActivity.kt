@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vanessa.mobile.R
 import com.vanessa.mobile.bridge.ConnectionState
+import com.vanessa.mobile.pairing.PairingStatus
 import com.vanessa.mobile.viewmodel.PairingViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -101,14 +102,14 @@ private fun PairingScreen(
 
         Text(
             text = when (state.status) {
-                PairingViewModel.Status.Idle -> "Not paired"
-                PairingViewModel.Status.CodeScanned -> "Pairing code captured"
-                PairingViewModel.Status.Error -> "Error"
+                PairingStatus.Idle -> "Not paired"
+                PairingStatus.CodeScanned -> "Pairing code captured"
+                PairingStatus.Error -> "Error"
             },
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = when (state.status) {
-                PairingViewModel.Status.Error -> MaterialTheme.colorScheme.error
+                PairingStatus.Error -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.onSurface
             }
         )
