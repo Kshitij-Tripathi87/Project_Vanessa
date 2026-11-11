@@ -8,3 +8,9 @@ apps/android/gradlew text eol=lf
 *.jar binary
 *.png binary
 *.pptx binary
+
+# Generated protocol artifacts are diffed by CI; keep them LF everywhere.
+apps/android/core/protocol/** text eol=lf
+packages/shared/schema/*.json text eol=lf
+packages/shared/fixtures/*.jsonl text eol=lf
+packages/protocol/schema/*.json text eol=lf
