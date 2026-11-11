@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { VanessaGateway } from "./gateway.js";
-import { MessageSigner } from "./messageSecurity.js";
+import { VanessaGateway, SignatureVerifier, PairingRedeemer } from "./gateway.js";
+import { MessageSigner, canonicalJson, computeSignature } from "./messageSecurity.js";
 import crypto from "crypto";
+
+/** Build a protocol-valid task.submit message. */
+function taskSubmit(overrides: Record<string, unknown> = {}) {
+  return {
+    v: 1 as const,
+    id: crypto.randomUUID(),
+    timestamp: Date.now(),
+    type: "task.submit" as const,
+    tool: "system_status",
+    args: { metric: "all" },
+    idempotencyKey: crypto.randomUUID(),
+    nonce: crypto.randomBytes(16).toString("hex"),
+    ...overrides,
+  };
+}
 
 test("Gateway: starts and stops cleanly", async () => {
   const gateway = new VanessaGateway({ port: 0 }); // Use port 0 for auto-assignment
@@ -123,22 +135,72 @@ test("Gateway: rate limits messages per device", async () => {
   await gateway.stop();
 });
 
-test("Gateway: verifies message signatures when verifier provided", async () => {
+test("Gateway: verifies signatures against the paired device the socket claims", async () => {
   const signer = new MessageSigner();
-  const secret = "test-secret";
+  const secrets = new Map<string, string>([
+    ["device_paired", "paired-secret"],
+    ["device_other", "other-secret"],
+  ]);
 
-  // Create a verifier that checks signatures. Identity comes from the
-  // connection-level device id, never from a field in the message body.
-  const verifier = async (deviceId: string, message: any) => {
-    if (!message.signature || !message.nonce) return null;
-    const result = signer.verify({
-      payload: message,
-      signature: message.signature,
-      timestamp: message.timestamp,
-      nonce: message.nonce
-    }, secret);
-    return result.valid ? deviceId : null;
+  const verifier: SignatureVerifier = async (deviceId, message) => {
+    const secret = secrets.get(deviceId);
+    if (!secret) return null;
+    return signer.verify(message, secret).valid ? deviceId : null;
   };
+
+  const gateway = new VanessaGateway({ port: 0 }, verifier);
+  await gateway.start();
+
+  const accepted: string[] = [];
+  gateway.on("task-submit", ({ deviceId }: { deviceId: string }) => accepted.push(deviceId));
+
+  const port = gateway.getActualPort();
+  const WebSocket = (await import('ws')).default;
+
+  const errors: string[] = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/?device=device_paired`);
+  await new Promise<void>((resolve) => ws.on('open', resolve));
+  ws.on("message", (data) => {
+    const msg = JSON.parse(data.toString());
+    if (msg.type === "task.error") errors.push(msg.code);
+  });
+
+  // 1. A message with no signature field fails schema validation outright:
+  //    `signature` is required by task.submit, so it never reaches the verifier.
+  ws.send(JSON.stringify(taskSubmit()));
+  await new Promise<void>(resolve => setTimeout(resolve, 100));
+
+  // 2. Signed with the wrong device's secret is rejected.
+  const wrong = signer.sign(taskSubmit(), "other-secret");
+  ws.send(JSON.stringify(wrong));
+  await new Promise<void>(resolve => setTimeout(resolve, 100));
+
+  // 3. Signed with this device's secret is accepted by the verifier and
+  //    reaches the task handler. This is the behaviour the old contract made
+  //    impossible: the signature is computed over the message minus
+  //    `signature`, so verification can reproduce it.
+  const good = signer.sign(taskSubmit(), "paired-secret");
+  ws.send(JSON.stringify(good));
+  await new Promise<void>(resolve => setTimeout(resolve, 100));
+
+  assert.deepEqual(errors, ["INVALID_MESSAGE", "UNAUTHORIZED_DEVICE"]);
+  assert.equal(accepted.length, 1, "Validly signed message should reach task handling");
+
+  // 4. Replaying the same signed message is rejected.
+  ws.send(JSON.stringify(good));
+  await new Promise<void>(resolve => setTimeout(resolve, 100));
+  assert.equal(errors.length, 3);
+  assert.equal(errors[2], "UNAUTHORIZED_DEVICE");
+  assert.equal(accepted.length, 1, "Replayed message must not be executed");
+
+  ws.close();
+  await gateway.stop();
+});
+
+test("Gateway: rejects signed messages when the socket claims no device", async () => {
+  const signer = new MessageSigner();
+  const verifier: SignatureVerifier = async (deviceId, message) =>
+    signer.verify(message, "paired-secret").valid ? deviceId : null;
 
   const gateway = new VanessaGateway({ port: 0 }, verifier);
   await gateway.start();
@@ -146,142 +208,217 @@ test("Gateway: verifies message signatures when verifier provided", async () => 
   const port = gateway.getActualPort();
   const WebSocket = (await import('ws')).default;
 
+  const errors: string[] = [];
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   await new Promise<void>((resolve) => ws.on('open', resolve));
-
-  let unauthorized = false;
-  let accepted = false;
-
-  ws.on('message', (data) => {
+  ws.on("message", (data) => {
     const msg = JSON.parse(data.toString());
-    if (msg.type === "task.accepted") {
-      accepted = true;
-    } else if (msg.type === "task.error" && msg.code === "UNAUTHORIZED_DEVICE") {
-      unauthorized = true;
-    }
+    if (msg.type === "task.error") errors.push(msg.code);
   });
 
-  // Send a message with a garbage signature that still passes schema
-  // validation (signature is a non-empty string). The verifier should
-  // recompute the HMAC and reject it as UNAUTHORIZED_DEVICE.
-  const badPayload = {
-    v: 1,
-    id: crypto.randomUUID(),
-    timestamp: Date.now(),
-    type: "task.submit",
-    tool: "system_status",
-    args: { metric: "all" },
-    idempotencyKey: "test",
-    nonce: crypto.randomBytes(16).toString('hex')
-  };
-  // Sign with wrong secret so the HMAC won't match
-  const { payload, signature, nonce } = signer.sign(badPayload, "wrong-secret");
-  ws.send(JSON.stringify({ ...payload, signature, nonce }));
+  ws.send(JSON.stringify(signer.sign(taskSubmit(), "paired-secret")));
+  await new Promise<void>(resolve => setTimeout(resolve, 150));
 
-  await new Promise<void>(resolve => setTimeout(resolve, 200));
-
-  // Send a validly-signed message. No tool execution is wired up in the
-  // bare gateway, so it is accepted by the verifier but produces no accept.
-  const goodMessage = {
-    v: 1,
-    id: crypto.randomUUID(),
-    timestamp: Date.now(),
-    type: "task.submit",
-    tool: "system_status",
-    args: { metric: "all" },
-    idempotencyKey: "test2"
-  };
-  const goodSigned = signer.sign(goodMessage, secret);
-  ws.send(JSON.stringify({ ...goodSigned.payload, signature: goodSigned.signature, nonce: goodSigned.nonce }));
-
-  await new Promise<void>(resolve => setTimeout(resolve, 200));
-
-  assert.equal(unauthorized, true, 'Bad signature should be rejected with UNAUTHORIZED_DEVICE');
-  assert.equal(accepted, false, 'Bare gateway has no tool execution wired up');
+  assert.deepEqual(errors, ["UNAUTHORIZED_DEVICE"]);
 
   ws.close();
   await gateway.stop();
 });
 
+test("Gateway: POST /pair redeems a pairing code exactly once", async () => {
+  const codes = new Map<string, { deviceId: string; secret: string }>([
+    ["ABCD-1234", { deviceId: "device_new", secret: "fresh-secret" }],
+  ]);
+
+  let seenDeviceName: string | undefined;
+  const redeemer: PairingRedeemer = async ({ pairingCode, deviceName }) => {
+    seenDeviceName = deviceName;
+    const grant = codes.get(pairingCode);
+    if (!grant) return null;
+    codes.delete(pairingCode); // single use
+    return { ...grant, pcName: "Test-PC" };
+  };
+
+  const gateway = new VanessaGateway({ port: 0 }, undefined, redeemer);
+  await gateway.start();
+  const base = `http://127.0.0.1:${gateway.getActualPort()}`;
+
+  const ok = await fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "ABCD-1234", deviceName: "Pixel" }),
+  });
+  assert.equal(ok.status, 200);
+  const grant = await ok.json() as { deviceId: string; secret: string; pcName?: string };
+  assert.equal(grant.deviceId, "device_new");
+  assert.equal(grant.secret, "fresh-secret");
+  assert.equal(grant.pcName, "Test-PC");
+  assert.equal(seenDeviceName, "Pixel");
+  assert.equal(ok.headers.get("cache-control"), "no-store");
+
+  // The same code cannot be redeemed twice.
+  const reuse = await fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "ABCD-1234" }),
+  });
+  assert.equal(reuse.status, 401);
+  assert.deepEqual(await reuse.json(), { error: "invalid_or_expired_pairing_code" });
+
+  // Unknown code looks identical to an expired one.
+  const unknown = await fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "ZZZZ-0000" }),
+  });
+  assert.equal(unknown.status, 401);
+
+  // Malformed requests are rejected without reaching the redeemer.
+  const badJson = await fetch(`${base}/pair`, { method: "POST", body: "{" });
+  assert.equal(badJson.status, 400);
+  const emptyCode = await fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "   " }),
+  });
+  assert.equal(emptyCode.status, 400);
+
+  // Only POST is accepted.
+  const wrongMethod = await fetch(`${base}/pair`, { method: "GET" });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.get("allow"), "POST");
+
+  await gateway.stop();
+});
+
+test("Gateway: /pair is unavailable without a pairing redeemer", async () => {
+  const gateway = new VanessaGateway({ port: 0 });
+  await gateway.start();
+  const base = `http://127.0.0.1:${gateway.getActualPort()}`;
+
+  const res = await fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "ANY-CODE" }),
+  });
+  assert.equal(res.status, 404);
+  assert.deepEqual(await res.json(), { error: "pairing_unavailable" });
+
+  const health = await fetch(`${base}/health`);
+  assert.equal(health.status, 200);
+  assert.equal((await health.json() as any).pairing, "disabled");
+
+  await gateway.stop();
+});
+
+test("Gateway: rate limits pairing attempts per address", async () => {
+  const redeemer: PairingRedeemer = async () => null;
+  const gateway = new VanessaGateway({ port: 0, pairingAttemptsPerMinute: 2 }, undefined, redeemer);
+  await gateway.start();
+  const base = `http://127.0.0.1:${gateway.getActualPort()}`;
+
+  const attempt = () => fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairingCode: "WRONG" }),
+  });
+
+  assert.equal((await attempt()).status, 401);
+  assert.equal((await attempt()).status, 401);
+  const limited = await attempt();
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("retry-after"), "60");
+
+  await gateway.stop();
+});
+
+test("canonicalJson: key order does not change the signed bytes", () => {
+  const a = { type: "test", timestamp: 1, nested: { b: 2, a: 1 }, list: [{ z: 1, y: 2 }] };
+  const b = { list: [{ y: 2, z: 1 }], nested: { a: 1, b: 2 }, timestamp: 1, type: "test" };
+
+  assert.equal(canonicalJson(a), canonicalJson(b));
+  assert.equal(computeSignature(a, "secret"), computeSignature(b, "secret"));
+  assert.equal(
+    canonicalJson(a),
+    '{"list":[{"y":2,"z":1}],"nested":{"a":1,"b":2},"timestamp":1,"type":"test"}'
+  );
+});
+
 test("MessageSigner: signs and verifies messages", () => {
   const signer = new MessageSigner();
-  const secret = "test-secret";
-  const payload = { type: "test", data: "hello" };
+  const message = taskSubmit();
 
-  const signed = signer.sign(payload, secret);
+  const signed = signer.sign(message, "test-secret");
   assert.ok(signed.signature);
-  assert.ok(signed.nonce);
-  assert.ok(signed.timestamp);
+  assert.match(signed.signature, /^[0-9a-f]{64}$/);
 
-  const result = signer.verify(signed, secret);
+  const result = signer.verify(signed, "test-secret");
   assert.equal(result.valid, true);
+});
+
+test("MessageSigner: does not sign over its own signature field", () => {
+  const signer = new MessageSigner();
+  const message = taskSubmit();
+
+  const again = signer.sign({ ...message, signature: "ignored-value" }, "test-secret");
+  assert.equal(again.signature, signer.sign(message, "test-secret").signature);
+  assert.equal(signer.verify(again, "test-secret").valid, true);
 });
 
 test("MessageSigner: rejects tampered messages", () => {
   const signer = new MessageSigner();
-  const secret = "test-secret";
-  const payload = { type: "test", data: "hello" };
+  const message = taskSubmit();
 
-  const signed = signer.sign(payload, secret);
+  const signed = signer.sign(message, "test-secret");
+  const tampered = { ...signed, tool: "shutdown_pc" };
 
-  // Tamper with the payload
-  const tampered = { ...signed, payload: { ...payload, data: "tampered" } };
-  const result = signer.verify(tampered, secret);
+  const result = signer.verify(tampered, "test-secret");
+  assert.equal(result.valid, false);
+  assert.equal(result.error, "invalid_signature");
+});
+
+test("MessageSigner: rejects messages signed with another secret", () => {
+  const signer = new MessageSigner();
+  const signed = signer.sign(taskSubmit(), "test-secret");
+
+  const result = signer.verify(signed, "different-secret");
   assert.equal(result.valid, false);
   assert.equal(result.error, "invalid_signature");
 });
 
 test("MessageSigner: rejects replayed nonces", () => {
   const signer = new MessageSigner();
-  const secret = "test-secret";
-  const payload = { type: "test", data: "hello" };
+  const signed = signer.sign(taskSubmit(), "test-secret");
 
-  const signed = signer.sign(payload, secret);
+  assert.equal(signer.verify(signed, "test-secret").valid, true);
 
-  // First verification should succeed
-  const result1 = signer.verify(signed, secret);
-  assert.equal(result1.valid, true);
-
-  // Second verification with same nonce should fail
-  const result2 = signer.verify(signed, secret);
+  const result2 = signer.verify(signed, "test-secret");
   assert.equal(result2.valid, false);
   assert.equal(result2.error, "replayed_message");
 });
 
 test("MessageSigner: rejects stale messages (>60s)", () => {
   const signer = new MessageSigner({ maxMessageAge: 60000 });
-  const secret = "test-secret";
-  const payload = { type: "test", data: "hello" };
+  const signed = signer.sign(taskSubmit({ timestamp: Date.now() - 70000 }), "test-secret");
 
-  // Create a message from 70 seconds ago
-  const oldTimestamp = Date.now() - 70000;
-  const oldSigned = {
-    payload,
-    signature: signer.sign(payload, secret).signature,
-    timestamp: oldTimestamp,
-    nonce: signer.sign(payload, secret).nonce
-  };
-
-  const result = signer.verify(oldSigned, secret);
+  const result = signer.verify(signed, "test-secret");
   assert.equal(result.valid, false);
   assert.equal(result.error, "stale_message");
 });
 
 test("MessageSigner: rejects future messages (>5s skew)", () => {
   const signer = new MessageSigner();
-  const secret = "test-secret";
-  const payload = { type: "test", data: "hello" };
+  const signed = signer.sign(taskSubmit({ timestamp: Date.now() + 10000 }), "test-secret");
 
-  // Create a message from 10 seconds in the future
-  const futureTimestamp = Date.now() + 10000;
-  const futureSigned = {
-    payload,
-    signature: signer.sign(payload, secret).signature,
-    timestamp: futureTimestamp,
-    nonce: signer.sign(payload, secret).nonce
-  };
-
-  const result = signer.verify(futureSigned, secret);
+  const result = signer.verify(signed, "test-secret");
   assert.equal(result.valid, false);
   assert.equal(result.error, "stale_message");
+});
+
+test("MessageSigner: rejects messages without a timestamp", () => {
+  const signer = new MessageSigner();
+  const message = { type: "test" };
+  const result = signer.verify({ ...message, signature: computeSignature(message, "s") }, "s");
+  assert.equal(result.valid, false);
+  assert.equal(result.error, "missing_timestamp");
 });

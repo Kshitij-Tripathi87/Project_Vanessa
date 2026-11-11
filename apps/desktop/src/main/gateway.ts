@@ -32,6 +32,19 @@ export type SignatureVerifier = (
   message: ProtocolMessage & { signature?: string; nonce?: string },
 ) => Promise<string | null>;
 
+/** Result of exchanging a short-lived pairing code for a device secret. */
+export interface PairingGrant {
+  deviceId: string;
+  secret: string;
+  pcName?: string;
+}
+
+export type PairingRedeemer = (input: {
+  pairingCode: string;
+  deviceName?: string;
+  remoteAddress: string;
+}) => Promise<PairingGrant | null>;
+
 interface GatewayConfig {
   port: number;
   host: string; // Network interface to bind to (Tailscale IP or 127.0.0.1)
@@ -40,6 +53,7 @@ interface GatewayConfig {
   messageTimeout: number; // ms
   maxMessagesPerSecond: number; // per-device sliding window
   maxPayload: number; // bytes, per-frame limit enforced by the WS library
+  pairingAttemptsPerMinute: number; // per-remote-address limit for POST /pair
 }
 
 const DEFAULT_CONFIG: GatewayConfig = {
@@ -50,14 +64,23 @@ const DEFAULT_CONFIG: GatewayConfig = {
   messageTimeout: 60000, // 60s
   maxMessagesPerSecond: 10,
   maxPayload: 1024 * 1024, // 1 MB per protocol spec
+  pairingAttemptsPerMinute: 10,
 };
 
 interface ConnectedDevice {
+  /** Connection-scoped id, stable for the lifetime of the socket. */
   id: string;
+  /** Device id the phone claims during the WebSocket upgrade (`?device=`). */
+  claimedDeviceId?: string;
   ws: WebSocket;
   lastPing: number;
   authenticated: boolean;
   messageTimestamps: number[]; // sliding window for rate limiting
+}
+
+interface PairingAttempts {
+  count: number;
+  resetAt: number;
 }
 
 /**
@@ -70,15 +93,19 @@ export class VanessaGateway extends EventEmitter {
   private pingTimer: NodeJS.Timeout | null = null;
   private config: GatewayConfig;
   private verifier: SignatureVerifier | null = null;
+  private redeemPairingCode: PairingRedeemer | null = null;
   private actualPort: number = 0;
+  private pairingAttempts: Map<string, PairingAttempts> = new Map();
 
   constructor(
     config: Partial<GatewayConfig> = {},
-    verifier?: SignatureVerifier
+    verifier?: SignatureVerifier,
+    redeemPairingCode?: PairingRedeemer
   ) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.verifier = verifier ?? null;
+    this.redeemPairingCode = redeemPairingCode ?? null;
   }
 
   /**
@@ -89,21 +116,9 @@ export class VanessaGateway extends EventEmitter {
       throw new Error('Gateway already running');
     }
 
-    // Create HTTP server
+    // Create HTTP server: health probe plus the pairing redemption route.
     this.httpServer = createServer((req, res) => {
-      // Health check endpoint
-      if (req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          status: 'ok',
-          connections: this.devices.size,
-          uptime: process.uptime(),
-        }));
-        return;
-      }
-
-      res.writeHead(404);
-      res.end();
+      void this.handleHttpRequest(req, res);
     });
 
     // Create WebSocket server
@@ -176,6 +191,148 @@ export class VanessaGateway extends EventEmitter {
   }
 
   /**
+   * Route plain HTTP requests: health probe plus pairing-code redemption.
+   */
+  private async handleHttpRequest(req: any, res: any): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+
+    if (req.method === 'GET' && url.pathname === '/health') {
+      this.respondJson(res, 200, {
+        status: 'ok',
+        connections: this.devices.size,
+        uptime: process.uptime(),
+        pairing: this.redeemPairingCode ? 'enabled' : 'disabled',
+      });
+      return;
+    }
+
+    if (url.pathname === '/pair') {
+      if (req.method !== 'POST') {
+        this.respondJson(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
+        return;
+      }
+      await this.handlePairingRequest(req, res);
+      return;
+    }
+
+    res.writeHead(404);
+    res.end();
+  }
+
+  /**
+   * POST /pair - exchange a short-lived pairing code for a device secret.
+   *
+   * This is the only unauthenticated write route; it is rate limited per
+   * remote address and returns the same error for unknown and expired codes.
+   */
+  private async handlePairingRequest(req: any, res: any): Promise<void> {
+    const remoteAddress = req.socket?.remoteAddress ?? 'unknown';
+
+    if (!this.redeemPairingCode) {
+      this.respondJson(res, 404, { error: 'pairing_unavailable' });
+      return;
+    }
+
+    if (!this.consumePairingAttempt(remoteAddress)) {
+      this.respondJson(res, 429, { error: 'rate_limited' }, { 'Retry-After': '60' });
+      return;
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(await this.readBody(req, 4096));
+    } catch {
+      this.respondJson(res, 400, { error: 'invalid_request' });
+      return;
+    }
+
+    const pairingCode = typeof body?.pairingCode === 'string' ? body.pairingCode.trim() : '';
+    if (!pairingCode || pairingCode.length > 128) {
+      this.respondJson(res, 400, { error: 'invalid_pairing_code' });
+      return;
+    }
+
+    const deviceName = typeof body?.deviceName === 'string' ? body.deviceName.slice(0, 80) : undefined;
+
+    let grant: PairingGrant | null = null;
+    try {
+      grant = await this.redeemPairingCode({ pairingCode, deviceName, remoteAddress });
+    } catch (error) {
+      console.error('[Gateway] Pairing redemption failed:', error);
+      this.respondJson(res, 500, { error: 'internal_error' });
+      return;
+    }
+
+    if (!grant) {
+      this.respondJson(res, 401, { error: 'invalid_or_expired_pairing_code' });
+      return;
+    }
+
+    console.log(`[Gateway] Pairing redeemed for ${grant.deviceId} from ${remoteAddress}`);
+    this.emit('device-paired', { deviceId: grant.deviceId, remoteAddress });
+    this.respondJson(res, 200, {
+      deviceId: grant.deviceId,
+      secret: grant.secret,
+      ...(grant.pcName ? { pcName: grant.pcName } : {}),
+    });
+  }
+
+  private respondJson(res: any, status: number, body: unknown, headers: Record<string, string> = {}): void {
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
+    res.end(JSON.stringify(body));
+  }
+
+  /** Read a request body, refusing anything above `limit` bytes. */
+  private async readBody(req: any, limit: number): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+
+      req.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > limit) {
+          reject(new Error('Request body too large'));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      req.on('error', reject);
+    });
+  }
+
+  /** Sliding one-minute window of pairing attempts per remote address. */
+  private consumePairingAttempt(remoteAddress: string): boolean {
+    const now = Date.now();
+    const entry = this.pairingAttempts.get(remoteAddress);
+
+    if (!entry || now >= entry.resetAt) {
+      this.pairingAttempts.set(remoteAddress, { count: 1, resetAt: now + 60000 });
+      return true;
+    }
+
+    if (entry.count >= this.config.pairingAttemptsPerMinute) {
+      return false;
+    }
+
+    entry.count += 1;
+    return true;
+  }
+
+  /** Extract the paired device id claimed on the WebSocket upgrade URL. */
+  private claimedDeviceIdFromRequest(req: any): string | undefined {
+    try {
+      const url = new URL(req?.url ?? '/', 'http://127.0.0.1');
+      const claimed = url.searchParams.get('device');
+      if (!claimed || claimed.length === 0 || claimed.length > 128) return undefined;
+      return claimed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Handle new WebSocket connection
    */
   private handleConnection(ws: WebSocket, req: any): void {
@@ -186,13 +343,19 @@ export class VanessaGateway extends EventEmitter {
     }
 
     const deviceId = this.generateDeviceId();
+    const claimedDeviceId = this.claimedDeviceIdFromRequest(req);
     const device: ConnectedDevice = {
       id: deviceId,
+      claimedDeviceId,
       ws,
       lastPing: Date.now(),
       authenticated: false,
       messageTimestamps: [],
     };
+
+    if (claimedDeviceId) {
+      console.log(`[Gateway] Device ${deviceId} claims paired id ${claimedDeviceId}`);
+    }
 
     this.devices.set(deviceId, device);
 
@@ -255,16 +418,28 @@ export class VanessaGateway extends EventEmitter {
       // Parse and validate message
       const message = parseProtocolMessage(JSON.parse(json));
 
-      // Verify signature if a verifier is configured.
-      // Identity comes from the connection, not from the message body.
+      // Verify the signature against the device id the socket claimed during
+      // the upgrade. The claim grants nothing by itself: the HMAC proves the
+      // sender holds that device's secret, and the secret never travels in a
+      // message.
       if (this.verifier) {
-        const verifiedDeviceId = await this.verifier(device.id, message);
+        if (device.authenticated && message.type === 'ping') {
+          // Keepalives carry no signature fields in the schema; after the
+          // first verified message the socket is already authenticated.
+          this.handleProtocolMessage(device.id, message);
+          return;
+        }
+
+        if (!device.claimedDeviceId) {
+          this.sendError(device, 'UNAUTHORIZED_DEVICE', 'Connect with ?device=<paired device id>');
+          return;
+        }
+
+        const verifiedDeviceId = await this.verifier(device.claimedDeviceId, message);
         if (!verifiedDeviceId) {
           this.sendError(device, 'UNAUTHORIZED_DEVICE', 'Invalid signature, stale message, or replay');
           return;
         }
-        // Rebind device id to the authenticated identity
-        device.id = verifiedDeviceId;
         device.authenticated = true;
       }
 
@@ -330,13 +505,23 @@ export class VanessaGateway extends EventEmitter {
    * Send message to device
    */
   public sendToDevice(deviceId: string, message: ProtocolMessage): boolean {
-    const device = this.devices.get(deviceId);
+    const device = this.findDevice(deviceId);
     if (!device) {
       console.error(`[Gateway] Device ${deviceId} not found`);
       return false;
     }
 
     return this.send(device, message);
+  }
+
+  /** Look a device up by connection id or by its claimed paired id. */
+  private findDevice(deviceId: string): ConnectedDevice | undefined {
+    const direct = this.devices.get(deviceId);
+    if (direct) return direct;
+    for (const device of this.devices.values()) {
+      if (device.claimedDeviceId === deviceId) return device;
+    }
+    return undefined;
   }
 
   /**

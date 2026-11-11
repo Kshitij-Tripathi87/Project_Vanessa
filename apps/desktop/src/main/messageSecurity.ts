@@ -1,18 +1,22 @@
 /**
  * Phase 3.3: Message Signing and Security
  *
- * HMAC-SHA256 signing for all protocol messages.
- * Prevents tampering, replay attacks, and unauthorized access.
+ * HMAC-SHA256 signing for protocol messages.
+ *
+ * Signing contract (must match the Kotlin bridge client):
+ *
+ *   signature = hex(HMAC-SHA256(secret, canonicalJson(message without `signature`)))
+ *
+ * `canonicalJson` serialises objects with their keys sorted at every depth and
+ * no insignificant whitespace, so TypeScript and Kotlin produce byte-identical
+ * input independent of property insertion order. `timestamp` and `nonce` are
+ * ordinary fields of the message, which means the signed bytes never include
+ * the signature itself (the previous contract signed `{payload, timestamp,
+ * nonce}` where `payload` already contained both, so a valid signature could
+ * not be produced).
  */
 
-import crypto from 'crypto';
-
-export interface SignedMessage {
-  payload: any;
-  signature: string;
-  timestamp: number;
-  nonce: string;
-}
+import crypto from "crypto";
 
 export interface SecurityConfig {
   maxMessageAge: number; // ms
@@ -24,8 +28,80 @@ const DEFAULT_CONFIG: SecurityConfig = {
   replayWindowSize: 1000, // track last 1000 nonces
 };
 
+/** Allowed clock skew for timestamps in the future. */
+const FUTURE_SKEW_MS = 5000;
+
+export type VerifyError =
+  | "invalid_signature"
+  | "stale_message"
+  | "replayed_message"
+  | "missing_timestamp";
+
+export interface VerifyResult {
+  valid: boolean;
+  error?: VerifyError;
+}
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
 /**
- * Message Signer - handles HMAC-SHA256 signing and verification
+ * Deterministic JSON: keys sorted at every depth, no whitespace.
+ * Throws on values that cannot be represented (undefined, functions, NaN).
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "boolean":
+      return value ? "true" : "false";
+    case "number":
+      if (!Number.isFinite(value)) throw new Error("Canonical JSON does not support non-finite numbers");
+      return JSON.stringify(value);
+    case "string":
+      return JSON.stringify(value);
+    case "object": {
+      if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+      const record = value as Record<string, unknown>;
+      const entries = Object.keys(record)
+        .filter((key) => record[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+      return `{${entries.join(",")}}`;
+    }
+    default:
+      throw new Error(`Canonical JSON does not support ${typeof value}`);
+  }
+}
+
+/** Strip the signature so the signed bytes do not depend on themselves. */
+export function unsignedMessage(message: Record<string, unknown>): Record<string, unknown> {
+  const { signature: _signature, ...rest } = message;
+  return rest;
+}
+
+/** Compute the hex HMAC for a message (excluding any existing signature). */
+export function computeSignature(message: Record<string, unknown>, secret: string): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(canonicalJson(unsignedMessage(message)), "utf8")
+    .digest("hex");
+}
+
+/** Return a copy of the message carrying a freshly computed signature. */
+export function signMessage<T extends Record<string, unknown>>(message: T, secret: string): T & { signature: string } {
+  return { ...message, signature: computeSignature(message, secret) };
+}
+
+/** Constant-time hex comparison. */
+function signaturesMatch(expected: string, supplied: string): boolean {
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(supplied, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Message Signer - signs messages and verifies inbound ones, including
+ * replay and clock-skew protection keyed on the message `nonce`.
  */
 export class MessageSigner {
   private config: SecurityConfig;
@@ -36,118 +112,58 @@ export class MessageSigner {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Sign a message with HMAC-SHA256
-   */
-  sign(payload: any, secret: string): SignedMessage {
-    const timestamp = Date.now();
-    const nonce = crypto.randomBytes(16).toString('hex');
-
-    // Create canonical representation
-    const canonical = JSON.stringify({
-      payload,
-      timestamp,
-      nonce,
-    });
-
-    // Generate HMAC signature
-    const hmac = crypto.createHmac('sha256', secret);
-    hmac.update(canonical);
-    const signature = hmac.digest('hex');
-
-    return {
-      payload,
-      signature,
-      timestamp,
-      nonce,
-    };
+  sign<T extends Record<string, unknown>>(message: T, secret: string): T & { signature: string } {
+    return signMessage(message, secret);
   }
 
-  /**
-   * Verify a signed message
-   */
-  verify(
-    message: SignedMessage,
-    secret: string
-  ): {
-    valid: boolean;
-    error?: 'invalid_signature' | 'stale_message' | 'replayed_message';
-  } {
-    // Check message age
-    const age = Date.now() - message.timestamp;
-    if (age > this.config.maxMessageAge) {
-      return { valid: false, error: 'stale_message' };
+  verify(message: Record<string, unknown>, secret: string): VerifyResult {
+    const unsigned = unsignedMessage(message);
+    const timestamp = unsigned.timestamp;
+    if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+      return { valid: false, error: "missing_timestamp" };
     }
 
-    if (age < -5000) {
-      // Message from future (allow 5s clock skew)
-      return { valid: false, error: 'stale_message' };
+    const age = Date.now() - timestamp;
+    if (age > this.config.maxMessageAge || age < -FUTURE_SKEW_MS) {
+      return { valid: false, error: "stale_message" };
     }
 
-    // Check for replay attack
-    if (this.recentNonces.has(message.nonce)) {
-      return { valid: false, error: 'replayed_message' };
+    const nonce = unsigned.nonce;
+    if (typeof nonce === "string" && nonce.length > 0 && this.recentNonces.has(nonce)) {
+      return { valid: false, error: "replayed_message" };
     }
 
-    // Verify signature
-    const canonical = JSON.stringify({
-      payload: message.payload,
-      timestamp: message.timestamp,
-      nonce: message.nonce,
-    });
-
-    const hmac = crypto.createHmac('sha256', secret);
-    hmac.update(canonical);
-    const expectedSignature = hmac.digest('hex');
-
-    if (message.signature !== expectedSignature) {
-      return { valid: false, error: 'invalid_signature' };
+    const supplied = (message as { signature?: unknown }).signature;
+    if (typeof supplied !== "string" || supplied.length === 0 || !signaturesMatch(computeSignature(message, secret), supplied)) {
+      return { valid: false, error: "invalid_signature" };
     }
 
-    // Add nonce to replay prevention set
-    this.addNonce(message.nonce);
-
+    if (typeof nonce === "string" && nonce.length > 0) this.addNonce(nonce);
     return { valid: true };
   }
 
-  /**
-   * Add nonce to replay prevention tracking
-   */
   private addNonce(nonce: string): void {
     this.recentNonces.add(nonce);
     this.nonceQueue.push(nonce);
 
-    // Limit set size
     if (this.nonceQueue.length > this.config.replayWindowSize) {
       const oldNonce = this.nonceQueue.shift()!;
       this.recentNonces.delete(oldNonce);
     }
   }
 
-  /**
-   * Clear replay prevention tracking
-   */
   clearNonces(): void {
     this.recentNonces.clear();
     this.nonceQueue = [];
   }
 
-  /**
-   * Get statistics
-   */
-  getStats(): {
-    trackedNonces: number;
-    maxAge: number;
-  } {
-    return {
-      trackedNonces: this.recentNonces.size,
-      maxAge: this.config.maxMessageAge,
-    };
+  getStats(): { trackedNonces: number; maxAge: number } {
+    return { trackedNonces: this.recentNonces.size, maxAge: this.config.maxMessageAge };
   }
 }
 
 /**
- * Security Manager - coordinates signing, verification, and device authentication
+ * Security Manager - coordinates signing, verification, and device secrets.
  */
 export class SecurityManager {
   private signer: MessageSigner;
@@ -157,135 +173,61 @@ export class SecurityManager {
     this.signer = new MessageSigner(config);
   }
 
-  /**
-   * Register a device with its secret
-   */
+  /** Register (or rotate) the HMAC secret for a paired device. */
   registerDevice(deviceId: string, secret: string): void {
     this.deviceSecrets.set(deviceId, secret);
     console.log(`[Security] Device registered: ${deviceId}`);
   }
 
-  /**
-   * Unregister a device
-   */
   unregisterDevice(deviceId: string): void {
     this.deviceSecrets.delete(deviceId);
     console.log(`[Security] Device unregistered: ${deviceId}`);
   }
 
-  /**
-   * Sign a message for a specific device
-   */
-  signForDevice(deviceId: string, payload: any): SignedMessage | null {
-    const secret = this.deviceSecrets.get(deviceId);
-
-    if (!secret) {
-      console.error(`[Security] No secret for device: ${deviceId}`);
-      return null;
-    }
-
-    return this.signer.sign(payload, secret);
-  }
-
-  /**
-   * Verify a message from a device
-   */
-  verifyFromDevice(
-    deviceId: string,
-    message: SignedMessage
-  ): {
-    valid: boolean;
-    error?: string;
-  } {
-    const secret = this.deviceSecrets.get(deviceId);
-
-    if (!secret) {
-      return { valid: false, error: 'unauthorized_device' };
-    }
-
-    const result = this.signer.verify(message, secret);
-
-    if (!result.valid) {
-      return { valid: false, error: result.error };
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Check if device is registered
-   */
   isDeviceRegistered(deviceId: string): boolean {
     return this.deviceSecrets.has(deviceId);
   }
 
-  /**
-   * Get statistics
-   */
-  getStats() {
-    return {
-      registeredDevices: this.deviceSecrets.size,
-      signer: this.signer.getStats(),
-    };
+  /** Sign a message for a specific device; null when the device is unknown. */
+  signForDevice<T extends Record<string, unknown>>(deviceId: string, message: T): (T & { signature: string }) | null {
+    const secret = this.deviceSecrets.get(deviceId);
+    if (!secret) {
+      console.error(`[Security] No secret for device: ${deviceId}`);
+      return null;
+    }
+    return this.signer.sign(message, secret);
+  }
+
+  /** Verify a message that claims to come from a specific paired device. */
+  verifyFromDevice(deviceId: string, message: Record<string, unknown>): VerifyResult {
+    const secret = this.deviceSecrets.get(deviceId);
+    if (!secret) {
+      return { valid: false, error: "invalid_signature" };
+    }
+    return this.signer.verify(message, secret);
+  }
+
+  getStats(): { registeredDevices: number; signer: { trackedNonces: number; maxAge: number } } {
+    return { registeredDevices: this.deviceSecrets.size, signer: this.signer.getStats() };
   }
 }
 
-/**
- * Helper to wrap protocol message with signature
- */
-export function wrapMessage(
-  protocolMessage: any,
-  secret: string,
-  signer: MessageSigner = new MessageSigner()
-): SignedMessage {
-  return signer.sign(protocolMessage, secret);
+/** Generate a secure random secret (base64). */
+export function generateSecret(bytes = 32): string {
+  return crypto.randomBytes(bytes).toString("base64");
 }
 
-/**
- * Helper to unwrap and verify signed message
- */
-export function unwrapMessage(
-  signedMessage: SignedMessage,
-  secret: string,
-  signer: MessageSigner = new MessageSigner()
-): {
-  valid: boolean;
-  payload?: any;
-  error?: string;
-} {
-  const result = signer.verify(signedMessage, secret);
-
-  if (!result.valid) {
-    return { valid: false, error: result.error };
-  }
-
-  return {
-    valid: true,
-    payload: signedMessage.payload,
-  };
-}
-
-/**
- * Generate a secure random secret
- */
-export function generateSecret(bytes: number = 32): string {
-  return crypto.randomBytes(bytes).toString('base64');
-}
-
-/**
- * Hash a secret for storage (not used for HMAC)
- */
+/** Hash a secret for storage where the raw secret is not needed. */
 export function hashSecret(secret: string): string {
-  return crypto.createHash('sha256').update(secret).digest('hex');
+  return crypto.createHash("sha256").update(secret).digest("hex");
 }
 
-/**
- * Constant-time comparison to prevent timing attacks
- */
+/** Constant-time string comparison to prevent timing attacks. */
 export function secureCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }
+
+export type { Json };

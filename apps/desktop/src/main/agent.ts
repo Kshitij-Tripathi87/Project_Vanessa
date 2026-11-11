@@ -5,7 +5,9 @@
  * into a complete PC agent system.
  */
 
-import { VanessaGateway, SignatureVerifier } from './gateway.js';
+import { VanessaGateway, SignatureVerifier, PairingRedeemer } from './gateway.js';
+import crypto from 'crypto';
+import os from 'os';
 import { ToolRegistry, createToolDefinition } from './toolRegistry.js';
 import { ExecutionControl } from './executionControl.js';
 import { AuditLog } from './auditLog.js';
@@ -28,6 +30,30 @@ export class VanessaPCAgent extends EventEmitter {
   private verifier: SignatureVerifier | null = null;
   private running: boolean = false;
 
+  /**
+   * Exchange a single-use pairing code for a per-device secret.
+   *
+   * The code itself is never a credential: it expires after 5 minutes and is
+   * consumed on first use. On success the PC mints a device id, registers the
+   * secret for signature verification, and persists the pairing so the phone
+   * can reconnect after a restart.
+   */
+  private redeemPairingCode: PairingRedeemer = async ({ pairingCode, deviceName }) => {
+    const redeemed = this.pairing.redeemPairingCode(pairingCode);
+    if (!redeemed) {
+      return null;
+    }
+
+    const deviceId = `device_${crypto.randomUUID()}`;
+    this.security.registerDevice(deviceId, redeemed.secret);
+    await this.pairing.pairDevice(deviceId, redeemed.secret, deviceName);
+
+    console.log(`[Agent] Paired device ${deviceId}${deviceName ? ` (${deviceName})` : ''}`);
+    this.emit('device-paired', { deviceId, deviceName });
+
+    return { deviceId, secret: redeemed.secret, pcName: os.hostname() };
+  };
+
   constructor() {
     super();
 
@@ -39,24 +65,25 @@ export class VanessaPCAgent extends EventEmitter {
     this.pairing = new PairingManager();
 
     // Wire signature verification into the gateway.
-    // The verifier is called for every inbound message with the connection-level
-    // device id and returns that same id when the signature is valid, or null
-    // if the signature is invalid, the message is stale (>60s), or the nonce
-    // has been replayed. Identity is bound to the connection, never asserted
-    // by the phone in the message body.
+    // The verifier is called with the device id the socket claimed during the
+    // WebSocket upgrade and the parsed message. It returns that id when the
+    // signature is valid, or null when it is invalid, stale (>60s) or a
+    // replay. The signature covers the message minus its own `signature`
+    // field, so verification can reproduce the signed bytes.
     this.verifier = async (deviceId, message) => {
-      const signed = message as any;
-      if (!signed.signature || !signed.nonce) return null;
-      const result = this.security.verifyFromDevice(deviceId, {
-        payload: message,
-        signature: signed.signature,
-        timestamp: signed.timestamp,
-        nonce: signed.nonce,
-      });
+      const result = this.security.verifyFromDevice(deviceId, message as unknown as Record<string, unknown>);
       return result.valid ? deviceId : null;
     };
 
-    this.gateway = new VanessaGateway({}, this.verifier);
+    // Re-register secrets for devices paired in an earlier run so they can
+    // authenticate immediately after a restart.
+    for (const device of this.pairing.getPairedDevices()) {
+      if (!device.revoked) {
+        this.security.registerDevice(device.deviceId, device.secret);
+      }
+    }
+
+    this.gateway = new VanessaGateway({}, this.verifier, this.redeemPairingCode);
 
     // Register all tools
     this.registerAllTools();
@@ -458,7 +485,7 @@ export class VanessaPCAgent extends EventEmitter {
     // Rebuild the gateway with the resolved host and re-wire event handlers
     // so the new server instance receives the agent's task/lifecycle events.
     await this.gateway.stop();
-    this.gateway = new VanessaGateway({ port, host }, this.verifier ?? undefined);
+    this.gateway = new VanessaGateway({ port, host }, this.verifier ?? undefined, this.redeemPairingCode);
     this.setupEventHandlers();
 
     // Start gateway
@@ -489,6 +516,23 @@ export class VanessaPCAgent extends EventEmitter {
     console.log('[Agent] Vanessa PC Agent stopped');
 
     this.emit('stopped');
+  }
+
+  /**
+   * Create a pairing payload plus QR codes for the desktop UI.
+   *
+   * The QR carries the short-lived pairing code, never the secret; the phone
+   * redeems it at `POST /pair` and receives its own secret in response.
+   */
+  async createPairing(pcIP?: string, port: number = 8765) {
+    const host = pcIP ?? (await getTailscaleIP()) ?? '127.0.0.1';
+    const payload = this.pairing.createPairingPayload(host, port);
+    const [qrDataUrl, qrSvg] = await Promise.all([
+      this.pairing.generateQRCode(payload),
+      this.pairing.generateQRCodeSVG(payload),
+    ]);
+
+    return { payload, qrDataUrl, qrSvg };
   }
 
   /**
