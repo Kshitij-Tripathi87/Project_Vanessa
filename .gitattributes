@@ -1,6 +1,3 @@
-# The Gradle wrapper shell script must stay LF or it fails on Linux runners.
-apps/android/gradlew text eol=lf
-
 # Windows batch files stay CRLF.
 *.bat text eol=crlf
 
@@ -9,8 +6,7 @@ apps/android/gradlew text eol=lf
 *.png binary
 *.pptx binary
 
-# Generated protocol artifacts are diffed by CI; keep them LF everywhere.
-apps/android/core/protocol/** text eol=lf
+# Shared protocol artifacts are diffed by CI; keep them LF everywhere.
 packages/shared/schema/*.json text eol=lf
 packages/shared/fixtures/*.jsonl text eol=lf
 packages/protocol/schema/*.json text eol=lf
