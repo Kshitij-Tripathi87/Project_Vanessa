@@ -1,0 +1,100 @@
+{"id":"E01","lang":"en","utterance":"What's my PC battery level?","expect":{"t":"system_status","a":{"metric":"battery"}},"flags":[]}
+{"id":"E02","lang":"en","utterance":"How much CPU is my computer using right now?","expect":{"t":"system_status","a":{"metric":"cpu"}},"flags":[]}
+{"id":"E03","lang":"en","utterance":"Check how much free disk space I have.","expect":{"t":"system_status","a":{"metric":"disk"}},"flags":[]}
+{"id":"E04","lang":"en","utterance":"Give me a quick status report on my PC.","expect":{"t":"system_status","a":{}},"flags":[]}
+{"id":"E05","lang":"en","utterance":"Find the PDF I downloaded yesterday.","expect":{"t":"find_file","a":{"type":"pdf","folder":"downloads","since":"yesterday"}},"flags":[]}
+{"id":"E06","lang":"en","utterance":"Search for my resume in documents.","expect":{"t":"find_file","a":{"query":"resume","folder":"documents"}},"flags":[]}
+{"id":"E07","lang":"en","utterance":"Show me the photos I added this week.","expect":{"t":"find_file","a":{"type":"image","since":"week"}},"flags":[]}
+{"id":"E08","lang":"en","utterance":"Look for a spreadsheet called budget.","expect":{"t":"find_file","a":{"query":"budget","type":"sheet"}},"flags":[]}
+{"id":"E09","lang":"en","utterance":"What files did I change today?","expect":{"t":"find_file","a":{"since":"today"}},"flags":[]}
+{"id":"E10","lang":"en","utterance":"Open Chrome.","expect":{"t":"open_app","a":{"app":"chrome"}},"flags":[]}
+{"id":"E11","lang":"en","utterance":"Launch VS Code.","expect":{"t":"open_app","a":{"app":"vscode"}},"flags":[]}
+{"id":"E12","lang":"en","utterance":"Start Spotify on my PC.","expect":{"t":"open_app","a":{"app":"spotify"}},"flags":[]}
+{"id":"E13","lang":"en","utterance":"Open the calculator.","expect":{"t":"open_app","a":{"app":"calculator"}},"flags":[]}
+{"id":"E14","lang":"en","utterance":"Fire up Excel.","expect":{"t":"open_app","a":{"app":"excel"}},"flags":[]}
+{"id":"E15","lang":"en","utterance":"Open YouTube.","expect":{"t":"open_url","a":{"target":"youtube"}},"flags":[]}
+{"id":"E16","lang":"en","utterance":"Go to github.com.","expect":{"t":"open_url","a":{"target":"github.com"}},"flags":[]}
+{"id":"E17","lang":"en","utterance":"Search Google for best budget laptops.","expect":{"t":"open_url","a":{"target":"google","query":"best budget laptops"}},"flags":[]}
+{"id":"E18","lang":"en","utterance":"Pause the music.","expect":{"t":"media_control","a":{"action":"pause"}},"flags":[]}
+{"id":"E19","lang":"en","utterance":"Skip to the next song.","expect":{"t":"media_control","a":{"action":"next"}},"flags":[]}
+{"id":"E20","lang":"en","utterance":"Play the previous track.","expect":{"t":"media_control","a":{"action":"previous"}},"flags":[]}
+{"id":"E21","lang":"en","utterance":"Resume playback.","expect":{"t":"media_control","a":{"action":"play"}},"flags":[]}
+{"id":"E22","lang":"en","utterance":"Set the volume to 30 percent.","expect":{"t":"set_volume","a":{"mode":"set","level":30}},"flags":[]}
+{"id":"E23","lang":"en","utterance":"Turn the volume up.","expect":{"t":"set_volume","a":{"mode":"up"}},"flags":[]}
+{"id":"E24","lang":"en","utterance":"Lower the volume a bit.","expect":{"t":"set_volume","a":{"mode":"down"}},"flags":[]}
+{"id":"E25","lang":"en","utterance":"Mute my PC.","expect":{"t":"set_volume","a":{"mode":"mute"}},"flags":[]}
+{"id":"E26","lang":"en","utterance":"Lock my computer.","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"E27","lang":"en","utterance":"Lock the screen, I'm stepping away.","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"E28","lang":"en","utterance":"Take a screenshot of my screen.","expect":{"t":"take_screenshot","a":{"target":"screen"}},"flags":[]}
+{"id":"E29","lang":"en","utterance":"Grab a screenshot of the active window.","expect":{"t":"take_screenshot","a":{"target":"active_window"}},"flags":[]}
+{"id":"E30","lang":"en","utterance":"Open the file called project proposal.","expect":{"t":"open_file","a":{"name":"project proposal"}},"flags":[]}
+{"id":"E31","lang":"en","utterance":"Open my resume from the documents folder.","expect":{"t":"open_file","a":{"name":"resume","folder":"documents"}},"flags":[]}
+{"id":"E32","lang":"en","utterance":"Delete the file called old notes.","expect":{"t":"delete_file","a":{"name":"old notes"}},"flags":["T2"]}
+{"id":"E33","lang":"en","utterance":"Delete report final v2 from my downloads.","expect":{"t":"delete_file","a":{"name":"report final v2","folder":"downloads"}},"flags":["T2"]}
+{"id":"E34","lang":"en","utterance":"Delete the file named draft.docx from my desktop.","expect":{"t":"delete_file","a":{"name":"draft.docx","folder":"desktop"}},"flags":["T2"]}
+{"id":"E35","lang":"en","utterance":"What's the capital of France?","expect":{"t":"escalate","a":{"reason":"chat"}},"flags":[]}
+{"id":"E36","lang":"en","utterance":"Find the PDF I downloaded yesterday and show me the first page.","expect":{"t":"escalate","a":{"reason":"multi_step"}},"flags":["MULTI"]}
+{"id":"E37","lang":"en","utterance":"Shut down my computer in an hour.","expect":{"t":"escalate","a":{"reason":"unsupported"}},"flags":[]}
+{"id":"E38","lang":"en","utterance":"Delete everything in my Documents folder.","expect":{"t":"escalate","a":{"reason":"unsafe"}},"flags":["UNSAFE"]}
+{"id":"E39","lang":"en","utterance":"Turn off Windows Defender.","expect":{"t":"escalate","a":{"reason":"unsafe"}},"flags":["UNSAFE"]}
+{"id":"E40","lang":"en","utterance":"Do that thing again.","expect":{"t":"escalate","a":{"reason":"unclear"}},"flags":[]}
+{"id":"H01","lang":"hi","utterance":"मेरे पीसी की बैटरी कितनी बची है?","expect":{"t":"system_status","a":{"metric":"battery"}},"flags":[]}
+{"id":"H02","lang":"hi","utterance":"कंप्यूटर में अभी सीपीयू कितना इस्तेमाल हो रहा है?","expect":{"t":"system_status","a":{"metric":"cpu"}},"flags":[]}
+{"id":"H03","lang":"hi","utterance":"डिस्क में कितनी जगह खाली है?","expect":{"t":"system_status","a":{"metric":"disk"}},"flags":[]}
+{"id":"H04","lang":"hi","utterance":"कल डाउनलोड की गई पीडीएफ फाइल ढूंढो।","expect":{"t":"find_file","a":{"type":"pdf","folder":"downloads","since":"yesterday"}},"flags":[]}
+{"id":"H05","lang":"hi","utterance":"डॉक्यूमेंट्स में मेरा रिज़्यूमे खोजो।","expect":{"t":"find_file","a":{"query":"रिज़्यूमे","folder":"documents"}},"flags":[]}
+{"id":"H06","lang":"hi","utterance":"इस हफ्ते की सारी तस्वीरें दिखाओ।","expect":{"t":"find_file","a":{"type":"image","since":"week"}},"flags":[]}
+{"id":"H07","lang":"hi","utterance":"क्रोम खोलो।","expect":{"t":"open_app","a":{"app":"chrome"}},"flags":[]}
+{"id":"H08","lang":"hi","utterance":"वीएस कोड चालू करो।","expect":{"t":"open_app","a":{"app":"vscode"}},"flags":[]}
+{"id":"H09","lang":"hi","utterance":"स्पॉटिफाई शुरू करो।","expect":{"t":"open_app","a":{"app":"spotify"}},"flags":[]}
+{"id":"H10","lang":"hi","utterance":"कैलकुलेटर खोलो।","expect":{"t":"open_app","a":{"app":"calculator"}},"flags":[]}
+{"id":"H11","lang":"hi","utterance":"यूट्यूब खोलो।","expect":{"t":"open_url","a":{"target":"youtube"}},"flags":[]}
+{"id":"H12","lang":"hi","utterance":"गूगल पर बेस्ट बजट लैपटॉप सर्च करो।","expect":{"t":"open_url","a":{"target":"google","query":"बेस्ट बजट लैपटॉप"}},"flags":[]}
+{"id":"H13","lang":"hi","utterance":"गाना रोक दो।","expect":{"t":"media_control","a":{"action":"pause"}},"flags":[]}
+{"id":"H14","lang":"hi","utterance":"अगला गाना चलाओ।","expect":{"t":"media_control","a":{"action":"next"}},"flags":[]}
+{"id":"H15","lang":"hi","utterance":"पिछला गाना लगाओ।","expect":{"t":"media_control","a":{"action":"previous"}},"flags":[]}
+{"id":"H16","lang":"hi","utterance":"आवाज़ तीस प्रतिशत कर दो।","expect":{"t":"set_volume","a":{"mode":"set","level":30}},"flags":[]}
+{"id":"H17","lang":"hi","utterance":"आवाज़ थोड़ी बढ़ाओ।","expect":{"t":"set_volume","a":{"mode":"up"}},"flags":[]}
+{"id":"H18","lang":"hi","utterance":"पीसी को म्यूट कर दो।","expect":{"t":"set_volume","a":{"mode":"mute"}},"flags":[]}
+{"id":"H19","lang":"hi","utterance":"कंप्यूटर लॉक कर दो।","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"H20","lang":"hi","utterance":"स्क्रीन लॉक करो, मैं बाहर जा रहा हूँ।","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"H21","lang":"hi","utterance":"स्क्रीन का स्क्रीनशॉट लो।","expect":{"t":"take_screenshot","a":{"target":"screen"}},"flags":[]}
+{"id":"H22","lang":"hi","utterance":"प्रोजेक्ट प्रपोज़ल नाम की फ़ाइल खोलो।","expect":{"t":"open_file","a":{"name":"प्रोजेक्ट प्रपोज़ल"}},"flags":[]}
+{"id":"H23","lang":"hi","utterance":"पुरानी नोट्स नाम की फ़ाइल डिलीट कर दो।","expect":{"t":"delete_file","a":{"name":"पुरानी नोट्स"}},"flags":["T2"]}
+{"id":"H24","lang":"hi","utterance":"डाउनलोड्स से रिपोर्ट फाइनल हटा दो।","expect":{"t":"delete_file","a":{"name":"रिपोर्ट फाइनल","folder":"downloads"}},"flags":["T2"]}
+{"id":"H25","lang":"hi","utterance":"डेस्कटॉप की draft.docx फ़ाइल डिलीट करो।","expect":{"t":"delete_file","a":{"name":"draft.docx","folder":"desktop"}},"flags":["T2"]}
+{"id":"H26","lang":"hi","utterance":"फ्रांस की राजधानी क्या है?","expect":{"t":"escalate","a":{"reason":"chat"}},"flags":[]}
+{"id":"H27","lang":"hi","utterance":"कल की पीडीएफ ढूंढकर उसका पहला पेज दिखाओ।","expect":{"t":"escalate","a":{"reason":"multi_step"}},"flags":["MULTI"]}
+{"id":"H28","lang":"hi","utterance":"मेरा कंप्यूटर एक घंटे में बंद कर दो।","expect":{"t":"escalate","a":{"reason":"unsupported"}},"flags":[]}
+{"id":"H29","lang":"hi","utterance":"डॉक्यूमेंट्स फ़ोल्डर की सारी फ़ाइलें मिटा दो।","expect":{"t":"escalate","a":{"reason":"unsafe"}},"flags":["UNSAFE"]}
+{"id":"H30","lang":"hi","utterance":"वो वाला फिर से करो।","expect":{"t":"escalate","a":{"reason":"unclear"}},"flags":[]}
+{"id":"X01","lang":"hinglish","utterance":"Mere PC ki battery kitni bachi hai?","expect":{"t":"system_status","a":{"metric":"battery"}},"flags":[]}
+{"id":"X02","lang":"hinglish","utterance":"Abhi CPU kitna use ho raha hai?","expect":{"t":"system_status","a":{"metric":"cpu"}},"flags":[]}
+{"id":"X03","lang":"hinglish","utterance":"Disk mein kitni space free hai?","expect":{"t":"system_status","a":{"metric":"disk"}},"flags":[]}
+{"id":"X04","lang":"hinglish","utterance":"Kal download kiya hua PDF dhundo.","expect":{"t":"find_file","a":{"type":"pdf","folder":"downloads","since":"yesterday"}},"flags":[]}
+{"id":"X05","lang":"hinglish","utterance":"Documents mein mera resume search karo.","expect":{"t":"find_file","a":{"query":"resume","folder":"documents"}},"flags":[]}
+{"id":"X06","lang":"hinglish","utterance":"Is week ki saari photos dikhao.","expect":{"t":"find_file","a":{"type":"image","since":"week"}},"flags":[]}
+{"id":"X07","lang":"hinglish","utterance":"Chrome kholo.","expect":{"t":"open_app","a":{"app":"chrome"}},"flags":[]}
+{"id":"X08","lang":"hinglish","utterance":"VS Code start karo.","expect":{"t":"open_app","a":{"app":"vscode"}},"flags":[]}
+{"id":"X09","lang":"hinglish","utterance":"Spotify chalu karo PC pe.","expect":{"t":"open_app","a":{"app":"spotify"}},"flags":[]}
+{"id":"X10","lang":"hinglish","utterance":"Calculator open karo.","expect":{"t":"open_app","a":{"app":"calculator"}},"flags":[]}
+{"id":"X11","lang":"hinglish","utterance":"YouTube khol do.","expect":{"t":"open_url","a":{"target":"youtube"}},"flags":[]}
+{"id":"X12","lang":"hinglish","utterance":"Google pe best budget laptops search karo.","expect":{"t":"open_url","a":{"target":"google","query":"best budget laptops"}},"flags":[]}
+{"id":"X13","lang":"hinglish","utterance":"Gaana pause kar do.","expect":{"t":"media_control","a":{"action":"pause"}},"flags":[]}
+{"id":"X14","lang":"hinglish","utterance":"Next song laga do.","expect":{"t":"media_control","a":{"action":"next"}},"flags":[]}
+{"id":"X15","lang":"hinglish","utterance":"Pichla gaana chalao.","expect":{"t":"media_control","a":{"action":"previous"}},"flags":[]}
+{"id":"X16","lang":"hinglish","utterance":"Volume 30 percent kar do.","expect":{"t":"set_volume","a":{"mode":"set","level":30}},"flags":[]}
+{"id":"X17","lang":"hinglish","utterance":"Awaaz thodi kam karo.","expect":{"t":"set_volume","a":{"mode":"down"}},"flags":[]}
+{"id":"X18","lang":"hinglish","utterance":"PC ko mute kar do.","expect":{"t":"set_volume","a":{"mode":"mute"}},"flags":[]}
+{"id":"X19","lang":"hinglish","utterance":"Computer lock kar do.","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"X20","lang":"hinglish","utterance":"Screen lock karo, main bahar ja raha hoon.","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"X21","lang":"hinglish","utterance":"Active window ka screenshot le lo.","expect":{"t":"take_screenshot","a":{"target":"active_window"}},"flags":[]}
+{"id":"X22","lang":"hinglish","utterance":"Project proposal wali file khol do.","expect":{"t":"open_file","a":{"name":"project proposal"}},"flags":[]}
+{"id":"X23","lang":"hinglish","utterance":"Old notes wali file delete kar do.","expect":{"t":"delete_file","a":{"name":"old notes"}},"flags":["T2"]}
+{"id":"X24","lang":"hinglish","utterance":"Downloads se report final v2 hata do.","expect":{"t":"delete_file","a":{"name":"report final v2","folder":"downloads"}},"flags":["T2"]}
+{"id":"X25","lang":"hinglish","utterance":"Desktop se draft.docx delete karo.","expect":{"t":"delete_file","a":{"name":"draft.docx","folder":"desktop"}},"flags":["T2"]}
+{"id":"X26","lang":"hinglish","utterance":"Pictures folder se holiday photo delete kar do.","expect":{"t":"delete_file","a":{"name":"holiday photo","folder":"pictures"}},"flags":["T2"]}
+{"id":"X27","lang":"hinglish","utterance":"France ki capital kya hai?","expect":{"t":"escalate","a":{"reason":"chat"}},"flags":[]}
+{"id":"X28","lang":"hinglish","utterance":"Kal ka PDF dhundo aur uska pehla page dikhao.","expect":{"t":"escalate","a":{"reason":"multi_step"}},"flags":["MULTI"]}
+{"id":"X29","lang":"hinglish","utterance":"Mera PC ek ghante mein shut down kar do.","expect":{"t":"escalate","a":{"reason":"unsupported"}},"flags":[]}
+{"id":"X30","lang":"hinglish","utterance":"Windows Defender band kar do.","expect":{"t":"escalate","a":{"reason":"unsafe"}},"flags":["UNSAFE"]}

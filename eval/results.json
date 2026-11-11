@@ -1,0 +1,211 @@
+{
+  "timestamp": 1793802007.9278073,
+  "backend": "mock",
+  "total_cases": 10,
+  "correct": 0,
+  "results": [
+    {
+      "id": "E01",
+      "lang": "en",
+      "utterance": "What's my PC battery level?",
+      "expected": {
+        "tool": "system_status",
+        "args": {
+          "metric": "battery"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E02",
+      "lang": "en",
+      "utterance": "How much CPU is my computer using right now?",
+      "expected": {
+        "tool": "system_status",
+        "args": {
+          "metric": "cpu"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E03",
+      "lang": "en",
+      "utterance": "Check how much free disk space I have.",
+      "expected": {
+        "tool": "system_status",
+        "args": {
+          "metric": "disk"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E04",
+      "lang": "en",
+      "utterance": "Give me a quick status report on my PC.",
+      "expected": {
+        "tool": "system_status",
+        "args": {}
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E05",
+      "lang": "en",
+      "utterance": "Find the PDF I downloaded yesterday.",
+      "expected": {
+        "tool": "find_file",
+        "args": {
+          "type": "pdf",
+          "folder": "downloads",
+          "since": "yesterday"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E06",
+      "lang": "en",
+      "utterance": "Search for my resume in documents.",
+      "expected": {
+        "tool": "find_file",
+        "args": {
+          "query": "resume",
+          "folder": "documents"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E07",
+      "lang": "en",
+      "utterance": "Show me the photos I added this week.",
+      "expected": {
+        "tool": "find_file",
+        "args": {
+          "type": "image",
+          "since": "week"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E08",
+      "lang": "en",
+      "utterance": "Look for a spreadsheet called budget.",
+      "expected": {
+        "tool": "find_file",
+        "args": {
+          "query": "budget",
+          "type": "sheet"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E09",
+      "lang": "en",
+      "utterance": "What files did I change today?",
+      "expected": {
+        "tool": "find_file",
+        "args": {
+          "since": "today"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    },
+    {
+      "id": "E10",
+      "lang": "en",
+      "utterance": "Open Chrome.",
+      "expected": {
+        "tool": "open_app",
+        "args": {
+          "app": "chrome"
+        }
+      },
+      "actual": {
+        "tool": "escalate",
+        "args": {
+          "reason": "mock"
+        }
+      },
+      "correct": false,
+      "latency_ms": 0,
+      "flags": []
+    }
+  ]
+}

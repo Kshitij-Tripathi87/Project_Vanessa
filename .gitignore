@@ -59,6 +59,11 @@ target/
 **/data/
 data/
 
+# Local scratch output and tool state
+/tmp/
+/eval/results/
+.opencode/
+
 # OS & Editor
 .DS_Store
 Thumbs.db

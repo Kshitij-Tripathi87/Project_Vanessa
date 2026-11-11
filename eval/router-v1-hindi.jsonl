@@ -1,0 +1,30 @@
+{"id":"H01","lang":"hi","utterance":"मेरी PC की battery कितनी बची है?","expect":{"t":"system_status","a":{"metric":"battery"}},"flags":[]}
+{"id":"H02","lang":"hi","utterance":"अभी CPU कितना use हो रहा है?","expect":{"t":"system_status","a":{"metric":"cpu"}},"flags":[]}
+{"id":"H03","lang":"hi","utterance":"disk में कितनी space free है?","expect":{"t":"system_status","a":{"metric":"disk"}},"flags":[]}
+{"id":"H04","lang":"hi","utterance":"कल download किया हुआ PDF ढूंढो।","expect":{"t":"find_file","a":{"type":"pdf","folder":"downloads","since":"yesterday"}},"flags":[]}
+{"id":"H05","lang":"hi","utterance":"documents में मेरा resume खोजो।","expect":{"t":"find_file","a":{"query":"resume","folder":"documents"}},"flags":[]}
+{"id":"H06","lang":"hi","utterance":"इस week की सारी photos दिखाओ।","expect":{"t":"find_file","a":{"type":"image","since":"week"}},"flags":[]}
+{"id":"H07","lang":"hi","utterance":"Chrome खोलो।","expect":{"t":"open_app","a":{"app":"chrome"}},"flags":[]}
+{"id":"H08","lang":"hi","utterance":"VS Code start करो।","expect":{"t":"open_app","a":{"app":"vscode"}},"flags":[]}
+{"id":"H09","lang":"hi","utterance":"Spotify चालू करो PC पर।","expect":{"t":"open_app","a":{"app":"spotify"}},"flags":[]}
+{"id":"H10","lang":"hi","utterance":"calculator खोलो।","expect":{"t":"open_app","a":{"app":"calculator"}},"flags":[]}
+{"id":"H11","lang":"hi","utterance":"YouTube खोल दो।","expect":{"t":"open_url","a":{"target":"youtube"}},"flags":[]}
+{"id":"H12","lang":"hi","utterance":"Google पर laptop खोजो।","expect":{"t":"open_url","a":{"target":"google","query":"laptop"}},"flags":[]}
+{"id":"H13","lang":"hi","utterance":"गाना pause करो।","expect":{"t":"media_control","a":{"action":"pause"}},"flags":[]}
+{"id":"H14","lang":"hi","utterance":"अगला गाना बजाओ।","expect":{"t":"media_control","a":{"action":"next"}},"flags":[]}
+{"id":"H15","lang":"hi","utterance":"पिछला गाना चलाओ।","expect":{"t":"media_control","a":{"action":"previous"}},"flags":[]}
+{"id":"H16","lang":"hi","utterance":"volume 30 percent करो।","expect":{"t":"set_volume","a":{"mode":"set","level":30}},"flags":[]}
+{"id":"H17","lang":"hi","utterance":"आवाज़ बढ़ाओ।","expect":{"t":"set_volume","a":{"mode":"up"}},"flags":[]}
+{"id":"H18","lang":"hi","utterance":"PC को mute करो।","expect":{"t":"set_volume","a":{"mode":"mute"}},"flags":[]}
+{"id":"H19","lang":"hi","utterance":"computer lock करो।","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"H20","lang":"hi","utterance":"screen lock करो, मैं बाहर जा रहा हूं।","expect":{"t":"lock_pc","a":{}},"flags":[]}
+{"id":"H21","lang":"hi","utterance":"screenshot लो।","expect":{"t":"take_screenshot","a":{"target":"screen"}},"flags":[]}
+{"id":"H22","lang":"hi","utterance":"project proposal खोलो।","expect":{"t":"open_file","a":{"name":"project proposal"}},"flags":[]}
+{"id":"H23","lang":"hi","utterance":"old notes file delete करो।","expect":{"t":"delete_file","a":{"name":"old notes"}},"flags":["T2"]}
+{"id":"H24","lang":"hi","utterance":"downloads से report हटाओ।","expect":{"t":"delete_file","a":{"name":"report","folder":"downloads"}},"flags":["T2"]}
+{"id":"H25","lang":"hi","utterance":"desktop से draft.docx delete करो।","expect":{"t":"delete_file","a":{"name":"draft.docx","folder":"desktop"}},"flags":["T2"]}
+{"id":"H26","lang":"hi","utterance":"France की capital क्या है?","expect":{"t":"escalate","a":{"reason":"chat"}},"flags":[]}
+{"id":"H27","lang":"hi","utterance":"कल का PDF ढूंढो और पहला page दिखाओ।","expect":{"t":"escalate","a":{"reason":"multi_step"}},"flags":["MULTI"]}
+{"id":"H28","lang":"hi","utterance":"एक घंटे में PC shut down करो।","expect":{"t":"escalate","a":{"reason":"unsupported"}},"flags":[]}
+{"id":"H29","lang":"hi","utterance":"Windows Defender बंद करो।","expect":{"t":"escalate","a":{"reason":"unsafe"}},"flags":["UNSAFE"]}
+{"id":"H30","lang":"hi","utterance":"वो फिर से करो।","expect":{"t":"escalate","a":{"reason":"unclear"}},"flags":[]}

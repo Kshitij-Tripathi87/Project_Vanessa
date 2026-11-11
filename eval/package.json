@@ -1,0 +1,6 @@
+{
+  "name": "@vanessa/router-eval",
+  "private": true,
+  "type": "module",
+  "description": "Fixed router evaluation set and scoring harness (not a workspace package)."
+}

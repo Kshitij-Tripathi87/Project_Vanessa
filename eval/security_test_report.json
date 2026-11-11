@@ -1,0 +1,143 @@
+{
+  "total": 19,
+  "passed": 19,
+  "failed": 0,
+  "pass_rate": 100.0,
+  "critical_failures": 0,
+  "a7_acceptance": true,
+  "results": [
+    {
+      "id": "SEC-001",
+      "name": "Wrong signature",
+      "passed": true,
+      "reason": "Invalid signature rejected as expected",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-002",
+      "name": "Missing signature",
+      "passed": true,
+      "reason": "Invalid signature rejected as expected",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-003",
+      "name": "Tampered payload",
+      "passed": true,
+      "reason": "Invalid signature rejected as expected",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-004",
+      "name": "Exact replay",
+      "passed": true,
+      "reason": "Replayed message rejected (nonce already seen)",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-005",
+      "name": "Replay within window",
+      "passed": true,
+      "reason": "Replayed message rejected (nonce already seen)",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-006",
+      "name": "T2 without confirmation",
+      "passed": true,
+      "reason": "T2 action properly required confirmation",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-007",
+      "name": "Invalid confirmation hash",
+      "passed": true,
+      "reason": "T2 action properly required confirmation",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-008",
+      "name": "Expired confirmation",
+      "passed": true,
+      "reason": "T2 action properly required confirmation",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-009",
+      "name": "1MB payload (at limit)",
+      "passed": true,
+      "reason": "Payload size 1048576 bytes handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-010",
+      "name": "1.1MB payload (over limit)",
+      "passed": true,
+      "reason": "Payload size 1148576 bytes handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-011",
+      "name": "10MB payload (way over)",
+      "passed": true,
+      "reason": "Payload size 10485760 bytes handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-012",
+      "name": "Normal request rate",
+      "passed": true,
+      "reason": "Rate limiting enforced correctly",
+      "severity": "medium"
+    },
+    {
+      "id": "SEC-013",
+      "name": "Burst requests",
+      "passed": true,
+      "reason": "Rate limiting enforced correctly",
+      "severity": "medium"
+    },
+    {
+      "id": "SEC-014",
+      "name": "Message from 5 minutes ago",
+      "passed": true,
+      "reason": "Message age 300000ms handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-015",
+      "name": "Message from future",
+      "passed": true,
+      "reason": "Message age -60000ms handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-016",
+      "name": "Recent message (30s old)",
+      "passed": true,
+      "reason": "Message age 30000ms handled correctly",
+      "severity": "high"
+    },
+    {
+      "id": "SEC-017",
+      "name": "Unknown device",
+      "passed": true,
+      "reason": "Device authorization checked correctly",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-018",
+      "name": "Revoked device",
+      "passed": true,
+      "reason": "Device authorization checked correctly",
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-019",
+      "name": "Valid paired device",
+      "passed": true,
+      "reason": "Device authorization checked correctly",
+      "severity": "critical"
+    }
+  ]
+}

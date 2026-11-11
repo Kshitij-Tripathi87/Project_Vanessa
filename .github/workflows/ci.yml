@@ -2,7 +2,7 @@ name: Agent Workflow CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -37,6 +37,15 @@ jobs:
 
       - name: Build shared contracts
         run: pnpm --filter @vanessa/shared build
+
+      - name: Verify protocol contract and generated schema
+        run: |
+          pnpm --filter @vanessa/shared protocol:export
+          git diff --exit-code -- packages/shared/schema/protocol-v1.schema.json apps/android/core/protocol/src/main/kotlin/com/vanessa/protocol/ProtocolMessages.kt apps/android/core/protocol/src/test/resources/protocol-v1.jsonl
+          pnpm --filter @vanessa/shared test:protocol
+
+      - name: Validate fixed router evaluation set
+        run: pnpm --filter @vanessa/orchestrator exec tsx ../../eval/router-eval.ts ../../eval/router-v1.jsonl
 
       - name: Build orchestrator
         run: pnpm --filter @vanessa/orchestrator build
