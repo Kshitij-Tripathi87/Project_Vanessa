@@ -1,0 +1,428 @@
+{
+  "title": "VanessaProtocolMessage",
+  "$ref": "#/definitions/VanessaProtocolMessage",
+  "definitions": {
+    "VanessaProtocolMessage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.submit"
+            },
+            "idempotencyKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "tool": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "idempotencyKey",
+            "tool",
+            "args",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.accepted"
+            },
+            "taskId": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.progress"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "validating",
+                "awaiting_confirm",
+                "running",
+                "verifying"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.confirm_required"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "actionHash": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            },
+            "expiresAt": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId",
+            "summary",
+            "actionHash",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.confirm"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            },
+            "approved": {
+              "type": "boolean"
+            },
+            "actionHash": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId",
+            "approved",
+            "actionHash"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.result"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "done",
+                "partial"
+              ]
+            },
+            "result": {}
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.error"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            },
+            "code": {
+              "type": "string",
+              "enum": [
+                "INVALID_MESSAGE",
+                "UNSUPPORTED_VERSION",
+                "UNKNOWN_MESSAGE_TYPE",
+                "UNAUTHORIZED_DEVICE",
+                "INVALID_SIGNATURE",
+                "STALE_MESSAGE",
+                "REPLAYED_MESSAGE",
+                "RATE_LIMITED",
+                "PAYLOAD_TOO_LARGE",
+                "INVALID_ARGUMENTS",
+                "PERMISSION_DENIED",
+                "CONFIRMATION_REQUIRED",
+                "CONFIRMATION_EXPIRED",
+                "TASK_NOT_FOUND",
+                "TASK_CANCELLED",
+                "TASK_FAILED",
+                "INTERNAL_ERROR"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.cancel"
+            },
+            "taskId": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/1/properties/taskId"
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "manifest.sync"
+            },
+            "manifestVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "argsSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "tier": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2
+                  }
+                },
+                "required": [
+                  "name",
+                  "description",
+                  "argsSchema",
+                  "tier"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "manifestVersion",
+            "tools"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "event.push"
+            },
+            "event": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "event",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/v"
+            },
+            "id": {
+              "$ref": "#/definitions/VanessaProtocolMessage/anyOf/0/properties/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "ping"
+            },
+            "sentAt": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "v",
+            "id",
+            "type",
+            "sentAt"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

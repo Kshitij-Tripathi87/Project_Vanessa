@@ -9,14 +9,25 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
     }
   },
   "scripts": {
     "build": "tsc",
+    "protocol:export": "node scripts/export-protocol-schema.mjs && node scripts/generate-kotlin-models.mjs",
+    "test:protocol": "tsx --test src/protocol.test.ts",
     "test:usage": "tsx --test src/usageMeter.test.ts",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.24.5"
+  },
   "devDependencies": {
+    "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "@vanessa/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vanessa Mobile + PC protocol definitions with zod schemas",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": "./schema/protocol-v1.schema.json"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/generate-json-schema.mjs && node scripts/generate-kotlin-models.mjs",
+    "test": "node --test src/**/*.test.ts",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.3"
+  }
+}
