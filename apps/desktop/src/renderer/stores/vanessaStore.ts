@@ -67,7 +67,7 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   setPendingApproval: (pendingApproval) => set({ pendingApproval }),
   addAuditLog: (entry) =>
     set((state) => ({
-      auditLogs: [entry, ...state.auditLogs].slice(0, 100),
+      auditLogs: [entry, ...state.auditLogs.filter((existing) => existing.id !== entry.id)].slice(0, 100),
     })),
   setTranscript: (transcript) => set({ transcript }),
   setLastResponse: (lastResponse) => set({ lastResponse }),

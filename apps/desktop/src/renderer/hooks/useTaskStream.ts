@@ -76,6 +76,18 @@ export function useTaskStream() {
   useEffect(() => {
     if (!window.vanessa?.onEvent) return;
 
+    void window.vanessa.getMobileAudit?.(100).then((rows) => {
+      for (const row of [...rows].reverse()) {
+        const status = row.state === "done" ? "success" : ["failed", "timed_out"].includes(row.state) ? "error" : row.state === "cancelled" ? "blocked" : "info";
+        addAuditLog({
+          id: `mobile-${row.taskId}-${row.state}`, timestamp: row.at, taskId: row.taskId, source: "phone",
+          agent: "mobile_gateway", action: row.tool, risk: `tier-${row.tier}`,
+          permission: row.state === "awaiting_confirm" ? "blocked" : "allowed", status,
+          details: { state: row.state, requestId: row.requestId, args: JSON.parse(row.args), ...(row.resultSummary ? { summary: row.resultSummary } : {}), ...(row.durationMs !== undefined ? { durationMs: row.durationMs } : {}) },
+        });
+      }
+    }).catch(() => undefined);
+
     const unsubscribe = window.vanessa.onEvent((event: VanessaEvent) => {
       if (event.eventId) {
         if (seenEvents.current.has(event.eventId)) return;

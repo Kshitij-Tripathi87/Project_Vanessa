@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld("vanessa", {
   cancelTask: (requestId?: string) =>
     ipcRenderer.invoke("vanessa:cancel-task", requestId),
 
+  getMobileAudit: (limit?: number) =>
+    ipcRenderer.invoke("vanessa:get-mobile-audit", limit),
+
   onEvent: (callback: (event: VanessaEvent) => void) => {
     const handler = (_: any, data: any) => callback(data);
     ipcRenderer.on("vanessa:event", handler);

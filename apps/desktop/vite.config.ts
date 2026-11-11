@@ -11,6 +11,9 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
+    // The renderer runs inside Electron 34 (Chromium 132); target that runtime
+    // directly instead of transpiling against an unrelated browser matrix.
+    target: "chrome132",
     outDir: path.resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
   },

@@ -110,6 +110,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
+  ipcMain.handle("vanessa:get-mobile-audit", async (event, limit: unknown = 100) => {
+    assertTrustedRenderer(event, mainWindow);
+    const count = typeof limit === "number" && Number.isInteger(limit) ? Math.max(1, Math.min(100, limit)) : 100;
+    try {
+      const response = await fetch(`${ORCHESTRATOR_URL}/api/mobile/audit?limit=${count}`, { signal: AbortSignal.timeout(3000) });
+      if (!response.ok) return [];
+      const rows = await response.json();
+      return Array.isArray(rows) ? rows : [];
+    } catch { return []; }
+  });
+
   // 4. Resize and dock the floating window. Reposition immediately after
   // resizing so the expanded panel stays visible on the selected display.
   ipcMain.handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {

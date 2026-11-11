@@ -59,6 +59,13 @@ if (typeof window !== "undefined" && !window.vanessa) {
       });
       return res.json();
     },
+    getMobileAudit: async (limit = 100) => {
+      try {
+        const count = Number.isInteger(limit) ? Math.max(1, Math.min(100, limit)) : 100;
+        const res = await fetch(`http://127.0.0.1:4319/api/mobile/audit?limit=${count}`);
+        return res.ok ? res.json() : [];
+      } catch { return []; }
+    },
     onEvent: (callback) => {
       eventListeners.push(callback);
       return () => {
