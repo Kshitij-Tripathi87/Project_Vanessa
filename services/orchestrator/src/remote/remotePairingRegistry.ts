@@ -342,9 +342,17 @@ export class RemotePairingRegistry {
       pairedAt: nowMs,
       revoked: false,
     };
+    const previousDevice = this.trustedDevices.get(device.keyId);
     this.trustedDevices.set(device.keyId, device);
     entry.state = "approved";
-    await this.persistTrustedDevices();
+    try {
+      await this.persistTrustedDevices();
+    } catch (error) {
+      if (previousDevice) this.trustedDevices.set(device.keyId, previousDevice);
+      else this.trustedDevices.delete(device.keyId);
+      entry.state = "awaiting_approval";
+      throw error;
+    }
 
     return {
       deviceId: device.deviceId,
@@ -418,13 +426,18 @@ export class RemotePairingRegistry {
   private validateStoredDevice(value: unknown): TrustedRemoteDevice {
     if (!isObject(value) ||
         typeof value.deviceId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value.deviceId) ||
         typeof value.keyId !== "string" ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(value.keyId) ||
         typeof value.publicKeySpki !== "string" ||
         typeof value.deviceHint !== "string" ||
+        !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
         typeof value.appVersion !== "string" ||
+        value.appVersion.length < 1 || value.appVersion.length > 40 ||
         !Array.isArray(value.grantedScopes) ||
         typeof value.pairedAt !== "number" ||
+        !Number.isSafeInteger(value.pairedAt) || value.pairedAt < 0 ||
         typeof value.revoked !== "boolean") {
       throw new Error("Trusted-device store contains an invalid record.");
     }
@@ -432,7 +445,9 @@ export class RemotePairingRegistry {
     if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== value.keyId) {
       throw new Error("Trusted-device store contains an invalid P-256 identity.");
     }
-    if (value.grantedScopes.length > 32 || value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
+    if (value.grantedScopes.length > 32 ||
+        new Set(value.grantedScopes).size !== value.grantedScopes.length ||
+        value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
       throw new Error("Trusted-device store contains invalid permission scopes.");
     }
     return {

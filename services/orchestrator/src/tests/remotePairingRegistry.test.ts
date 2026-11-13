@@ -174,3 +174,56 @@ test("local rejection and device revocation never grant or preserve trust", asyn
     assert.equal(registry.getTrustedDeviceByKeyId(phone.keyId)?.revoked, true);
   });
 });
+
+test("trusted-device restore rejects duplicate or malformed identity records", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vanessa-v2-invalid-store-"));
+  const storePath = path.join(directory, "trusted-devices.json");
+  const phone = newPhone();
+  const malformed = {
+    version: 1,
+    devices: [{
+      deviceId: "not-a-uuid",
+      keyId: phone.keyId,
+      publicKeySpki: phone.publicKey,
+      deviceHint: "pixel-9-pro",
+      platform: "android",
+      appVersion: "0.1.0",
+      grantedScopes: ["system.read"],
+      pairedAt: NOW,
+      revoked: false,
+    }],
+  };
+  fs.writeFileSync(storePath, JSON.stringify(malformed), "utf8");
+  const registry = new RemotePairingRegistry({ storePath });
+  try {
+    await assert.rejects(registry.initialize(), /invalid record/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("trusted-device restore rejects duplicate capability scopes", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vanessa-v2-duplicate-scopes-"));
+  const storePath = path.join(directory, "trusted-devices.json");
+  const phone = newPhone();
+  fs.writeFileSync(storePath, JSON.stringify({
+    version: 1,
+    devices: [{
+      deviceId: "11112222-3333-4444-8555-666677778888",
+      keyId: phone.keyId,
+      publicKeySpki: phone.publicKey,
+      deviceHint: "pixel-9-pro",
+      platform: "android",
+      appVersion: "0.1.0",
+      grantedScopes: ["system.read", "system.read"],
+      pairedAt: NOW,
+      revoked: false,
+    }],
+  }), "utf8");
+  const registry = new RemotePairingRegistry({ storePath });
+  try {
+    await assert.rejects(registry.initialize(), /invalid permission scopes/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
