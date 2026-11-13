@@ -63,8 +63,10 @@ export class RemoteSessionGuard {
   private highestAcceptedSequence: number;
   private readonly seenMessageIds = new Set<string>();
   private readonly messageOrder: string[] = [];
+  private readonly options: RemoteSessionGuardOptions;
 
-  constructor(private readonly options: RemoteSessionGuardOptions) {
+  constructor(options: RemoteSessionGuardOptions) {
+    this.options = options;
     this.publicKey = normalizeIdentityPublicKey(options.publicKey);
     if (!isSupportedIdentityKey(this.publicKey)) {
       throw new Error("Remote session identity must be a public P-256 key.");
