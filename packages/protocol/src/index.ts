@@ -16,3 +16,5 @@ export * from "./signatures.ts";
 
 // Legacy v1 (deprecated): local loopback gateway only.
 export * from "./protocol.ts";
+
+export * from "./sessionGuard.ts";
