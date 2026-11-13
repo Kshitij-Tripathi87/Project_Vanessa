@@ -18,8 +18,8 @@ export type GatewayOptions = {
   port: number;
   getManifest: () => { version: string; tools: GatewayTool[] };
   submitTask: (message: Extract<ProtocolMessage, { type: "task.submit" }>, clientId: string) => Promise<{ taskId: string; state?: string; actionHash?: string; expiresAt?: number; summary?: string }>;
-  cancelTask?: (taskId: string) => Promise<void>;
-  confirmTask?: (message: Extract<ProtocolMessage, { type: "task.confirm" }>) => Promise<void>;
+  cancelTask?: (taskId: string, clientId: string) => Promise<void>;
+  confirmTask?: (message: Extract<ProtocolMessage, { type: "task.confirm" }>, clientId: string) => Promise<void>;
   now?: () => number;
   maxPayloadBytes?: number;
   rateLimit?: number;
@@ -59,8 +59,9 @@ export class MobileGateway {
       clientTracking: true,
     });
     server.on("connection", (socket, request) => {
-      const client = request.socket.remoteAddress || "unknown";
-      socket.on("message", (raw) => void this.receive(socket, client, raw));
+      const rateLimitKey = request.socket.remoteAddress || "unknown";
+      const clientId = randomUUID();
+      socket.on("message", (raw) => void this.receive(socket, rateLimitKey, clientId, raw));
       socket.on("close", () => {
         for (const [taskId, owner] of this.taskOwners) if (owner === socket) this.taskOwners.delete(taskId);
       });
@@ -104,13 +105,13 @@ export class MobileGateway {
     else this.send(socket, { v: PROTOCOL_VERSION, id, type: "task.progress", taskId: task.taskId, state: task.state as "queued" | "validating" | "awaiting_confirm" | "running" | "verifying", message: task.state });
   }
 
-  private async receive(socket: WebSocket, client: string, raw: RawData): Promise<void> {
+  private async receive(socket: WebSocket, rateLimitKey: string, clientId: string, raw: RawData): Promise<void> {
     const bytes = rawBytes(raw);
     if (bytes.byteLength > this.maxPayloadBytes) {
       this.send(socket, makeGatewayError("PAYLOAD_TOO_LARGE", "Message exceeds the gateway size limit."));
       return;
     }
-    if (!this.consumeRate(client)) {
+    if (!this.consumeRate(rateLimitKey)) {
       this.send(socket, makeGatewayError("RATE_LIMITED", "Too many requests from this device."));
       return;
     }
@@ -130,7 +131,7 @@ export class MobileGateway {
       this.send(socket, makeGatewayError(unknownType ? "UNKNOWN_MESSAGE_TYPE" : "INVALID_MESSAGE", unknownType ? "Message type is not supported." : "Message does not match the protocol schema."));
       return;
     }
-    await this.dispatch(socket, client, parsed.data);
+    await this.dispatch(socket, clientId, parsed.data);
   }
 
   private async dispatch(socket: WebSocket, clientId: string, message: ProtocolMessage): Promise<void> {
@@ -155,11 +156,11 @@ export class MobileGateway {
         }
         case "task.cancel":
           if (!this.options.cancelTask) throw Object.assign(new Error("Task cancellation is unavailable."), { code: "TASK_NOT_FOUND" });
-          await this.options.cancelTask(message.taskId);
+          await this.options.cancelTask(message.taskId, clientId);
           break;
         case "task.confirm":
           if (!this.options.confirmTask) throw Object.assign(new Error("Confirmation handling is unavailable."), { code: "PERMISSION_DENIED" });
-          await this.options.confirmTask(message);
+          await this.options.confirmTask(message, clientId);
           break;
         default:
           this.send(socket, makeGatewayError("INVALID_MESSAGE", "This message is not a client request."));

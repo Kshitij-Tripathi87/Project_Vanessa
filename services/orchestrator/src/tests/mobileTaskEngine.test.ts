@@ -87,16 +87,47 @@ test("tier 2 work requires an unexpired action-bound confirmation", withDb(async
   };
   const engine = new MobileTaskEngine({ dbPath, now: () => now, tools: [tool] });
   try {
-    const pending = await engine.submit({ requestId: "request-2", idempotencyKey: "device:req-2", tool: "confirm_test", args: { target: "report.pdf" } });
+    const pending = await engine.submit({ requestId: "request-2", idempotencyKey: "device:req-2", tool: "confirm_test", args: { target: "report.pdf" }, deviceId: "phone-a" });
     assert.equal(pending.state, "awaiting_confirm");
     assert.equal(runs, 0);
-    await assert.rejects(engine.confirm({ taskId: pending.taskId, approved: true, actionHash: "0".repeat(64) }), { code: "PERMISSION_DENIED" });
-    await engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash! });
+    await assert.rejects(engine.confirm({ taskId: pending.taskId, approved: true, actionHash: "0".repeat(64), deviceId: "phone-a" }), { code: "PERMISSION_DENIED" });
+    await engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash!, deviceId: "phone-a" });
     await waitFor(() => engine.getTask(pending.taskId)?.state === "done");
     assert.equal(runs, 1);
-    const expired = await engine.submit({ requestId: "request-3", idempotencyKey: "device:req-3", tool: "confirm_test", args: { target: "other.pdf" } });
+    const expired = await engine.submit({ requestId: "request-3", idempotencyKey: "device:req-3", tool: "confirm_test", args: { target: "other.pdf" }, deviceId: "phone-a" });
     now = expired.expiresAt! + 1;
-    await assert.rejects(engine.confirm({ taskId: expired.taskId, approved: true, actionHash: expired.actionHash! }), { code: "CONFIRMATION_EXPIRED" });
+    await assert.rejects(engine.confirm({ taskId: expired.taskId, approved: true, actionHash: expired.actionHash!, deviceId: "phone-a" }), { code: "CONFIRMATION_EXPIRED" });
+    assert.equal(runs, 1);
+  } finally { engine.close(); }
+}));
+
+
+test("confirmation and cancellation are scoped to the submitting device", withDb(async (dbPath) => {
+  let runs = 0;
+  const tool = {
+    name: "owner_test", description: "Ownership-bound action.", argsSchema: z.object({ target: z.string() }).strict(),
+    manifestSchema: { type: "object", properties: { target: { type: "string" } }, required: ["target"], additionalProperties: false },
+    tier: 2 as const, timeoutMs: 1000, idempotent: false, queue: "ui" as const,
+    handler: async () => { runs++; return { changed: true }; }, verifier: async () => true,
+  };
+  const engine = new MobileTaskEngine({ dbPath, tools: [tool] });
+  try {
+    const pending = await engine.submit({
+      requestId: "request-owner", idempotencyKey: "owner:1", tool: "owner_test",
+      args: { target: "settings" }, deviceId: "phone-a",
+    });
+    assert.equal(pending.state, "awaiting_confirm");
+
+    await assert.rejects(
+      engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash!, deviceId: "phone-b" }),
+      { code: "TASK_NOT_FOUND" },
+    );
+    await assert.rejects(engine.cancel(pending.taskId, "phone-b"), { code: "TASK_NOT_FOUND" });
+    assert.equal(engine.getTask(pending.taskId)?.state, "awaiting_confirm");
+    assert.equal(runs, 0);
+
+    await engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash!, deviceId: "phone-a" });
+    await waitFor(() => engine.getTask(pending.taskId)?.state === "done");
     assert.equal(runs, 1);
   } finally { engine.close(); }
 }));
@@ -124,10 +155,10 @@ test("Tier 2 delete moves one disposable allowlisted file to the Recycle Bin", {
   fs.writeFileSync(filePath, "Disposable Phase 2 integration fixture; no user data.", "utf8");
   const engine = new MobileTaskEngine({ dbPath });
   try {
-    const pending = await engine.submit({ requestId: "request-delete", idempotencyKey: `delete-${Date.now()}`, tool: "delete_file", args: { path: filePath } });
+    const pending = await engine.submit({ requestId: "request-delete", idempotencyKey: `delete-${Date.now()}`, tool: "delete_file", args: { path: filePath }, deviceId: "phone-delete-test" });
     assert.equal(pending.state, "awaiting_confirm");
     assert.match(pending.summary ?? "", /Vanessa Mobile Recycle Bin Check\.txt/);
-    await engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash! });
+    await engine.confirm({ taskId: pending.taskId, approved: true, actionHash: pending.actionHash!, deviceId: "phone-delete-test" });
     await waitFor(() => ["done", "failed", "timed_out"].includes(engine.getTask(pending.taskId)?.state ?? ""), 25_000);
     assert.equal(engine.getTask(pending.taskId)?.state, "done", JSON.stringify(engine.getTask(pending.taskId)));
     assert.equal(fs.existsSync(filePath), false);

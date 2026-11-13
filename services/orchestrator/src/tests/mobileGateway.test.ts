@@ -102,7 +102,8 @@ test("gateway submits to the PC engine and streams its verified result", async (
   gateway = new MobileGateway({
     host: "127.0.0.1", port: 0, getManifest: () => engine.getManifest(),
     submitTask: (message, clientId) => engine.submit({ requestId: message.id, idempotencyKey: message.idempotencyKey, tool: message.tool, args: message.args, deviceId: clientId }),
-    cancelTask: (taskId) => engine.cancel(taskId), confirmTask: (message) => engine.confirm(message),
+    cancelTask: (taskId, deviceId) => engine.cancel(taskId, deviceId),
+    confirmTask: (message, deviceId) => engine.confirm({ taskId: message.taskId, approved: message.approved, actionHash: message.actionHash, deviceId }),
   });
   const server = gateway.createServer();
   await once(server, "listening");

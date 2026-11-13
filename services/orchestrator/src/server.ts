@@ -595,8 +595,13 @@ export async function startServer() {
         host, port,
         getManifest: () => mobileTaskEngine!.getManifest(),
         submitTask: (message, clientId) => mobileTaskEngine!.submit({ requestId: message.id, idempotencyKey: message.idempotencyKey, tool: message.tool, args: message.args, deviceId: clientId }),
-        cancelTask: (taskId) => mobileTaskEngine!.cancel(taskId),
-        confirmTask: (message) => mobileTaskEngine!.confirm(message),
+        cancelTask: (taskId, deviceId) => mobileTaskEngine!.cancel(taskId, deviceId),
+        confirmTask: (message, deviceId) => mobileTaskEngine!.confirm({
+          taskId: message.taskId,
+          approved: message.approved,
+          actionHash: message.actionHash,
+          deviceId,
+        }),
       });
       const socketServer = mobileGateway.createServer();
       socketServer.on("listening", () => console.log(`[Vanessa Mobile Gateway] ws://${host}:${port}`));
