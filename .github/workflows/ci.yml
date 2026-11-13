@@ -70,6 +70,16 @@ jobs:
       - name: Start voice agent and exercise sandbox ASR-to-TTS loop
         run: pnpm --filter @vanessa/voice-agent exec tsx --test src/tests/voiceServerSandbox.test.ts
 
+      - name: Set up Python for local Whisper support tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test Python voice support and syntax
+        run: |
+          python -m unittest discover -s services/voice-agent/tests -v
+          python -m py_compile services/voice-agent/voice_server.py services/voice-agent/transcript_logging.py services/voice-agent/test_voice_loop.py
+
       - name: Build desktop renderer and Electron main process
         run: pnpm --filter @vanessa/desktop build
 
