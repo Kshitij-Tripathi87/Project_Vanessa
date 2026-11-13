@@ -233,7 +233,9 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   log('1/5 ENV', hasEnv ? 'Loaded per-user .env; credentials are not printed.' : 'No per-user .env; first-run setup creates a local profile.');
   if (hasEnv) log('1/5 ENV', `Configuration last changed=${fs.statSync(envPath).mtime.toISOString()}; restart required after edits.`);
   log('Launcher', `Log file: ${logFile}`);
-  const config = launcherConfig(process.env, process.argv.slice(2), root, fs.existsSync);
+  const runtimeSmoke = process.argv.includes("--runtime-smoke");
+  const launcherArgs = process.argv.slice(2).filter((arg) => arg !== "--runtime-smoke");
+  const config = launcherConfig(process.env, launcherArgs, root, fs.existsSync);
   const workspaceRoot = path.resolve(process.env.VANESSA_WORKSPACE_ROOT || root);
   fs.mkdirSync(workspaceRoot, { recursive: true });
   process.chdir(workspaceRoot);
@@ -353,11 +355,81 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   if (stopping) return;
   if (!uiReady) throw new Error('Built desktop UI did not become available on port 5173.');
   log('DESKTOP UI', 'Built renderer ready on trusted local origin http://127.0.0.1:5173');
+  if (runtimeSmoke) {
+    const debugPort = Number(process.env.VANESSA_RUNTIME_SMOKE_DEBUG_PORT || 9222);
+    if (!Number.isInteger(debugPort) || debugPort < 1024 || debugPort > 65535 || [port, 4500, 5173].includes(debugPort)) {
+      throw new Error('Invalid VANESSA_RUNTIME_SMOKE_DEBUG_PORT.');
+    }
+    await assertPortFree(debugPort);
+
+    // Verify that this same launcher can bring up Electron after both backend
+    // services and the renderer are healthy. Providers use sandbox-only keys;
+    // this test never sends a user command or makes a provider request.
+    const voiceReady = await fetch('http://127.0.0.1:4500/ready', { signal: AbortSignal.timeout(1500) });
+    if (!voiceReady.ok) throw new Error('Voice agent /ready did not return HTTP 200.');
+
+    log('5/5 DESKTOP', 'Launching Electron for runtime smoke; DevTools is loopback-only.');
+    const desktop = startService(
+      'DESKTOP',
+      `--remote-debugging-port=${debugPort}`,
+      ['--disable-gpu', `--user-data-dir=${path.join(configHome, 'electron-profile')}`, '.'],
+      electron,
+      { cwd: path.join(root, 'apps/desktop') },
+    );
+    const debugUrl = `http://127.0.0.1:${debugPort}/json/list`;
+    const rendererDeadline = Date.now() + 25_000;
+    let rendererReady = false;
+    while (Date.now() < rendererDeadline && !stopping) {
+      if (desktop.exitCode !== null || desktop.signalCode !== null) {
+        throw new Error(`Electron exited before its renderer became ready (exit=${desktop.exitCode}, signal=${desktop.signalCode}).`);
+      }
+      try {
+        const response = await fetch(debugUrl, { signal: AbortSignal.timeout(800) });
+        if (response.ok) {
+          const pages = await response.json();
+          rendererReady = Array.isArray(pages) && pages.some((page) =>
+            page && page.type === 'page' &&
+            typeof page.url === 'string' &&
+            new URL(page.url).origin === 'http://127.0.0.1:5173'
+          );
+          if (rendererReady) break;
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!rendererReady) throw new Error('Electron stayed alive but its renderer did not load from the local Vanessa UI.');
+
+    const [orchestratorResponse, voiceResponse, voiceReadyResponse] = await Promise.all([
+      fetch(`${orchestratorUrl}/health`, { signal: AbortSignal.timeout(1500) }),
+      fetch('http://127.0.0.1:4500/health', { signal: AbortSignal.timeout(1500) }),
+      fetch('http://127.0.0.1:4500/ready', { signal: AbortSignal.timeout(1500) }),
+    ]);
+    const [orchestratorHealth, voiceHealth] = await Promise.all([
+      orchestratorResponse.json(),
+      voiceResponse.json(),
+    ]);
+    if (!orchestratorResponse.ok || orchestratorHealth.service !== 'vanessa-orchestrator') {
+      throw new Error('Orchestrator lost its health identity during the desktop smoke test.');
+    }
+    if (!voiceResponse.ok || voiceHealth.service !== 'vanessa-voice-agent' || voiceHealth.readiness !== 'ready' || !voiceReadyResponse.ok) {
+      throw new Error('Voice agent is not ready while the desktop is running. Inspect the voice-agent launcher logs.');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    if (desktop.exitCode !== null || desktop.signalCode !== null) {
+      throw new Error('Electron exited during the post-start stability window.');
+    }
+    log('RUNTIME SMOKE PASS', 'Orchestrator, voice agent, local renderer and Electron stayed healthy together.');
+    shutdown(0, 'Runtime smoke passed. Stopping all sandbox-owned processes.');
+    return;
+  }
+
   log('5/5 DESKTOP', 'Launching desktop. Enter a command and approve tasks when requested.');
   if (config.strict) log('Codex Test', `Expected: input -> ${config.planner} -> Planner -> awaiting_approval -> approval -> Codex handoff. Terminal launch does not verify coding completion.`);
   log('Launcher', 'Close the desktop or press Ctrl+C to stop owned services. Reused services remain running.');
   await run('DESKTOP', electron, ['.'], path.join(root, 'apps/desktop'));
   shutdown(0, 'Desktop closed. Stopping services started by this launcher.');
+
 }
 
 module.exports = { ensureService, startService };
