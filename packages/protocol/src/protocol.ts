@@ -1,3 +1,20 @@
+/**
+ * LEGACY — protocol v1 (unauthenticated local loopback listener).
+ *
+ * Superseded by the v2 remote protocol (`./envelope.ts`, `./messages.ts`,
+ * `./signatures.ts`) for everything the phone and PC exchange. v1 keeps only
+ * the message types the desktop's existing loopback gateway speaks, and it is
+ * retained so `apps/desktop` continues to build while its UI migrates.
+ *
+ * Do not extend v1:
+ * - no signatures, no device identity, no per-session sequence numbers;
+ * - 1 MiB frames instead of the 64 KiB control bound;
+ * - the client is trusted with a permission tier, which v2 forbids.
+ *
+ * New code must use the v2 exports. This module is deleted once the desktop
+ * HUD and the legacy `/api/remote/*` surface are converted.
+ */
+
 import { z, ZodTypeAny } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 

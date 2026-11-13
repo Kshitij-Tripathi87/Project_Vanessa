@@ -8,6 +8,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,

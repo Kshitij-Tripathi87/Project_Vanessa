@@ -15,7 +15,8 @@
   },
   "scripts": {
     "build": "tsc && node scripts/generate-json-schema.mjs && node scripts/generate-kotlin-models.mjs",
-    "test": "node --test src/**/*.test.ts",
+    "test": "node --test src/*.test.ts",
+    "fixtures": "node scripts/generate-fixtures.mjs",
     "lint": "eslint src"
   },
   "dependencies": {
