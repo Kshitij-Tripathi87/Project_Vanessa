@@ -302,6 +302,28 @@ class RemoteEnvelopeV2Test {
         assertEquals(0, guard.lastAcceptedSequence())
     }
 
+    @Test
+    fun epochTimestampBoundsMatchTheSharedProtocol() {
+        val pair = p256KeyPair()
+        val keyId = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val payload = json.parseToJsonElement("""{"sentAt":0}""").jsonObject
+        for (timestamp in listOf(-1L, REMOTE_MAX_EPOCH_MS + 1L)) {
+            assertFailsWith<IllegalArgumentException> {
+                RemoteEnvelopeCrypto.sign(
+                    RemoteEnvelopeSeedV2(
+                        type = "ping",
+                        payload = payload,
+                        keyId = keyId,
+                        sentAt = timestamp,
+                        sequence = 1,
+                    ),
+                    pair.private,
+                    pair.public,
+                )
+            }
+        }
+    }
+
     private fun p256KeyPair() = KeyPairGenerator.getInstance("EC").run {
         initialize(ECGenParameterSpec("secp256r1"))
         generateKeyPair()

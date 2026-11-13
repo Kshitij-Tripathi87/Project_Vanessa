@@ -24,6 +24,7 @@ const val REMOTE_PROTOCOL_V2 = 2
 const val REMOTE_SIGNATURE_ALGORITHM = "ES256"
 const val PRE_SESSION_ID = "00000000-0000-0000-0000-000000000000"
 const val REMOTE_MAX_SEQUENCE = 2_147_483_647
+const val REMOTE_MAX_EPOCH_MS = 8_640_000_000_000_000L
 
 @Serializable
 data class RemoteEnvelopeAuthV2(
@@ -172,7 +173,7 @@ object RemoteEnvelopeCrypto {
         require(isLowercaseUuid(envelope.messageId)) { "messageId must be a lowercase UUID" }
         require(isLowercaseUuid(envelope.sessionId)) { "sessionId must be a lowercase UUID" }
         require(envelope.type in allowedTypes) { "Unknown protocol v2 message type" }
-        require(envelope.sentAt >= 0L) { "sentAt must be nonnegative" }
+        require(envelope.sentAt in 0..REMOTE_MAX_EPOCH_MS) { "sentAt is outside protocol epoch bounds" }
         require(envelope.sequence in 0..REMOTE_MAX_SEQUENCE) { "sequence is outside protocol bounds" }
         require(envelope.keyId.matches(Regex("^[A-Za-z0-9_-]{16,128}$"))) { "Invalid keyId" }
         require(envelope.payload.size <= 32 && envelope.payload.keys.all { it.length <= 64 }) {
