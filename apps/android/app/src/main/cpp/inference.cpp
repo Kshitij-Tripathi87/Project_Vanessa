@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -54,7 +55,7 @@ struct Result {
     double tokens_per_second;
 };
 
-Result generate(const std::string & prompt, int max_tokens) {
+Result generate(const std::string & prompt, int max_tokens, const std::string & grammar) {
     if (!model || !context) throw std::runtime_error("Load a GGUF before generating");
     if (prompt.empty() || prompt.size() > 1024 * 1024) throw std::runtime_error("Prompt is empty or too large");
     if (max_tokens < 1 || max_tokens > 2048) throw std::runtime_error("Invalid maxTokens");
@@ -62,7 +63,7 @@ Result generate(const std::string & prompt, int max_tokens) {
     const int32_t capacity = static_cast<int32_t>(llama_n_ctx(context));
     std::vector<llama_token> tokens(static_cast<size_t>(capacity));
     const int32_t count = llama_tokenize(vocab, prompt.data(), static_cast<int32_t>(prompt.size()),
-                                          tokens.data(), capacity, true, false);
+                                          tokens.data(), capacity, false, true);
     if (count <= 0 || count >= capacity) throw std::runtime_error("Prompt exceeds the model context window");
     tokens.resize(static_cast<size_t>(count));
     llama_memory_clear(llama_get_memory(context), false);
@@ -81,7 +82,17 @@ Result generate(const std::string & prompt, int max_tokens) {
     llama_sampler * sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     if (!sampler) throw std::runtime_error("Could not create llama sampler");
     try {
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+        if (!grammar.empty()) {
+            llama_sampler * grammar_sampler = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
+            if (!grammar_sampler) throw std::runtime_error("Could not initialise the constrained-decoding grammar");
+            llama_sampler_chain_add(sampler, grammar_sampler);
+        }
+        // Qwen3's recommended non-thinking sampling profile: temperature 0.7,
+        // top-p 0.8 and top-k 20. Grammar filtering runs before token selection.
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(20));
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.8f, 1));
+        llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7f));
+        llama_sampler_chain_add(sampler, llama_sampler_init_dist(std::random_device{}()));
         std::string text;
         int generated = 0;
         int64_t ttft_ms = 0;
@@ -167,14 +178,22 @@ Java_com_vanessa_mobile_inference_LlamaCppInference_nativeLoad(JNIEnv * env, job
 
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_vanessa_mobile_inference_LlamaCppInference_nativeGenerate(JNIEnv * env, jobject,
-                                                                      jbyteArray prompt, jint max_tokens) {
+                                                                      jbyteArray prompt, jint max_tokens,
+                                                                      jstring grammar) {
     try {
         if (!prompt) throw std::runtime_error("Prompt is missing");
         const std::string input = from_bytes(env, prompt);
         if (env->ExceptionCheck()) return nullptr;
+        std::string grammar_text;
+        if (grammar) {
+            const char * chars = env->GetStringUTFChars(grammar, nullptr);
+            if (!chars) return nullptr;
+            grammar_text.assign(chars);
+            env->ReleaseStringUTFChars(grammar, chars);
+        }
         std::lock_guard<std::mutex> guard(runtime_mutex);
         cancelled.store(false);
-        const Result result = generate(input, max_tokens);
+        const Result result = generate(input, max_tokens, grammar_text);
         if (result.text.size() > static_cast<size_t>(std::numeric_limits<jsize>::max()))
             throw std::runtime_error("Output too large");
         jbyteArray bytes = env->NewByteArray(static_cast<jsize>(result.text.size()));
