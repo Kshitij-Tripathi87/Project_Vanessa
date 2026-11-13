@@ -39,9 +39,6 @@ importers:
       '@vanessa/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@vanessa/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
       '@vanessa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -162,6 +159,9 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.2
         version: 11.3.4
+      '@vanessa/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@vanessa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
