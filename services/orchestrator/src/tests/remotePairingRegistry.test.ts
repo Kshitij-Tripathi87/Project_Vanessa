@@ -143,6 +143,7 @@ test("pairing challenge expires and cannot be approved after timeout", async () 
     const window = registry.createPairingWindow(NOW);
     const challenge = registry.claim(claimEnvelope(phone, window), NOW);
     advance(2 * 60_000 + 1);
+    assert.deepEqual(registry.getPendingApprovals(), []);
     assert.throws(
       () => registry.complete(completeEnvelope(phone, window.pairingId, challenge.nonce), NOW + 2 * 60_000 + 1),
       (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_EXPIRED",

@@ -368,9 +368,10 @@ export class RemotePairingRegistry {
 
   getPendingApprovals(): PendingRemotePairing[] {
     this.ensureInitialized();
+    this.expirePending(this.now());
     return [...this.pairings.values()]
       .filter((entry) => entry.state === "awaiting_approval" && entry.keyId && entry.deviceHint &&
-        entry.platform && entry.appVersion && entry.requestedAt && entry.challengeExpiresAt)
+        entry.platform && entry.appVersion && entry.requestedAt !== undefined && entry.challengeExpiresAt !== undefined)
       .map((entry) => ({
         pairingId: entry.pairingId,
         keyId: entry.keyId!,
@@ -466,8 +467,12 @@ export class RemotePairingRegistry {
 
   private expirePending(nowMs: number): void {
     for (const entry of this.pairings.values()) {
-      if ((entry.state === "ready" || entry.state === "challenge_issued" || entry.state === "awaiting_approval") &&
-          entry.expiresAt <= nowMs) {
+      const pairingWindowExpired = entry.expiresAt <= nowMs;
+      const challengeExpired = entry.challengeExpiresAt !== undefined && entry.challengeExpiresAt <= nowMs;
+      if (entry.state === "ready" && pairingWindowExpired) {
+        entry.state = "expired";
+      } else if ((entry.state === "challenge_issued" || entry.state === "awaiting_approval") &&
+          (pairingWindowExpired || challengeExpired)) {
         entry.state = "expired";
       }
     }
