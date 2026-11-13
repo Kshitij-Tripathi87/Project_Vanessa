@@ -60,7 +60,7 @@ object JcsCanonicalizer {
                         append(value[index + 1])
                         index++
                     }
-                    char.isSurrogate() -> append("\\u").append(char.code.toString(16).padStart(4, '0'))
+                    char.code in 0xD800..0xDFFF -> append("\\u").append(char.code.toString(16).padStart(4, '0'))
                     else -> append(char)
                 }
             }
