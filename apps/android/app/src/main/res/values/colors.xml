@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand colors -->
+    <color name="vanessa_primary">#6366F1</color>    <!-- Indigo 500 -->
+    <color name="vanessa_primary_variant">#4F46E5</color>    <!-- Indigo 600 -->
+    <color name="vanessa_secondary">#06B6D4</color>    <!-- Cyan 500 -->
+    <color name="vanessa_secondary_variant">#0891B2</color>    <!-- Cyan 600 -->
+    <color name="vanessa_background">#0F172A</color>    <!-- Slate 950 -->
+    <color name="vanessa_surface">#1E293B</color>    <!-- Slate 800 -->
+    <color name="vanessa_surface_variant">#334155</color>    <!-- Slate 700 -->
+    <color name="vanessa_on_primary">#FFFFFF</color>
+    <color name="vanessa_on_secondary">#FFFFFF</color>
+    <color name="vanessa_on_background">#F8FAFC</color>    <!-- Slate 50 -->
+    <color name="vanessa_on_surface">#F1F5F9</color>    <!-- Slate 100 -->
+    <color name="vanessa_error">#EF4444</color>    <!-- Red 500 -->
+    <color name="vanessa_on_error">#FFFFFF</color>
+    <color name="vanessa_success">#22C55E</color>    <!-- Green 500 -->
+    <color name="vanessa_warning">#F59E0B</color>    <!-- Amber 500 -->
+    <color name="vanessa_outline">#475569</color>    <!-- Slate 600 -->
+    <color name="vanessa_orb_gradient_start">#6366F1</color>
+    <color name="vanessa_orb_gradient_end">#06B6D4</color>
+</resources>

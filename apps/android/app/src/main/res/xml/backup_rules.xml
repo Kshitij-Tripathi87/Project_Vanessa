@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Pairing state is device-local; never copy it to another device. -->
+    <exclude domain="file" path="datastore/" />
+</full-backup-content>
