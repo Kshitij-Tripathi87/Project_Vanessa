@@ -33,6 +33,14 @@ class LlamaCppInference private constructor(private val context: Context) : Loca
     }
     private val closed = AtomicBoolean(false)
 
+    @Volatile
+    var lastGenerationMetrics: GenerationResult? = null
+        private set
+
+    @Volatile
+    var isModelLoaded: Boolean = false
+        private set
+
     /** True only if the native library can actually be loaded on this device. */
     val isAvailable: Boolean by lazy {
         Build.VERSION.SDK_INT >= 28 && Build.SUPPORTED_ABIS.contains("arm64-v8a") &&
@@ -52,22 +60,35 @@ class LlamaCppInference private constructor(private val context: Context) : Loca
         require(model.isFile && model.toPath().startsWith(root.toPath()) && model != root) {
             "GGUF must exist in app-private filesDir"
         }
+        isModelLoaded = false
         execute { nativeLoad(model.path) }
+        isModelLoaded = true
     }
 
     /** Runs on a worker thread; cancellation interrupts loading/prefill/decoding via native callbacks. */
-    suspend fun generateResult(prompt: String, maxTokens: Int = 256): GenerationResult {
+    suspend fun generateResult(
+        prompt: String,
+        maxTokens: Int = 256,
+        grammar: String? = null,
+    ): GenerationResult {
         check(isAvailable) { "Local llama.cpp runtime is unavailable" }
         require(maxTokens in 1..2048) { "maxTokens must be between 1 and 2048" }
-        require(prompt.isNotEmpty()) { "prompt must not be empty" }
-        val result = execute { nativeGenerate(prompt.toByteArray(Charsets.UTF_8), maxTokens) }
+        val formattedPrompt = Qwen3PromptTemplate.format(prompt)
+        val result = execute {
+            nativeGenerate(formattedPrompt.toByteArray(Charsets.UTF_8), maxTokens, grammar)
+        }
         return GenerationResult(
             result.bytes.toString(Charsets.UTF_8), result.promptTokens,
             result.generatedTokens, result.ttftMs, result.tokensPerSecond,
-        )
+        ).also { lastGenerationMetrics = it }
     }
 
     override suspend fun generate(prompt: String): String = generateResult(prompt).text
+
+    override suspend fun generateConstrained(prompt: String, grammar: String): String {
+        require(grammar.isNotBlank() && grammar.length <= 16_384) { "Invalid decoding grammar" }
+        return generateResult(prompt, maxTokens = 160, grammar = grammar).text
+    }
 
     private suspend fun <T> execute(block: () -> T): T = suspendCancellableCoroutine { continuation ->
         if (closed.get()) {
@@ -97,13 +118,14 @@ class LlamaCppInference private constructor(private val context: Context) : Loca
                 nativeCancel()
                 nativeClose()
             }
+            isModelLoaded = false
             worker.shutdownNow()
             synchronized(LlamaCppInference) { instance = null }
         }
     }
 
     private external fun nativeLoad(path: String)
-    private external fun nativeGenerate(prompt: ByteArray, maxTokens: Int): NativeGeneration
+    private external fun nativeGenerate(prompt: ByteArray, maxTokens: Int, grammar: String?): NativeGeneration
     private external fun nativeCancel()
     private external fun nativeClose()
 

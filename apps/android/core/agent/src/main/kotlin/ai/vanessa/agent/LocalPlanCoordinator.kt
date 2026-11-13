@@ -11,6 +11,9 @@ import kotlinx.serialization.json.JsonPrimitive
 
 interface LocalInference {
     suspend fun generate(prompt: String): String
+
+    /** Constrained decoding. Non-native test adapters may fall back to plain generation. */
+    suspend fun generateConstrained(prompt: String, grammar: String): String = generate(prompt)
 }
 
 interface LocalToolExecutor {
@@ -61,6 +64,11 @@ object LocalPlanValidator {
     const val MAX_PROMPT_CHARS = 2048
     const val MAX_PLAN_CHARS = 4096
     const val MAX_EVIDENCE_CHARS = 1024
+
+    // A strict GBNF allow-list: one or two exact tool calls, with no extra fields.
+    const val PLAN_GBNF = """root ::= "{\"steps\":[" step ("," step)? "]}"
+step ::= "{\"tool\":\"android.calendar.search\",\"args\":{\"range\":\"today\"}}" | "{\"tool\":\"android.device.status\",\"args\":{}}"
+"""
 
     fun validate(raw: String): LocalPlanValidation {
         if (raw.length > MAX_PLAN_CHARS) return LocalPlanValidation.Invalid("Plan exceeds size limit")
@@ -118,10 +126,11 @@ class LocalPlanCoordinator(
         }
         currentCoroutineContext().ensureActive()
         val raw = try {
-            inference.generate(
-                "Produce only JSON: {\"steps\":[{\"tool\":\"android.device.status\",\"args\":{}}]}. " +
-                        "Allowed tools: android.device.status with {}, android.calendar.search with {\"range\":\"today\"}. " +
-                        "Use 1 or 2 steps. No permissions or other fields. User request: ${JsonPrimitive(prompt)}"
+            inference.generateConstrained(
+                "Choose only the allowed local tools for the user's request. Return the exact JSON plan. " +
+                        "Use one or two steps. Do not invent tools, arguments, or permissions. " +
+                        "User request: ${JsonPrimitive(prompt)}",
+                LocalPlanValidator.PLAN_GBNF
             )
         } catch (e: CancellationException) {
             throw e

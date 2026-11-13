@@ -51,6 +51,25 @@ class LocalPlanCoordinatorSpec {
     }
 
     @Test
+    fun plannerUsesTheAllowlistedGrammarDuringGeneration() = runBlocking {
+        var observedGrammar: String? = null
+        val inference = object : LocalInference {
+            override suspend fun generate(prompt: String): String =
+                error("Unconstrained generation must not be used for task plans")
+
+            override suspend fun generateConstrained(prompt: String, grammar: String): String {
+                observedGrammar = grammar
+                return plan(calendar)
+            }
+        }
+        val outcome = LocalPlanCoordinator(inference, tool {
+            LocalToolResult.Success("No events today.")
+        }).run("Check my calendar")
+
+        assertTrue(outcome is LocalPlanOutcome.Success)
+        assertEquals(LocalPlanValidator.PLAN_GBNF, observedGrammar)
+    }
+    @Test
     fun permissionRequiredStopsNextStepAndPreservesEvidence() = runBlocking {
         val calls = mutableListOf<String>()
         val outcome = LocalPlanCoordinator(model { plan(status, calendar) }, tool { name ->
