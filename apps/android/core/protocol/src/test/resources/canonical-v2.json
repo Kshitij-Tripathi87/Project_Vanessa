@@ -1,0 +1,162 @@
+{
+  "version": 2,
+  "generatedBy": "packages/protocol/scripts/generate-fixtures.mjs",
+  "description": "Golden JCS vectors. Kotlin and TypeScript must both produce `canonical` byte-for-byte from `input`; `sha256` is the digest of `canonical`.",
+  "vectors": [
+    {
+      "name": "nested-object-and-array",
+      "description": "Key order follows UTF-16 code units, not insertion order; array order is preserved.",
+      "input": {
+        "a": [
+          1,
+          2,
+          {
+            "c": "x",
+            "b": 2,
+            "a": 1
+          }
+        ],
+        "b": 1
+      },
+      "expected": "{\"a\":[1,2,{\"a\":1,\"b\":2,\"c\":\"x\"}],\"b\":1}",
+      "canonical": "{\"a\":[1,2,{\"a\":1,\"b\":2,\"c\":\"x\"}],\"b\":1}",
+      "sha256": "f773b5319b9670889411c7a5ad80e73344c04d70e9e001cfc9f85861ef77ab50"
+    },
+    {
+      "name": "utf16-key-ordering-digits",
+      "description": "Numeric-looking keys sort by code units, so 10 precedes 2.",
+      "input": {
+        "2": 3,
+        "10": 2,
+        "a": 1
+      },
+      "expected": "{\"10\":2,\"2\":3,\"a\":1}",
+      "canonical": "{\"10\":2,\"2\":3,\"a\":1}",
+      "sha256": "a65782bb108e8f67ed089bfef373cbb7228b1ee4e542fb70cb9db3c2e49d2e52"
+    },
+    {
+      "name": "bare-minus-sign-is-invalid",
+      "description": "-0 serializes as 0 and 1.0 serializes as 1; trailing zeros are dropped.",
+      "input": {
+        "a": 0,
+        "b": 1,
+        "c": 100,
+        "d": 1.5
+      },
+      "expected": "{\"a\":0,\"b\":1,\"c\":100,\"d\":1.5}",
+      "canonical": "{\"a\":0,\"b\":1,\"c\":100,\"d\":1.5}",
+      "sha256": "41dc657b6a8e021ce395569b4be3cdcd1a1431e337af1aac5658fcb6d74a72eb"
+    },
+    {
+      "name": "number-exponent-thresholds",
+      "description": "Exponent form starts at 1e21 or below 1e-6; 9.99e20 stays fixed (21 digits).",
+      "input": {
+        "a": 1e+21,
+        "b": 1e-7,
+        "c": 0.000001,
+        "d": 273.15,
+        "e": 999000000000000000000
+      },
+      "expected": "{\"a\":1e+21,\"b\":1e-7,\"c\":0.000001,\"d\":273.15,\"e\":999000000000000000000}",
+      "canonical": "{\"a\":1e+21,\"b\":1e-7,\"c\":0.000001,\"d\":273.15,\"e\":999000000000000000000}",
+      "sha256": "c337f66a353209d13279bbfbfe71e21f552625b867f4d163571fcd41907b6336"
+    },
+    {
+      "name": "safe-integer-boundary",
+      "description": "Integers beyond 2^53-1 are serialized as the double they round to.",
+      "input": {
+        "a": 9007199254740992,
+        "b": 9007199254740992
+      },
+      "expected": "{\"a\":9007199254740992,\"b\":9007199254740992}",
+      "canonical": "{\"a\":9007199254740992,\"b\":9007199254740992}",
+      "sha256": "ed9c3763c490672f1423b64eef67be7e0f4b18752149e317d090eda859e4335a"
+    },
+    {
+      "name": "string-escapes",
+      "description": "Only the mandatory escapes are emitted; / is not escaped and lone surrogates are \\uXXXX.",
+      "input": {
+        "a": "quote\"back\\slash",
+        "b": "\u0000\u001f",
+        "c": "\b\f\n\r\t",
+        "d": "slash/kept",
+        "e": "\ud800lone"
+      },
+      "expected": "{\"a\":\"quote\\\"back\\\\slash\",\"b\":\"\\u0000\\u001f\",\"c\":\"\\b\\f\\n\\r\\t\",\"d\":\"slash/kept\",\"e\":\"\\ud800lone\"}",
+      "canonical": "{\"a\":\"quote\\\"back\\\\slash\",\"b\":\"\\u0000\\u001f\",\"c\":\"\\b\\f\\n\\r\\t\",\"d\":\"slash/kept\",\"e\":\"\\ud800lone\"}",
+      "sha256": "9b6076218d6264cc49f3deaab35db72c394824c56d45db15997e4acffd8618c4"
+    },
+    {
+      "name": "unicode-passthrough",
+      "description": "Non-ASCII text and astral (surrogate pair) characters are emitted as raw UTF-8.",
+      "input": {
+        "a": "é",
+        "b": "😀",
+        "c": "中文",
+        "d": "😀"
+      },
+      "expected": "{\"a\":\"é\",\"b\":\"😀\",\"c\":\"中文\",\"d\":\"😀\"}",
+      "canonical": "{\"a\":\"é\",\"b\":\"😀\",\"c\":\"中文\",\"d\":\"😀\"}",
+      "sha256": "6d6010b0650680b908ce73118206f40010eb4a01fa1f73c560b3669c2d031aa2"
+    },
+    {
+      "name": "control-character-form-feed",
+      "description": "b, f, n, r and t use the two-character escapes; other C0 controls use \\uXXXX.",
+      "input": {
+        "\f": "x"
+      },
+      "expected": "{\"\\f\":\"x\"}",
+      "canonical": "{\"\\f\":\"x\"}",
+      "sha256": "a7b1a4c57f37516c0de7a16a13642b6f2f21953c15e51acc7e99669dceeb30cb"
+    },
+    {
+      "name": "null-and-booleans",
+      "description": "null, true and false are real JSON values and are never dropped.",
+      "input": {
+        "a": null,
+        "b": true,
+        "c": false,
+        "d": []
+      },
+      "expected": "{\"a\":null,\"b\":true,\"c\":false,\"d\":[]}",
+      "canonical": "{\"a\":null,\"b\":true,\"c\":false,\"d\":[]}",
+      "sha256": "3fe8fde7a951fc9a4ea0814d201f4c35a05997f47aa821686ef2d7ae4e9b12f4"
+    },
+    {
+      "name": "empty-object-and-array",
+      "description": "Empty containers serialize with no separator or whitespace.",
+      "input": [
+        {},
+        [],
+        {
+          "a": {}
+        }
+      ],
+      "expected": "[{},[],{\"a\":{}}]",
+      "canonical": "[{},[],{\"a\":{}}]",
+      "sha256": "8fbdc676996d362cd8ff7111ab97bbd11da652addeacec5c9facfc5ad09642fa"
+    },
+    {
+      "name": "action-hash-preimage",
+      "description": "The exact object the PC hashes for an approval; nested objects are sorted too.",
+      "input": {
+        "taskId": "0d3a8c0c-9e2a-4b6f-9f11-2f4a6b8c1d03",
+        "taskVersion": 1,
+        "capability": "media_play_pause",
+        "capabilityVersion": 1,
+        "canonicalArguments": {
+          "app": "spotify"
+        },
+        "target": {
+          "kind": "app",
+          "value": "spotify.exe"
+        },
+        "policyVersion": "policy-2026-11-01",
+        "expiresAt": 1760000600000
+      },
+      "expected": "{\"canonicalArguments\":{\"app\":\"spotify\"},\"capability\":\"media_play_pause\",\"capabilityVersion\":1,\"expiresAt\":1760000600000,\"policyVersion\":\"policy-2026-11-01\",\"target\":{\"kind\":\"app\",\"value\":\"spotify.exe\"},\"taskId\":\"0d3a8c0c-9e2a-4b6f-9f11-2f4a6b8c1d03\",\"taskVersion\":1}",
+      "canonical": "{\"canonicalArguments\":{\"app\":\"spotify\"},\"capability\":\"media_play_pause\",\"capabilityVersion\":1,\"expiresAt\":1760000600000,\"policyVersion\":\"policy-2026-11-01\",\"target\":{\"kind\":\"app\",\"value\":\"spotify.exe\"},\"taskId\":\"0d3a8c0c-9e2a-4b6f-9f11-2f4a6b8c1d03\",\"taskVersion\":1}",
+      "sha256": "7e1282afb2e9e162c04769ca085d977da22f42720798d5208eb4299a458ec7af"
+    }
+  ]
+}
