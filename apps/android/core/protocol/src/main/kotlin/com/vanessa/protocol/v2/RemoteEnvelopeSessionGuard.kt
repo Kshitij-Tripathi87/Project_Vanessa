@@ -30,7 +30,7 @@ class RemoteEnvelopeSessionGuard(
     private val sessionId: String,
     private val keyId: String,
     private val publicKey: PublicKey,
-    lastAcceptedSequence: Int = 0,
+    lastAcceptedSequence: Int = -1,
     private val maxMessageAgeMs: Long = 60_000,
     private val maxFutureSkewMs: Long = 5_000,
     private val maxRememberedMessageIds: Int = 2_048,
@@ -47,7 +47,7 @@ class RemoteEnvelopeSessionGuard(
             "The pinned key ID does not match the public key"
         }
         require(RemoteEnvelopeCrypto.isP256(publicKey)) { "Remote identity must use P-256" }
-        require(lastAcceptedSequence in 0..REMOTE_MAX_SEQUENCE) { "Invalid initial sequence" }
+        require(lastAcceptedSequence in -1..REMOTE_MAX_SEQUENCE) { "Invalid initial sequence" }
         require(maxMessageAgeMs > 0) { "Maximum message age must be positive" }
         require(maxFutureSkewMs >= 0) { "Future clock skew cannot be negative" }
         require(maxRememberedMessageIds > 0) { "Replay cache size must be positive" }

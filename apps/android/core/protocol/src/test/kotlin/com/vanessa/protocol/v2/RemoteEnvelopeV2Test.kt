@@ -240,6 +240,16 @@ class RemoteEnvelopeV2Test {
             guard.verifyAndAccept(frame(4, third.messageId), nowMillis = 1_000),
         )
         assertEquals(3, guard.lastAcceptedSequence())
+
+        val zeroStart = RemoteEnvelopeSessionGuard(
+            sessionId = sessionId,
+            keyId = id,
+            publicKey = pair.public,
+        )
+        assertEquals(
+            RemoteEnvelopeCheck.Accepted,
+            zeroStart.verifyAndAccept(frame(0), nowMillis = 1_000),
+        )
     }
 
     @Test
