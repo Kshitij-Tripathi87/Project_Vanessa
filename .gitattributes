@@ -1,6 +1,9 @@
 # Windows batch files stay CRLF.
 *.bat text eol=crlf
 
+# The Gradle wrapper script runs on Linux CI; a CRLF checkout breaks its shebang.
+apps/android/gradlew text eol=lf
+
 # Binary generated artifacts
 *.jar binary
 *.png binary
