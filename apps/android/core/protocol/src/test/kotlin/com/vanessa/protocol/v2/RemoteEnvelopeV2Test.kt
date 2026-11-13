@@ -199,6 +199,99 @@ class RemoteEnvelopeV2Test {
         }
     }
 
+    @Test
+    fun sessionGuardAuthenticatesSequenceAndRejectsReplay() {
+        val pair = p256KeyPair()
+        val sessionId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        val id = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val guard = RemoteEnvelopeSessionGuard(
+            sessionId = sessionId,
+            keyId = id,
+            publicKey = pair.public,
+        )
+        fun frame(sequence: Int, messageId: String = java.util.UUID.randomUUID().toString()) =
+            RemoteEnvelopeCrypto.sign(
+                RemoteEnvelopeSeedV2(
+                    type = "ping",
+                    payload = json.parseToJsonElement("""{"sentAt":1000}""").jsonObject,
+                    keyId = id,
+                    sessionId = sessionId,
+                    messageId = messageId,
+                    sentAt = 1_000,
+                    sequence = sequence,
+                ),
+                pair.private,
+                pair.public,
+            )
+
+        val first = frame(1)
+        assertEquals(RemoteEnvelopeCheck.Accepted, guard.verifyAndAccept(first, nowMillis = 1_000))
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.REPLAYED_MESSAGE),
+            guard.verifyAndAccept(first, nowMillis = 1_000),
+        )
+
+        // Gaps are valid: a full-duplex peer may allocate a sequence while this
+        // direction is idle. Replays and non-increasing values are not.
+        val third = frame(3)
+        assertEquals(RemoteEnvelopeCheck.Accepted, guard.verifyAndAccept(third, nowMillis = 1_000))
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.REPLAYED_MESSAGE),
+            guard.verifyAndAccept(frame(4, third.messageId), nowMillis = 1_000),
+        )
+        assertEquals(3, guard.lastAcceptedSequence())
+    }
+
+    @Test
+    fun sessionGuardRejectsWrongSessionStaleFutureAndInvalidSignatures() {
+        val pair = p256KeyPair()
+        val sessionId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        val id = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val guard = RemoteEnvelopeSessionGuard(
+            sessionId = sessionId,
+            keyId = id,
+            publicKey = pair.public,
+            maxMessageAgeMs = 10_000,
+            maxFutureSkewMs = 2_000,
+        )
+        fun frame(
+            sequence: Int,
+            sentAt: Long,
+            frameSession: String = sessionId,
+        ) = RemoteEnvelopeCrypto.sign(
+            RemoteEnvelopeSeedV2(
+                type = "ping",
+                payload = json.parseToJsonElement("""{"sentAt":$sentAt}""").jsonObject,
+                keyId = id,
+                sessionId = frameSession,
+                sentAt = sentAt,
+                sequence = sequence,
+            ),
+            pair.private,
+            pair.public,
+        )
+
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.WRONG_SESSION),
+            guard.verifyAndAccept(frame(1, 100_000, "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"), nowMillis = 100_000),
+        )
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.STALE_MESSAGE),
+            guard.verifyAndAccept(frame(1, 80_000), nowMillis = 100_000),
+        )
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.FUTURE_MESSAGE),
+            guard.verifyAndAccept(frame(1, 103_000), nowMillis = 100_000),
+        )
+        val signed = frame(1, 100_000)
+        val tampered = signed.copy(payload = JsonObject(signed.payload + ("sentAt" to json.parseToJsonElement("999999"))))
+        assertEquals(
+            RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.INVALID_SIGNATURE),
+            guard.verifyAndAccept(tampered, nowMillis = 100_000),
+        )
+        assertEquals(0, guard.lastAcceptedSequence())
+    }
+
     private fun p256KeyPair() = KeyPairGenerator.getInstance("EC").run {
         initialize(ECGenParameterSpec("secp256r1"))
         generateKeyPair()
