@@ -467,6 +467,8 @@ const PairingClaimPayload = z
     deviceHint: DeviceHintSchema,
     platform: PlatformSchema,
     appVersion: z.string().min(1).max(40),
+    /** Fresh phone nonce echoed by the PC to bind the proof exchange. */
+    clientNonce: Base64UrlSchema.min(16).max(128).optional(),
   })
   .strict();
 

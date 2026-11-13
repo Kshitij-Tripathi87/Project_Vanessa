@@ -39,6 +39,9 @@ importers:
       '@vanessa/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@vanessa/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@vanessa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
