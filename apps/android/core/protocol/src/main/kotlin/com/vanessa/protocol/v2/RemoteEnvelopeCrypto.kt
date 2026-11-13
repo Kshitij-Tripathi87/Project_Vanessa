@@ -188,6 +188,7 @@ object RemoteEnvelopeCrypto {
             is kotlinx.serialization.json.JsonArray -> value.forEach { validatePayloadDepth(it, depth + 1) }
             else -> Unit
         }
+    }
 
     private fun ByteArray.toBase64Url(): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(this)
