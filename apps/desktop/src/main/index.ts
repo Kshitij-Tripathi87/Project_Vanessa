@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
+import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -80,7 +81,17 @@ function createWindow() {
 
 app.disableHardwareAcceleration();
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (app.isPackaged && process.platform === "win32") {
+    try {
+      loadUserEnvironment();
+      await startPackagedServices();
+    } catch (error) {
+      console.error("[Vanessa Runtime] Packaged backend startup failed:", error);
+      // Keep the desktop surface available so diagnostics and retry remain possible.
+    }
+  }
+
   createWindow();
 
   app.on("activate", () => {
@@ -95,5 +106,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  stopPackagedServices();
   globalShortcut.unregisterAll();
 });
