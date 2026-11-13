@@ -167,7 +167,8 @@ tasks.register("verifyLocalInferenceApk") {
     doLast {
         val file = apk.get().asFile
         require(file.isFile) { "No APK at $file; run :app:assembleDebug first" }
-        // `java` is the Gradle Java extension accessor here, so the JDK types must be imported.
+        // Inspect the assembled APK's native libraries to confirm the inference runtime
+        // was actually linked in, rather than just a debug build that never loads a model.
         val entries: List<String> = ZipFile(file).use { zip ->
             Collections.list(zip.entries()).map { entry -> entry.name }
         }
