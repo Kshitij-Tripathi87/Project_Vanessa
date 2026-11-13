@@ -24,6 +24,7 @@ class AndroidRemoteIdentityStore(
         val publicKey = entry.certificate.publicKey
         val privateKey = entry.privateKey
         require(publicKey.algorithm.equals("EC", ignoreCase = true)) { "Stored remote identity is not an EC key" }
+        require(RemoteEnvelopeCrypto.isP256(publicKey)) { "Stored remote identity is not a P-256 key" }
         return AndroidRemoteIdentity(
             keyId = RemoteEnvelopeCrypto.keyId(publicKey.encoded),
             publicKey = publicKey,

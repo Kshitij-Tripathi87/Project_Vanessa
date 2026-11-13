@@ -191,7 +191,7 @@ object RemoteEnvelopeCrypto {
         value.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) &&
             runCatching { UUID.fromString(value) }.isSuccess
 
-    internal fun isP256(publicKey: PublicKey): Boolean {
+    fun isP256(publicKey: PublicKey): Boolean {
         val ecKey = publicKey as? ECPublicKey ?: return false
         val params = ecKey.params
         val field = params.curve.field as? ECFieldFp ?: return false
