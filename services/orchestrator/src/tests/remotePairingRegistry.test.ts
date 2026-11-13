@@ -115,6 +115,27 @@ test("a bad code does not consume the code until the bounded attempt limit", asy
     );
     const challenge = registry.claim(claimEnvelope(phone, window), NOW);
     assert.equal(challenge.pairingId, window.pairingId);
+    assert.throws(
+      () => registry.claim(claimEnvelope(phone, window), NOW),
+      (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_ALREADY_CLAIMED",
+    );
+  });
+});
+
+test("pairing code locks after the configured number of failed code checks", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      assert.throws(
+        () => registry.claim(claimEnvelope(phone, window, { code: String(attempt).repeat(48) }), NOW),
+        (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_CODE_INVALID",
+      );
+    }
+    assert.throws(
+      () => registry.claim(claimEnvelope(phone, window), NOW),
+      (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_EXPIRED",
+    );
   });
 });
 

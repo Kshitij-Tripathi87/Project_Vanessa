@@ -98,6 +98,7 @@ const DEFAULT_PAIRING_TTL_MS = 5 * 60_000;
 const DEFAULT_CHALLENGE_TTL_MS = 2 * 60_000;
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const DEFAULT_MAX_CODE_ATTEMPTS = 5;
+const MAX_RETAINED_PAIRING_ATTEMPTS = 128;
 
 function codeDigest(code: string): Buffer {
   return createHash("sha256").update(code, "utf8").digest();
@@ -181,6 +182,18 @@ export class RemotePairingRegistry {
     this.expirePending(nowMs);
     for (const entry of this.pairings.values()) {
       if (entry.state === "ready") entry.state = "expired";
+    }
+    if (this.pairings.size >= MAX_RETAINED_PAIRING_ATTEMPTS) {
+      const removable = [...this.pairings.values()]
+        .filter((entry) => ["expired", "approved", "rejected"].includes(entry.state))
+        .sort((a, b) => a.createdAt - b.createdAt);
+      while (this.pairings.size >= MAX_RETAINED_PAIRING_ATTEMPTS && removable.length > 0) {
+        const oldest = removable.shift()!;
+        this.pairings.delete(oldest.pairingId);
+      }
+    }
+    if (this.pairings.size >= MAX_RETAINED_PAIRING_ATTEMPTS) {
+      throw new PairingRegistryError("PAIRING_STATE_INVALID", "Too many pairing attempts are awaiting completion.");
     }
     const pairingId = `pair_${randomBytes(12).toString("hex")}`;
     const code = randomBytes(24).toString("hex");
