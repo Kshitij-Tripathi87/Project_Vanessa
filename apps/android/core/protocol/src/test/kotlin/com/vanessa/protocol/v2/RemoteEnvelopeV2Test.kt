@@ -86,7 +86,7 @@ class RemoteEnvelopeV2Test {
         assertTrue(RemoteEnvelopeCrypto.verify(envelope, pair.public))
         val wire = RemoteEnvelopeCrypto.encode(envelope)
         assertTrue(RemoteEnvelopeCrypto.verify(RemoteEnvelopeCrypto.decode(wire), pair.public))
-        val changed = envelope.copy(payload = JsonObject(envelope.payload + ("capability" to json.parseToJsonElement(""delete_file""))))
+        val changed = envelope.copy(payload = JsonObject(envelope.payload + ("capability" to json.parseToJsonElement("\"delete_file\""))))
         assertFalse(RemoteEnvelopeCrypto.verify(changed, pair.public))
         val other = KeyPairGenerator.getInstance("EC").run {
             initialize(ECGenParameterSpec("secp256r1"))
