@@ -6,7 +6,6 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.math.BigDecimal
-import java.util.Locale
 
 /**
  * RFC 8785 JSON Canonicalization Scheme for the bounded protocol payloads.
@@ -40,7 +39,35 @@ object JcsCanonicalizer {
         }
     }
 
-    private fun quote(value: String): String = JsonPrimitive(value).toString()
+    /** JCS uses only mandatory JSON escapes and preserves valid UTF-16 pairs. */
+    private fun quote(value: String): String = buildString(value.length + 2) {
+        append('"')
+        var index = 0
+        while (index < value.length) {
+            val char = value[index]
+            when (char) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\b' -> append("\\b")
+                '\t' -> append("\\t")
+                '\n' -> append("\\n")
+                '\u000c' -> append("\\f")
+                '\r' -> append("\\r")
+                else -> when {
+                    char.code < 0x20 -> append("\\u").append(char.code.toString(16).padStart(4, '0'))
+                    char.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                        append(char)
+                        append(value[index + 1])
+                        index++
+                    }
+                    char.isSurrogate() -> append("\\u").append(char.code.toString(16).padStart(4, '0'))
+                    else -> append(char)
+                }
+            }
+            index++
+        }
+        append('"')
+    }
 
     private fun canonicalNumber(raw: String): String {
         val number = raw.toDoubleOrNull()

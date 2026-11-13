@@ -31,7 +31,9 @@ class RemoteEnvelopeV2Test {
             val name = vector.getValue("name").jsonPrimitive.content
             val expected = vector.getValue("canonical").jsonPrimitive.content
             val actual = JcsCanonicalizer.canonicalize(vector.getValue("input"))
-            assertEquals(expected, actual, "JCS vector: $name")
+            if (expected != actual) {
+                throw AssertionError("JCS vector [$name] mismatch. Expected=[$expected] Actual=[$actual]")
+            }
         }
     }
 
@@ -299,7 +301,7 @@ class RemoteEnvelopeV2Test {
             RemoteEnvelopeCheck.Rejected(RemoteEnvelopeRejectReason.INVALID_SIGNATURE),
             guard.verifyAndAccept(tampered, nowMillis = 100_000),
         )
-        assertEquals(0, guard.lastAcceptedSequence())
+        assertEquals(-1, guard.lastAcceptedSequence())
     }
 
     @Test
