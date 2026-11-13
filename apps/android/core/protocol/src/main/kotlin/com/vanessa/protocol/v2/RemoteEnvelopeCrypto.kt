@@ -12,6 +12,11 @@ import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
+import java.security.spec.ECFieldFp
+import java.security.spec.ECParameterSpec
+import java.security.spec.EllipticCurve
+import java.security.spec.ECPoint
+import java.math.BigInteger
 import java.util.Base64
 import java.util.UUID
 
@@ -127,6 +132,7 @@ object RemoteEnvelopeCrypto {
 
     fun decode(wire: String): RemoteEnvelopeV2 {
         require(wire.toByteArray(Charsets.UTF_8).size <= 64 * 1024) { "Envelope exceeds 64 KiB" }
+        JsonDuplicateMemberGuard.requireUniqueMembers(wire)
         val root = json.parseToJsonElement(wire) as? JsonObject
             ?: throw IllegalArgumentException("Remote envelope must be a JSON object")
         require(root.keys == envelopeKeys) { "Remote envelope contains missing or unknown members" }
@@ -185,10 +191,34 @@ object RemoteEnvelopeCrypto {
         value.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) &&
             runCatching { UUID.fromString(value) }.isSuccess
 
-    private fun isP256(publicKey: PublicKey): Boolean {
+    internal fun isP256(publicKey: PublicKey): Boolean {
         val ecKey = publicKey as? ECPublicKey ?: return false
-        return ecKey.params.curve.field.fieldSize == 256
+        val params = ecKey.params
+        val field = params.curve.field as? ECFieldFp ?: return false
+        val expected = P256_PARAMETERS
+        val expectedField = expected.curve.field as ECFieldFp
+        return field.p == expectedField.p &&
+            params.curve.a == expected.curve.a &&
+            params.curve.b == expected.curve.b &&
+            params.generator.affineX == expected.generator.affineX &&
+            params.generator.affineY == expected.generator.affineY &&
+            params.order == expected.order &&
+            params.cofactor == expected.cofactor
     }
+
+    private val P256_PARAMETERS = ECParameterSpec(
+        EllipticCurve(
+            ECFieldFp(BigInteger("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF", 16)),
+            BigInteger("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC", 16),
+            BigInteger("5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B", 16),
+        ),
+        ECPoint(
+            BigInteger("6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296", 16),
+            BigInteger("4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5", 16),
+        ),
+        BigInteger("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16),
+        1,
+    )
 
     private fun validatePayloadDepth(value: kotlinx.serialization.json.JsonElement, depth: Int) {
         require(depth <= 6) { "Payload exceeds the maximum JSON depth" }

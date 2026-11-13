@@ -145,6 +145,66 @@ class RemoteEnvelopeV2Test {
         }
     }
 
+    @Test
+    fun decoderRejectsDuplicateMembersAtEveryObjectDepth() {
+        val pair = p256KeyPair()
+        val id = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val envelope = RemoteEnvelopeCrypto.sign(
+            RemoteEnvelopeSeedV2(
+                type = "ping",
+                payload = json.parseToJsonElement("""{"sentAt":1}""").jsonObject,
+                keyId = id,
+                messageId = "11112222-3333-4444-5555-000066667777",
+                sentAt = 1,
+                sequence = 1,
+            ),
+            pair.private,
+            pair.public,
+        )
+        val wire = RemoteEnvelopeCrypto.encode(envelope)
+        val duplicateTopLevel = wire.replace("\\"v\\":2", "\\"v\\":2,\\"v\\":2")
+        assertFailsWith<IllegalArgumentException> { RemoteEnvelopeCrypto.decode(duplicateTopLevel) }
+
+        val duplicateNested = wire.replace(
+            "\\"payload\\":{\\"sentAt\\":1}",
+            "\\"payload\\":{\\"sentAt\\":1,\\"sentAt\\":2}",
+        )
+        assertFailsWith<IllegalArgumentException> { RemoteEnvelopeCrypto.decode(duplicateNested) }
+    }
+
+    @Test
+    fun identityCurveCheckRequiresTheActualP256Parameters() {
+        val pair = p256KeyPair()
+        val publicKey = pair.public as java.security.interfaces.ECPublicKey
+        assertTrue(RemoteEnvelopeCrypto.isP256(publicKey))
+        assertFalse(RemoteEnvelopeCrypto.isP256(AlteredCurvePublicKey(publicKey)))
+    }
+
+    private fun p256KeyPair() = KeyPairGenerator.getInstance("EC").run {
+        initialize(ECGenParameterSpec("secp256r1"))
+        generateKeyPair()
+    }
+
+    private class AlteredCurvePublicKey(
+        private val delegate: java.security.interfaces.ECPublicKey,
+    ) : java.security.interfaces.ECPublicKey {
+        override fun getW() = delegate.w
+        override fun getAlgorithm() = delegate.algorithm
+        override fun getFormat() = delegate.format
+        override fun getEncoded() = delegate.encoded
+        override fun getParams(): java.security.spec.ECParameterSpec {
+            val original = delegate.params
+            val changedCurve = java.security.spec.EllipticCurve(
+                original.curve.field,
+                original.curve.a,
+                original.curve.b.add(java.math.BigInteger.ONE),
+            )
+            return java.security.spec.ECParameterSpec(
+                changedCurve, original.generator, original.order, original.cofactor,
+            )
+        }
+    }
+
     private fun resource(name: String): JsonObject =
         json.parseToJsonElement(
             javaClass.getResourceAsStream(name)!!.bufferedReader().use { it.readText() }
