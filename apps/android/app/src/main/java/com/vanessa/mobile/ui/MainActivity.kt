@@ -50,6 +50,8 @@ import com.vanessa.mobile.profile.OperatingMode
 import com.vanessa.mobile.tools.CalendarMeeting
 import com.vanessa.mobile.tools.CalendarSearchResult
 import com.vanessa.mobile.tools.CalendarSearchTool
+import com.vanessa.mobile.voice.AndroidOnDeviceSpeechInput
+import com.vanessa.mobile.voice.OfflineTtsController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -74,6 +76,12 @@ class MainActivity : ComponentActivity() {
     private var assistantResponse by mutableStateOf("")
     private var assistantMetrics by mutableStateOf("")
     private var assistantBusy by mutableStateOf(false)
+    private var speechStatus by mutableStateOf("Initializing offline speech…")
+    private var speechReady by mutableStateOf(false)
+    private var speechInputStatus by mutableStateOf("Checking on-device speech support…")
+    private var onDeviceSpeechAvailable by mutableStateOf(false)
+    private var offlineTts: OfflineTtsController? = null
+    private var onDeviceSpeechInput: AndroidOnDeviceSpeechInput? = null
     private var pendingAgentPrompt: String? = null
     private var inference: LlamaCppInference? = null
 
@@ -86,9 +94,11 @@ class MainActivity : ComponentActivity() {
         val retry = pendingAgentPrompt
         pendingAgentPrompt = null
         if (retry != null) {
+            // The previous attempt remains busy while the system permission UI is open.
+            // Clear it before starting the retried plan or runAssistant will reject it.
+            assistantBusy = false
             if (granted) runAssistant(retry)
             else {
-                assistantBusy = false
                 assistantResponse = "Calendar permission was denied. Vanessa did not read any calendar events."
             }
         } else if (granted) {
@@ -101,6 +111,11 @@ class MainActivity : ComponentActivity() {
 
     private val openModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importModel(uri)
+    }
+
+    private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startSpeechInput()
+        else speechInputStatus = "Microphone permission denied. You can type your request instead."
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -129,6 +144,10 @@ class MainActivity : ComponentActivity() {
                         assistantResponse = assistantResponse,
                         assistantMetrics = assistantMetrics,
                         assistantBusy = assistantBusy,
+                        speechReady = speechReady,
+                        speechStatus = speechStatus,
+                        speechInputStatus = speechInputStatus,
+                        onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                         meetings = meetings,
                         calendarMessage = calendarMessage,
                         onRefresh = ::refreshProfile,
@@ -137,11 +156,34 @@ class MainActivity : ComponentActivity() {
                         onUnloadModel = ::unloadModel,
                         onPromptChange = { prompt = it },
                         onRunAssistant = { runAssistant(prompt) },
+                        onSpeakRequest = ::requestSpeechInput,
+                        onSpeakResponse = ::speakAssistantResponse,
                         onReadCalendar = ::requestMeetings,
                     )
                 }
             }
         }
+        offlineTts = OfflineTtsController(applicationContext) { ready, message ->
+            runOnUiThread {
+                speechReady = ready
+                speechStatus = message
+            }
+        }
+        onDeviceSpeechInput = AndroidOnDeviceSpeechInput(
+            applicationContext,
+            onTranscript = { transcript ->
+                prompt = transcript
+                runAssistant(transcript)
+            },
+            onState = { state -> runOnUiThread { speechInputStatus = state } },
+        )
+        onDeviceSpeechAvailable = onDeviceSpeechInput?.isAvailable() == true
+        speechInputStatus = if (onDeviceSpeechAvailable) {
+            "On-device speech recognition is available for the current system language."
+        } else {
+            "On-device speech recognition is unavailable. Type your request instead."
+        }
+
         refreshProfile()
         refreshModelState()
     }
@@ -149,6 +191,41 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshProfile()
+    }
+
+    override fun onDestroy() {
+        offlineTts?.close()
+        onDeviceSpeechInput?.close()
+        offlineTts = null
+        onDeviceSpeechInput = null
+        super.onDestroy()
+    }
+
+    private fun requestSpeechInput() {
+        if (!onDeviceSpeechAvailable) {
+            speechInputStatus = "No on-device recognizer is available. Type your request instead."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startSpeechInput()
+        } else {
+            requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun startSpeechInput() {
+        if (onDeviceSpeechInput?.start() != true) {
+            speechInputStatus = "Could not start on-device speech recognition."
+        }
+    }
+
+    private fun speakAssistantResponse() {
+        val text = assistantResponse
+        if (text.isBlank() || offlineTts?.speak(text) != true) {
+            speechStatus = "An offline TTS voice is not ready. The text response is still available."
+        }
     }
 
     private fun localInference(): LlamaCppInference =
@@ -366,6 +443,10 @@ private fun DeviceScreen(
     assistantResponse: String,
     assistantMetrics: String,
     assistantBusy: Boolean,
+    speechReady: Boolean,
+    speechStatus: String,
+    speechInputStatus: String,
+    onDeviceSpeechAvailable: Boolean,
     meetings: List<CalendarMeeting>,
     calendarMessage: String?,
     onRefresh: () -> Unit,
@@ -374,6 +455,8 @@ private fun DeviceScreen(
     onUnloadModel: () -> Unit,
     onPromptChange: (String) -> Unit,
     onRunAssistant: () -> Unit,
+    onSpeakRequest: () -> Unit,
+    onSpeakResponse: () -> Unit,
     onReadCalendar: () -> Unit,
 ) {
     Column(
@@ -453,6 +536,18 @@ private fun DeviceScreen(
                     maxLines = 4,
                     enabled = modelLoaded && !assistantBusy,
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onSpeakRequest,
+                        enabled = onDeviceSpeechAvailable && !assistantBusy,
+                    ) { Text("Speak request") }
+                    TextButton(
+                        onClick = onSpeakResponse,
+                        enabled = speechReady && assistantResponse.isNotBlank(),
+                    ) { Text("Speak response") }
+                }
+                Text(speechInputStatus, style = MaterialTheme.typography.labelSmall)
+                Text(speechStatus, style = MaterialTheme.typography.labelSmall)
                 Button(
                     onClick = onRunAssistant,
                     enabled = modelLoaded && !assistantBusy && prompt.isNotBlank(),

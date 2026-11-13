@@ -63,7 +63,7 @@ Result generate(const std::string & prompt, int max_tokens, const std::string & 
     const int32_t capacity = static_cast<int32_t>(llama_n_ctx(context));
     std::vector<llama_token> tokens(static_cast<size_t>(capacity));
     const int32_t count = llama_tokenize(vocab, prompt.data(), static_cast<int32_t>(prompt.size()),
-                                          tokens.data(), capacity, true, true);
+                                          tokens.data(), capacity, false, true);
     if (count <= 0 || count >= capacity) throw std::runtime_error("Prompt exceeds the model context window");
     tokens.resize(static_cast<size_t>(count));
     llama_memory_clear(llama_get_memory(context), false);
