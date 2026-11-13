@@ -162,12 +162,12 @@ class RemoteEnvelopeV2Test {
             pair.public,
         )
         val wire = RemoteEnvelopeCrypto.encode(envelope)
-        val duplicateTopLevel = wire.replace("\\"v\\":2", "\\"v\\":2,\\"v\\":2")
+        val duplicateTopLevel = wire.replace("\"v\":2", "\"v\":2,\"v\":2")
         assertFailsWith<IllegalArgumentException> { RemoteEnvelopeCrypto.decode(duplicateTopLevel) }
 
         val duplicateNested = wire.replace(
-            "\\"payload\\":{\\"sentAt\\":1}",
-            "\\"payload\\":{\\"sentAt\\":1,\\"sentAt\\":2}",
+            "\"payload\":{\"sentAt\":1}",
+            "\"payload\":{\"sentAt\":1,\"sentAt\":2}",
         )
         assertFailsWith<IllegalArgumentException> { RemoteEnvelopeCrypto.decode(duplicateNested) }
     }
@@ -178,6 +178,25 @@ class RemoteEnvelopeV2Test {
         val publicKey = pair.public as java.security.interfaces.ECPublicKey
         assertTrue(RemoteEnvelopeCrypto.isP256(publicKey))
         assertFalse(RemoteEnvelopeCrypto.isP256(AlteredCurvePublicKey(publicKey)))
+    }
+
+    @Test
+    fun encodeValidatesEnvelopeBeforeReturningWireBytes() {
+        val pair = p256KeyPair()
+        val id = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val valid = RemoteEnvelopeCrypto.sign(
+            RemoteEnvelopeSeedV2(
+                type = "ping",
+                payload = json.parseToJsonElement("""{"sentAt":1}""").jsonObject,
+                keyId = id,
+                sequence = 1,
+            ),
+            pair.private,
+            pair.public,
+        )
+        assertFailsWith<IllegalArgumentException> {
+            RemoteEnvelopeCrypto.encode(valid.copy(sequence = REMOTE_MAX_SEQUENCE + 1))
+        }
     }
 
     private fun p256KeyPair() = KeyPairGenerator.getInstance("EC").run {
