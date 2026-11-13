@@ -84,7 +84,8 @@ export class MobileTaskEngine {
     return { taskId, state: initialState, ...(actionHash ? { actionHash } : {}), ...(expiresAt ? { expiresAt } : {}), ...(tool.confirmSummary ? { summary: tool.confirmSummary(parsed.data) } : {}), duplicate: false };
   }
 
-  async confirm(input: { taskId: string; approved: boolean; actionHash: string }): Promise<void> {
+  async confirm(input: { taskId: string; approved: boolean; actionHash: string; deviceId: string }): Promise<void> {
+    this.assertTaskOwner(input.taskId, input.deviceId);
     const task = this.getTask(input.taskId);
     if (!task || task.state !== "awaiting_confirm") throw Object.assign(new Error("Task is not awaiting confirmation."), { code: "TASK_NOT_FOUND" });
     const expiry = this.db.prepare("SELECT confirm_expires_at FROM mobile_tasks WHERE task_id=?").get(input.taskId) as any;
@@ -102,11 +103,20 @@ export class MobileTaskEngine {
     void this.execute(input.taskId, tool, JSON.parse(row.args_json), row.device_id ?? undefined);
   }
 
-  async cancel(taskId: string): Promise<void> {
+  async cancel(taskId: string, deviceId: string): Promise<void> {
+    this.assertTaskOwner(taskId, deviceId);
     const task = this.getTask(taskId);
     if (!task || ["done", "failed", "cancelled", "timed_out"].includes(task.state)) throw Object.assign(new Error("Task is not active."), { code: "TASK_NOT_FOUND" });
     this.active.get(taskId)?.abort();
     if (!this.active.has(taskId)) this.transition(task, "cancelled", { error: "Cancelled by phone." });
+  }
+
+  /** Resolve task ownership from the durable row, never from client-supplied payload fields. */
+  private assertTaskOwner(taskId: string, deviceId: string): void {
+    const row = this.db.prepare("SELECT device_id FROM mobile_tasks WHERE task_id=?").get(taskId) as { device_id?: string } | undefined;
+    if (!row || typeof row.device_id !== "string" || row.device_id !== deviceId) {
+      throw Object.assign(new Error("Task was not found for this device."), { code: "TASK_NOT_FOUND" });
+    }
   }
 
   getTask(taskId: string): MobileTaskRecord | undefined {
