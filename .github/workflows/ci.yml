@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -34,6 +34,15 @@ jobs:
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+
+      # Desktop imports @vanessa/protocol from its generated dist entry point.
+      # Building only @vanessa/shared left this workspace package unbuilt and made
+      # the desktop TypeScript build fail with TS2307 on clean CI runners.
+      - name: Build canonical phone-PC protocol
+        run: pnpm --filter @vanessa/protocol build
+
+      - name: Test canonical phone-PC protocol
+        run: pnpm --filter @vanessa/protocol test
 
       - name: Build shared contracts
         run: pnpm --filter @vanessa/shared build
@@ -82,4 +91,3 @@ jobs:
 
       - name: Regression-test existing coding handoff
         run: pnpm --filter @vanessa/orchestrator test:codex
-
