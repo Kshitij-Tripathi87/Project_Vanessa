@@ -62,6 +62,14 @@ jobs:
       - name: Build voice agent
         run: pnpm --filter @vanessa/voice-agent build
 
+      - name: Run full voice-agent test suite
+        run: |
+          pnpm --filter @vanessa/voice-agent test
+          pnpm --filter @vanessa/voice-agent exec tsx --import ../../scripts/test-env.mjs --test src/tests/*.test.ts src/session/wakeWord.test.ts
+
+      - name: Start voice agent and exercise sandbox ASR-to-TTS loop
+        run: pnpm --filter @vanessa/voice-agent exec tsx --test src/tests/voiceServerSandbox.test.ts
+
       - name: Build desktop renderer and Electron main process
         run: pnpm --filter @vanessa/desktop build
 
