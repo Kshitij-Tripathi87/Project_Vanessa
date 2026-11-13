@@ -4,33 +4,77 @@ on:
   push:
     paths:
       - 'apps/android/**'
+      - 'scripts/fetch-llama-cpp.sh'
       - '.github/workflows/android.yml'
   pull_request:
     paths:
       - 'apps/android/**'
+      - 'scripts/fetch-llama-cpp.sh'
       - '.github/workflows/android.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: android-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   debug-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android 35 SDK
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Test and build installable development APK
-        working-directory: apps/android
-        run: ./gradlew :core:protocol:test :app:testDebugUnitTest :app:assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+
+      # v3 used to request Google's removed "tools" SDK package and failed
+      # before Gradle started. v4 no longer installs that obsolete package.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
         with:
-          name: vanessa-android-debug
+          cmdline-tools-version: 15859902
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install pinned Android SDK components
+        run: |
+          sdkmanager --install \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'ndk;27.2.12479018' \
+            'cmake;3.22.1'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # A plain assembleDebug can silently produce an APK without llama.cpp.
+      # Fetch the exact pinned source revision and make the APK gate require
+      # both native libraries before CI will publish the artifact.
+      - name: Fetch pinned llama.cpp source
+        run: bash scripts/fetch-llama-cpp.sh
+
+      - name: Test Android modules and build verified native APK
+        working-directory: apps/android
+        run: |
+          ./gradlew \
+            :core:protocol:test \
+            :core:agent:test \
+            :app:testDebugUnitTest \
+            :app:verifyLocalInferenceApk \
+            --no-daemon \
+            -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp"
+
+      - name: Upload verified development APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanessa-android-debug-arm64
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
