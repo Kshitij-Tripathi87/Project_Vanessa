@@ -14,6 +14,7 @@ import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -114,6 +115,34 @@ class RemoteEnvelopeV2Test {
             signed.copy(sequence = REMOTE_MAX_SEQUENCE + 1),
             pair.public,
         ))
+    }
+
+
+    @Test
+    fun decoderRejectsUnknownEnvelopeAndAuthMembers() {
+        val generator = KeyPairGenerator.getInstance("EC")
+        generator.initialize(ECGenParameterSpec("secp256r1"))
+        val pair = generator.generateKeyPair()
+        val keyId = RemoteEnvelopeCrypto.keyId(pair.public.encoded)
+        val signed = RemoteEnvelopeCrypto.sign(
+            RemoteEnvelopeSeedV2(
+                type = "ping",
+                payload = json.parseToJsonElement("""{"sentAt":1}""").jsonObject,
+                keyId = keyId,
+            ),
+            pair.private,
+            pair.public,
+        )
+        val parsed = json.parseToJsonElement(RemoteEnvelopeCrypto.encode(signed)).jsonObject
+        val unknownEnvelopeMember = JsonObject(parsed + ("unexpected" to json.parseToJsonElement("true")))
+        assertFailsWith<IllegalArgumentException> {
+            RemoteEnvelopeCrypto.decode(JcsCanonicalizer.canonicalize(unknownEnvelopeMember))
+        }
+        val auth = parsed.getValue("auth").jsonObject
+        val unknownAuthMember = JsonObject(parsed + ("auth" to JsonObject(auth + ("extra" to json.parseToJsonElement("1")))))
+        assertFailsWith<IllegalArgumentException> {
+            RemoteEnvelopeCrypto.decode(JcsCanonicalizer.canonicalize(unknownAuthMember))
+        }
     }
 
     private fun resource(name: String): JsonObject =

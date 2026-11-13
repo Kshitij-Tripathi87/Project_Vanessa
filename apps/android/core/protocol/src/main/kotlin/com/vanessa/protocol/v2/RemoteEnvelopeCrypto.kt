@@ -5,6 +5,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import java.security.MessageDigest
 import java.security.PrivateKey
@@ -55,6 +56,8 @@ data class RemoteEnvelopeSeedV2(
  */
 object RemoteEnvelopeCrypto {
     private val json = Json { encodeDefaults = true }
+    private val envelopeKeys = setOf("v", "messageId", "sessionId", "type", "sentAt", "sequence", "keyId", "payload", "auth")
+    private val authKeys = setOf("algorithm", "signature")
     private val allowedTypes = setOf(
         "server.challenge", "client.authenticate", "session.ready", "session.expiring",
         "session.close", "protocol.error", "pairing.claim", "pairing.challenge",
@@ -89,7 +92,9 @@ object RemoteEnvelopeCrypto {
         signer.initSign(privateKey)
         signer.update(canonicalSignedBytes(unsigned))
         val signature = signer.sign().toBase64Url()
-        return unsigned.copy(auth = unsigned.auth.copy(signature = signature))
+        val signed = unsigned.copy(auth = unsigned.auth.copy(signature = signature))
+        require(verify(signed, publicKey)) { "The supplied private key does not match the public identity key" }
+        return signed
     }
 
     fun verify(envelope: RemoteEnvelopeV2, publicKey: PublicKey): Boolean {
@@ -114,6 +119,7 @@ object RemoteEnvelopeCrypto {
             .toByteArray(Charsets.UTF_8)
 
     fun encode(envelope: RemoteEnvelopeV2): String {
+        validate(envelope)
         val wire = JcsCanonicalizer.canonicalize(toJsonElement(envelope, includeSignature = true))
         require(wire.toByteArray(Charsets.UTF_8).size <= 64 * 1024) { "Envelope exceeds 64 KiB" }
         return wire
@@ -121,7 +127,13 @@ object RemoteEnvelopeCrypto {
 
     fun decode(wire: String): RemoteEnvelopeV2 {
         require(wire.toByteArray(Charsets.UTF_8).size <= 64 * 1024) { "Envelope exceeds 64 KiB" }
-        val parsed = json.decodeFromString<RemoteEnvelopeV2>(wire)
+        val root = json.parseToJsonElement(wire) as? JsonObject
+            ?: throw IllegalArgumentException("Remote envelope must be a JSON object")
+        require(root.keys == envelopeKeys) { "Remote envelope contains missing or unknown members" }
+        val auth = root["auth"] as? JsonObject
+            ?: throw IllegalArgumentException("Remote envelope auth must be an object")
+        require(auth.keys == authKeys) { "Remote envelope auth contains missing or unknown members" }
+        val parsed = json.decodeFromJsonElement<RemoteEnvelopeV2>(root)
         validate(parsed)
         return parsed
     }
