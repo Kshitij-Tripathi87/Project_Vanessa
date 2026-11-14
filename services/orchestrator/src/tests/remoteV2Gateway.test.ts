@@ -99,7 +99,7 @@ test("gateway waits for a loopback listener and sends a verifiable signed challe
   let socket: WebSocket | undefined;
   try {
     await gateway.start();
-    socket = new WebSocket(`ws://127.0.0.1:${port}/remote-v2`);
+    socket = new WebSocket("ws://127.0.0.1:" + port + "/remote-v2");
     const raw = await new Promise<Buffer>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Gateway challenge timed out.")), 5_000);
       socket!.once("message", (data) => {
