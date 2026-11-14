@@ -18,6 +18,7 @@ interface CompactAssistantProps {
   typedCommand: string;
   activePlan: Plan | null;
   activeTask: Task | null;
+  tasks: Task[];
   pendingApproval: Task | null;
   providerStatus: VoiceProviderStatus | null;
   voiceConnectionState: "connecting" | "connected" | "disconnected" | "disabled";
@@ -73,6 +74,7 @@ export function CompactAssistant({
   typedCommand,
   activePlan,
   activeTask,
+  tasks,
   pendingApproval,
   providerStatus,
   voiceConnectionState,
@@ -118,6 +120,28 @@ export function CompactAssistant({
               ? "thinking"
               : taskStage;
   const orbScale = isMicActive ? 1 + Math.min(0.14, audioLevel * 0.3) : 1;
+
+  const recentTasks = tasks.slice(-4).reverse();
+  const taskPresentation = (task: Task) => {
+    const status = String(task.status);
+    if ((status === "success" || status === "succeeded") && task.verification?.verified === true) {
+      return { label: "Verified", proof: "Postconditions checked", tone: "verified" };
+    }
+    if (status === "awaiting_approval") {
+      return { label: "Approval", proof: "Waiting for your decision", tone: "approval" };
+    }
+    if (["failed", "cancelled", "blocked", "expired"].includes(status)) {
+      return {
+        label: status === "cancelled" ? "Stopped" : status === "blocked" ? "Blocked" : "Failed",
+        proof: task.verification?.outcome === "blocked" ? "Stopped by policy" : "Did not complete",
+        tone: "failed",
+      };
+    }
+    if (status === "partial" || status === "success" || status === "succeeded") {
+      return { label: "Unverified", proof: "Completion evidence is incomplete", tone: "partial" };
+    }
+    return { label: "Working", proof: "Execution in progress", tone: "working" };
+  };
 
   if (!expanded) {
     return (
@@ -231,6 +255,30 @@ export function CompactAssistant({
               return <span key={stage} className={index <= current ? "step-done" : ""}>{index < current ? <Check size={11} /> : <i />}{stageLabels[stage]}</span>;
             })}
           </div>
+        )}
+
+        {recentTasks.length > 0 && (
+          <section className="execution-feed" aria-label="Recent execution activity">
+            <div className="execution-feed-heading">
+              <span>Recent execution</span>
+              <span>{recentTasks.length} task{recentTasks.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="execution-feed-list">
+              {recentTasks.map((task) => {
+                const presentation = taskPresentation(task);
+                return (
+                  <article className={`execution-row execution-${presentation.tone}`} key={task.id}>
+                    <span className="execution-marker" aria-hidden="true" />
+                    <div className="execution-copy">
+                      <strong>{task.action.replace(/[._]/g, " ")}</strong>
+                      <span>{task.agent.toUpperCase()} · {presentation.proof}</span>
+                    </div>
+                    <span className={`execution-state state-${presentation.tone}`}>{presentation.label}</span>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         )}
 
         {pendingApproval && (
