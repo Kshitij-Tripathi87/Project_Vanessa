@@ -102,6 +102,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
   const directory = await mkdtemp(join(tmpdir(), "vanessa-v2-gateway-"));
   const pc = keyPair();
   const phone = keyPair();
+  const biometricApproval = keyPair();
   let gateway: RemoteV2Gateway | undefined;
   const engine = new MobileTaskEngine({
     dbPath: join(directory, "tasks.sqlite"),
@@ -158,6 +159,8 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
       code: window.code,
       publicKey: phone.publicKeySpki,
       keyId: phone.keyId,
+      approvalPublicKey: biometricApproval.publicKeySpki,
+      approvalKeyId: biometricApproval.keyId,
       deviceHint: "pixel-test-phone",
       platform: "android",
       appVersion: "0.1.0",
@@ -182,6 +185,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     );
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, pending).ok, true);
     assert.equal((pending.payload as Record<string, any>).state, "awaiting_approval");
+    assert.equal((pending.payload as Record<string, any>).biometricApprovalAvailable, true);
 
     await gateway.approvePairing(window.pairingId, ["system.read", "files.read", "apps.launch"]);
     const approved = await next("pairing.approved");
@@ -207,6 +211,12 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal(readyPayload.deviceId.length, 36);
     assert.deepEqual(readyPayload.grantedScopes, ["system.read", "files.read", "apps.launch"]);
     assert.equal(readyPayload.clientNonce, authClientNonce);
+    assert.equal(pairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyId, biometricApproval.keyId);
+
+    // Biometric verification material must survive a PC service restart.
+    const reloadedPairings = new RemotePairingRegistry({ storePath: join(directory, "trusted-devices.json") });
+    await reloadedPairings.initialize();
+    assert.equal(reloadedPairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyId, biometricApproval.keyId);
 
     await send(socket, signed(phone, "manifest.get", {}, sessionId, 1));
     const manifest = await next("manifest.snapshot");
