@@ -37,7 +37,7 @@ async function withRegistry(run: (registry: RemotePairingRegistry, advance: (mil
   }
 }
 
-function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId: string; code: string }, options: { code?: string; sequence?: number; sentAt?: number; clientNonce?: string } = {}) {
+function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId: string; code: string }, options: { code?: string; sequence?: number; sentAt?: number; clientNonce?: string; approvalPublicKey?: string } = {}) {
   return signRemoteEnvelope(phone.privateKey, createRemoteEnvelope({
     type: "pairing.claim",
     sessionId: PRE_SESSION_ID,
@@ -53,6 +53,7 @@ function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId:
       platform: "android",
       appVersion: "0.1.0",
       clientNonce: options.clientNonce ?? randomBytes(24).toString("base64url"),
+      ...(options.approvalPublicKey ? { approvalPublicKey: options.approvalPublicKey } : {}),
     },
   }));
 }
@@ -247,4 +248,39 @@ test("trusted-device restore rejects duplicate capability scopes", async () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("file deletion scope cannot be granted without a separate biometric approval key", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    const challenge = registry.claim(claimEnvelope(phone, window), NOW);
+    registry.complete(completeEnvelope(phone, window.pairingId, challenge.nonce), NOW + 100);
+
+    await assert.rejects(
+      registry.approve(window.pairingId, ["system.read", "files.delete"], NOW + 200),
+      (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_PROOF_INVALID",
+    );
+
+    const readOnlyGrant = await registry.approve(window.pairingId, ["system.read", "files.read"], NOW + 300);
+    assert.deepEqual(readOnlyGrant.grantedScopes, ["system.read", "files.read"]);
+    assert.equal(registry.getTrustedDeviceByKeyId(phone.keyId)?.approvalPublicKeySpki, undefined);
+  });
+});
+
+test("a registered biometric approval key permits the PC to grant the delete scope", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const approvalKey = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    const challenge = registry.claim(claimEnvelope(phone, window, {
+      approvalPublicKey: approvalKey.publicKey,
+    }), NOW);
+    registry.complete(completeEnvelope(phone, window.pairingId, challenge.nonce), NOW + 100);
+
+    const grant = await registry.approve(window.pairingId, ["system.read", "files.delete"], NOW + 200);
+    const trusted = registry.getTrustedDeviceByKeyId(phone.keyId);
+    assert.deepEqual(grant.grantedScopes, ["system.read", "files.delete"]);
+    assert.equal(trusted?.approvalPublicKeySpki, approvalKey.publicKey);
+  });
 });
