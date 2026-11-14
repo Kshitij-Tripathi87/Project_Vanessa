@@ -220,6 +220,12 @@ export class RemoteTaskService {
     });
   }
 
+  /** Fetch durable task state only for the device that owns the task row. */
+  getTaskSnapshot(keyId: string, taskId: string) {
+    const device = this.requireTrustedDevice(keyId);
+    return this.engine.getTaskForDevice(taskId, device.deviceId);
+  }
+
   private requireTrustedDevice(keyId: string): TrustedRemoteDevice {
     const device = this.pairings.getTrustedDeviceByKeyId(keyId);
     if (!device) serviceError("UNKNOWN_KEY", "The phone identity is not paired with this PC.");

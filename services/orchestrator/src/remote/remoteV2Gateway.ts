@@ -71,6 +71,7 @@ type PeerConnection = {
   handshakeTimer?: NodeJS.Timeout;
   sessionTimer?: NodeJS.Timeout;
   inboundTail: Promise<void>;
+  outboundTail: Promise<void>;
 };
 
 function isTailnetIPv4(address: string): boolean {
@@ -280,6 +281,7 @@ export class RemoteV2Gateway {
       pendingTaskEvents: new Map(),
       acceptedTasks: new Set(),
       inboundTail: Promise.resolve(),
+      outboundTail: Promise.resolve(),
     };
     this.connections.add(peer);
     socket.on("message", (data, isBinary) => {
@@ -604,24 +606,35 @@ export class RemoteV2Gateway {
     await this.send(peer, "protocol.error", { code, message: message.slice(0, 300) }, peer.state === "ready" ? peer.sessionId : PRE_SESSION_ID);
   }
 
-  private async send(
+  private send(
     peer: PeerConnection,
     type: RemoteMessageType,
     payload: Record<string, unknown>,
     sessionId = peer.sessionId,
   ): Promise<void> {
-    if (peer.socket.readyState !== WebSocket.OPEN) return;
-    const sequence = peer.outboundSequences.get(sessionId) ?? 0;
-    peer.outboundSequences.set(sessionId, sequence + 1);
-    const unsigned = createRemoteEnvelope({
-      type,
-      payload,
-      keyId: this.options.pcKeyId,
-      sessionId,
-      sequence,
+    // Serialize signature requests and wire writes per socket. Without this,
+    // concurrent task and heartbeat events could leave the receiver observing
+    // valid signatures in sequence order 2,1 and rejecting the second frame.
+    const queued = peer.outboundTail.then(async () => {
+      if (peer.socket.readyState !== WebSocket.OPEN || peer.state === "closed") return;
+      const sequence = peer.outboundSequences.get(sessionId) ?? 0;
+      peer.outboundSequences.set(sessionId, sequence + 1);
+      const unsigned = createRemoteEnvelope({
+        type,
+        payload,
+        keyId: this.options.pcKeyId,
+        sessionId,
+        sequence,
+      });
+      const signed = await this.options.sign(unsigned);
+      if (peer.socket.readyState === WebSocket.OPEN && peer.state !== "closed") {
+        await new Promise<void>((resolve, reject) => {
+          peer.socket.send(JSON.stringify(signed), (error) => error ? reject(error) : resolve());
+        });
+      }
     });
-    const signed = await this.options.sign(unsigned);
-    if (peer.socket.readyState === WebSocket.OPEN) peer.socket.send(JSON.stringify(signed));
+    peer.outboundTail = queued.catch(() => undefined);
+    return queued;
   }
 
   private cleanupPeer(peer: PeerConnection): void {

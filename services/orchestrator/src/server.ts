@@ -56,15 +56,6 @@ function isTailscaleIPv4(address: string): boolean {
   return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
 }
 
-function discoverAssignedTailscaleIPv4(): string | undefined {
-  for (const entries of Object.values(os.networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family === "IPv4" && !entry.internal && isTailscaleIPv4(entry.address)) return entry.address;
-    }
-  }
-  return undefined;
-}
-
 function authorizeRemoteV2Control(request: any, reply: any): boolean {
   const ip = String(request.ip ?? "");
   const loopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";

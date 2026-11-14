@@ -191,6 +191,12 @@ export class MobileTaskEngine {
     }
   }
 
+  /** Read a task only after validating its durable device ownership. */
+  getTaskForDevice(taskId: string, deviceId: string): MobileTaskRecord | undefined {
+    this.assertTaskOwner(taskId, deviceId);
+    return this.getTask(taskId);
+  }
+
   getTask(taskId: string): MobileTaskRecord | undefined {
     const row = this.db.prepare("SELECT task_id, request_id, tool, state, result_json, error, action_hash FROM mobile_tasks WHERE task_id=?").get(taskId) as any;
     if (!row) return undefined;

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   safeParseRemoteEnvelope,
+  safeParseRemotePayload,
   signRemoteEnvelope,
   type RemoteEnvelope,
 } from "@vanessa/protocol";
@@ -117,8 +118,22 @@ export class RemotePcSignerServer {
         auth: { algorithm: "ES256", signature: "A".repeat(16) },
       };
       const parsed = safeParseRemoteEnvelope(candidate);
-      if (!parsed.success || parsed.data.keyId !== identity.keyId) {
+      const serverMessageTypes = new Set([
+        "server.challenge", "session.ready", "session.expiring", "session.close",
+        "protocol.error", "pairing.challenge", "pairing.pending", "pairing.approved",
+        "pairing.rejected", "pairing.expired", "manifest.snapshot", "manifest.changed",
+        "task.accepted", "task.snapshot", "task.progress", "task.confirmation_required",
+        "task.cancel_ack", "task.result", "task.error", "sync.snapshot", "sync.event",
+        "sync.complete", "pong",
+      ]);
+      if (!parsed.success || parsed.data.keyId !== identity.keyId ||
+          !serverMessageTypes.has(parsed.data.type)) {
         this.respond(response, 400, { error: "INVALID_ENVELOPE" });
+        return;
+      }
+      const payload = safeParseRemotePayload(parsed.data.type, parsed.data.payload);
+      if (!payload.success) {
+        this.respond(response, 400, { error: "INVALID_PAYLOAD" });
         return;
       }
       const { auth: _placeholder, ...unsigned } = parsed.data;

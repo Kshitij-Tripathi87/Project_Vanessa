@@ -125,6 +125,19 @@ async function startService(options: {
 
   const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
+  // Only the orchestrator needs the ephemeral signer capability. Do not leak
+  // it into the voice-agent child or unrelated packaged services.
+  if (options.name !== "orchestrator") {
+    delete childEnvironment.VANESSA_PC_SIGNER_URL;
+    delete childEnvironment.VANESSA_PC_SIGNER_TOKEN;
+    delete childEnvironment.VANESSA_PC_KEY_ID;
+    delete childEnvironment.VANESSA_PC_PUBLIC_KEY_SPKI;
+    delete childEnvironment.VANESSA_PC_FINGERPRINT;
+    delete childEnvironment.VANESSA_REMOTE_STATE_DIR;
+    delete childEnvironment.VANESSA_REMOTE_V2_ENABLED;
+    delete childEnvironment.VANESSA_REMOTE_V2_HOST;
+    delete childEnvironment.VANESSA_REMOTE_V2_PORT;
+  }
   const child = spawn(path.join(process.resourcesPath, "runtime", "node.exe"), [options.entryPath], {
     cwd: options.workingDirectory,
     env: { ...childEnvironment, HOST: "127.0.0.1" },
