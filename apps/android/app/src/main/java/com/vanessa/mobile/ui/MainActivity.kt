@@ -715,15 +715,15 @@ private fun DeviceScreen(
                 Text(remoteConnectionStatus, style = MaterialTheme.typography.bodyMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onScanPc, enabled = !remoteConnected) { Text("Scan PC pairing QR") }
-                    TextButton(onClick = onDisconnectPc, enabled = remotePairingDevicePresent(remoteConnected, remoteCapabilities)) { Text("Forget PC") }
+                    TextButton(onClick = onDisconnectPc, enabled = true) { Text("Forget PC") }
                 }
                 if (remoteConnected) {
                     Text("Available capabilities: " + remoteCapabilities.joinToString { it.name }, style = MaterialTheme.typography.labelSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onRemoteStatus, enabled = !remoteTaskBusy && remoteHasCapability(remoteCapabilities, "system_status")) {
+                        Button(onClick = onRemoteStatus, enabled = !remoteTaskBusy && remoteCapabilities.any { it.name == "system_status" }) {
                             Text("PC status")
                         }
-                        Button(onClick = onRemoteOpenChrome, enabled = !remoteTaskBusy && remoteHasCapability(remoteCapabilities, "open_app")) {
+                        Button(onClick = onRemoteOpenChrome, enabled = !remoteTaskBusy && remoteCapabilities.any { it.name == "open_app" }) {
                             Text("Open Chrome")
                         }
                     }
@@ -734,7 +734,7 @@ private fun DeviceScreen(
                         label = { Text("Find file by name") },
                         singleLine = true,
                     )
-                    Button(onClick = onRemoteFindFile, enabled = !remoteTaskBusy && remoteFileQuery.isNotBlank() && remoteHasCapability(remoteCapabilities, "find_file")) {
+                    Button(onClick = onRemoteFindFile, enabled = !remoteTaskBusy && remoteFileQuery.isNotBlank() && remoteCapabilities.any { it.name == "find_file" }) {
                         Text("Find file on PC")
                     }
                     OutlinedTextField(
@@ -744,10 +744,10 @@ private fun DeviceScreen(
                         label = { Text("HTTP(S) URL to open on PC") },
                         singleLine = true,
                     )
-                    Button(onClick = onRemoteOpenUrl, enabled = !remoteTaskBusy && remoteUrlInput.startsWith("https://") || !remoteTaskBusy && remoteUrlInput.startsWith("http://") && remoteHasCapability(remoteCapabilities, "open_url")) {
+                    Button(onClick = onRemoteOpenUrl, enabled = remoteConnected && !remoteTaskBusy && (remoteUrlInput.startsWith("https://") || remoteUrlInput.startsWith("http://")) && remoteCapabilities.any { it.name == "open_url" }) {
                         Text("Open URL on PC")
                     }
-                    if (remoteHasCapability(remoteCapabilities, "delete_file")) {
+                    if (remoteCapabilities.any { it.name == "delete_file" }) {
                         OutlinedTextField(
                             value = remoteDeletePath,
                             onValueChange = onRemoteDeletePathChange,
