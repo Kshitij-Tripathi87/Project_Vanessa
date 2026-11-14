@@ -26,9 +26,11 @@ export async function createRemotePcSignerFromEnvironment(
   if (typeof identity.keyId !== "string" || typeof identity.publicKeySpki !== "string") {
     throw new Error("The PC identity broker returned an invalid public identity.");
   }
+  const keyId = identity.keyId;
+  const publicKeySpki = identity.publicKeySpki;
   return {
-    keyId: identity.keyId,
-    publicKeySpki: identity.publicKeySpki,
+    keyId,
+    publicKeySpki,
     async sign(envelope) {
       const response = await fetch(baseUrl + "/sign", {
         method: "POST",
@@ -39,8 +41,8 @@ export async function createRemotePcSignerFromEnvironment(
       if (!response.ok) throw new Error("The PC identity broker rejected a signing request.");
       const value: unknown = await response.json();
       const parsed = safeParseRemoteEnvelope(value);
-      if (!parsed.success || parsed.data.keyId !== identity.keyId ||
-          !verifyRemoteEnvelopeSignature(identity.publicKeySpki, parsed.data).ok) {
+      if (!parsed.success || parsed.data.keyId !== keyId ||
+          !verifyRemoteEnvelopeSignature(publicKeySpki, parsed.data).ok) {
         throw new Error("The PC identity broker returned an invalid signature.");
       }
       return parsed.data;
