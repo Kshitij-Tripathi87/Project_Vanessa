@@ -1,0 +1,115 @@
+name: Publish Vanessa Android preview
+
+on:
+  push:
+    branches:
+      - release/vanessa-android-preview
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vanessa-android-preview-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build, verify, and publish Android preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install pinned Android SDK components
+        run: |
+          sdkmanager --install \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'ndk;27.2.12479018' \
+            'cmake;3.22.1'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Fetch pinned llama.cpp source
+        run: bash scripts/fetch-llama-cpp.sh
+
+      - name: Run Android module tests and verify native APK
+        working-directory: apps/android
+        run: |
+          ./gradlew \
+            :core:protocol:test \
+            :core:agent:test \
+            :app:testDebugUnitTest \
+            :app:verifyLocalInferenceApk \
+            --no-daemon \
+            -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp"
+
+      - name: Stage public release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk \
+            release-assets/Vanessa-Android-0.1.0-debug-arm64.apk
+          cp docs/qa/Vanessa-Android-0.1.0-QA.md \
+            release-assets/Vanessa-Android-0.1.0-QA.md
+          (
+            cd release-assets
+            sha256sum Vanessa-Android-0.1.0-debug-arm64.apk Vanessa-Android-0.1.0-QA.md \
+              > SHA256SUMS
+          )
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanessa-android-0.1.0-debug-arm64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish GitHub Release and downloadable assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-android-preview
+          target_commitish: main
+          name: Vanessa Android 0.1.0 — Development Preview
+          prerelease: true
+          draft: false
+          overwrite_files: true
+          files: |
+            release-assets/Vanessa-Android-0.1.0-debug-arm64.apk
+            release-assets/Vanessa-Android-0.1.0-QA.md
+            release-assets/SHA256SUMS
+          body: |
+            ## Vanessa Android 0.1.0 — Development Preview
+
+            ARM64 Android prototype with the new Compose home, voice interaction, PC dashboard, pairing boundary, and settings screens.
+
+            **This is a debuggable development preview, not a production-signed release.**
+
+            ### Important limitations
+            - No GGUF weights are bundled. The app checks its existing app-private files/models/installed.gguf location and reports not-ready when no compatible model is provisioned.
+            - A clean installation has no model provisioning/import UI in this prototype.
+            - Authenticated Windows v2 pairing, live PC telemetry, and remote task execution are not connected to this Android launcher.
+            - On-device speech input depends on an Android-provided offline recognizer; offline speech output depends on an installed offline TTS voice.
+
+            See the attached QA report for artifact inspection, test results, known issues, and release limitations.

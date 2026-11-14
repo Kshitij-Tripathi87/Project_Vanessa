@@ -148,3 +148,16 @@ Both installers currently install the sanitized Vanessa application payload, not
 **Direct EXE download:** [Vanessa-Setup-x64.exe](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-installer-preview/Vanessa-Setup-x64.exe)
 
 These links point to the downloadable assets published by the Windows installer workflow. This is an unsigned preview package; first-run setup requires internet access for runtime dependencies and local AI models. It is not a fully offline or production-signed release.
+
+## Android prototype download
+
+**Vanessa Android 0.1.0 — ARM64 development preview**
+
+- [Download APK](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-android-preview/Vanessa-Android-0.1.0-debug-arm64.apk)
+- [Full APK QA report](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-android-preview/Vanessa-Android-0.1.0-QA.md)
+- [SHA-256 checksums](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/download/v0.1.0-android-preview/SHA256SUMS)
+- [Release notes and assets](https://github.com/Kshitij-Tripathi87/Project_Vanessa/releases/tag/v0.1.0-android-preview)
+
+This is a **debuggable development preview**, not a production-signed release. It targets ARM64 and Android API 26+ for the app shell; native inference requires ARM64 and Android API 28+. The APK contains the native inference runtime but does not bundle GGUF model weights. The app checks its app-private model file and reports not-ready when no model is provisioned; this prototype has no model-import UI, so a clean install cannot provision a model from the APK alone.
+
+The Assistant Home, Voice Interaction, Windows Pairing, My PC, and Settings screens are included. Authenticated Windows v2 pairing, live PC telemetry, and remote PC execution are not connected to this launcher. On-device speech and offline TTS depend on Android/device-provided offline services. See the QA report for tested flows and known limitations.
