@@ -627,7 +627,7 @@ export class RemoteV2Gateway {
         sequence,
       });
       const signed = await this.options.sign(unsigned);
-      if (peer.socket.readyState === WebSocket.OPEN && peer.state !== "closed") {
+      if (peer.socket.readyState === WebSocket.OPEN) {
         await new Promise<void>((resolve, reject) => {
           peer.socket.send(JSON.stringify(signed), (error) => error ? reject(error) : resolve());
         });
