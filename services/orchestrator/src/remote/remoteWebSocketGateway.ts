@@ -66,6 +66,8 @@ type Connection = {
   outboundTail: Promise<void>;
   /** Serializes inbound processing so guard acceptance and task dispatch preserve socket order. */
   inboundTail: Promise<void>;
+  sessionExpiringTimer?: NodeJS.Timeout;
+  sessionExpiryTimer?: NodeJS.Timeout;
 };
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -201,6 +203,7 @@ export class RemoteWebSocketGateway {
 
   async stop(): Promise<void> {
     for (const connection of this.connections.values()) {
+      this.clearSessionTimers(connection);
       try { connection.ws.close(1001, "Server shutting down"); } catch { /* best effort */ }
     }
     this.connections.clear();
@@ -430,7 +433,12 @@ export class RemoteWebSocketGateway {
     connection.device = device;
     connection.clientKeyId = device.keyId;
     connection.sessionId = sessionId;
-    connection.sessionExpiresAt = expiresAt;
+    const boundedExpiry = Math.min(expiresAt, this.now() + this.sessionTtlMs);
+    if (boundedExpiry <= this.now()) {
+      throw Object.assign(new Error("The remote pairing session has expired."), { code: "SESSION_EXPIRED" });
+    }
+    this.clearSessionTimers(connection);
+    connection.sessionExpiresAt = boundedExpiry;
     connection.inboundGuard = new RemoteSessionGuard({
       sessionId,
       keyId: device.keyId,
@@ -453,8 +461,36 @@ export class RemoteWebSocketGateway {
       serverNonce,
       clientNonce,
       issuedAt: this.now(),
-      expiresAt,
+      expiresAt: boundedExpiry,
     });
+    this.armSessionTimers(connection, boundedExpiry);
+  }
+
+  private armSessionTimers(connection: Connection, expiresAt: number): void {
+    const remaining = expiresAt - this.now();
+    const expiringIn = remaining - 60_000;
+    if (expiringIn > 0) {
+      connection.sessionExpiringTimer = setTimeout(() => {
+        if (!connection.authenticated || !connection.sessionId) return;
+        void this.sendSession(connection, "session.expiring", {
+          expiresAt,
+          renewWithinMs: Math.min(60_000, Math.max(1_000, expiresAt - this.now())),
+          reason: "expiring",
+        }).catch(() => undefined);
+      }, expiringIn);
+    }
+    connection.sessionExpiryTimer = setTimeout(() => {
+      if (!connection.authenticated) return;
+      void this.sendSession(connection, "session.close", { reason: "expired" })
+        .finally(() => connection.ws.close(1008, "Session expired"));
+    }, Math.max(1, remaining));
+  }
+
+  private clearSessionTimers(connection: Connection): void {
+    if (connection.sessionExpiringTimer) clearTimeout(connection.sessionExpiringTimer);
+    if (connection.sessionExpiryTimer) clearTimeout(connection.sessionExpiryTimer);
+    connection.sessionExpiringTimer = undefined;
+    connection.sessionExpiryTimer = undefined;
   }
 
   private async handleAuthenticatedFrame(connection: Connection, envelope: RemoteEnvelope): Promise<void> {
@@ -593,6 +629,7 @@ export class RemoteWebSocketGateway {
   }
 
   private removeConnection(connection: Connection): void {
+    this.clearSessionTimers(connection);
     this.connections.delete(connection.id);
     if (connection.pairingId) this.pairingConnections.delete(connection.pairingId);
     if (connection.device && this.deviceConnections.get(connection.device.deviceId) === connection.id) {
