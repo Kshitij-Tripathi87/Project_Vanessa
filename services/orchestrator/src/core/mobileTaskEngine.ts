@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { canonicalize } from "@vanessa/protocol";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mobileToolRegistry, type MobileTool } from "./mobileToolRegistry.js";
@@ -60,15 +61,27 @@ export class MobileTaskEngine {
   async submit(input: { requestId: string; idempotencyKey: string; tool: string; args: Record<string, unknown>; deviceId?: string }): Promise<{ taskId: string; state: MobileTaskState; actionHash?: string; expiresAt?: number; summary?: string; duplicate: boolean }> {
     const deviceId = input.deviceId ?? "unknown";
     const found = this.db.prepare("SELECT task_id, state, action_hash, confirm_expires_at, tool, args_json FROM mobile_tasks WHERE device_id=? AND idempotency_key=?").get(deviceId, input.idempotencyKey) as any;
-    if (found) {
-      const existingTool = this.tools.find((item) => item.name === found.tool);
-      const existingArgs = JSON.parse(found.args_json);
-      return { taskId: found.task_id, state: found.state, ...(found.action_hash ? { actionHash: found.action_hash } : {}), ...(found.confirm_expires_at ? { expiresAt: found.confirm_expires_at } : {}), ...(existingTool?.confirmSummary ? { summary: existingTool.confirmSummary(existingArgs) } : {}), duplicate: true };
+
+    // An idempotency key identifies one immutable operation, not merely one
+    // response slot. Reusing it for a different capability or argument set
+    // must fail closed instead of returning the old task as if it represented
+    // the new request. Arguments are parsed first so schema defaults/coercions
+    // are included, then compared using the protocol's JCS canonicalization.
+    if (found && found.tool !== input.tool) {
+      throw Object.assign(new Error("Idempotency key was already used for a different capability."), { code: "IDEMPOTENCY_CONFLICT" });
     }
     const tool = this.tools.find((item) => item.name === input.tool);
     if (!tool) throw Object.assign(new Error("Tool is not available on this PC."), { code: "INVALID_ARGUMENTS" });
     const parsed = tool.argsSchema.safeParse(input.args);
     if (!parsed.success) throw Object.assign(new Error("Tool arguments are invalid."), { code: "INVALID_ARGUMENTS" });
+    if (found) {
+      const existingTool = this.tools.find((item) => item.name === found.tool);
+      const existingArgs = JSON.parse(found.args_json);
+      if (canonicalize(existingArgs) !== canonicalize(parsed.data)) {
+        throw Object.assign(new Error("Idempotency key was already used for different arguments."), { code: "IDEMPOTENCY_CONFLICT" });
+      }
+      return { taskId: found.task_id, state: found.state, ...(found.action_hash ? { actionHash: found.action_hash } : {}), ...(found.confirm_expires_at ? { expiresAt: found.confirm_expires_at } : {}), ...(existingTool?.confirmSummary ? { summary: existingTool.confirmSummary(existingArgs) } : {}), duplicate: true };
+    }
     const taskId = randomUUID();
     const initialState: MobileTaskState = tool.tier === 2 ? "awaiting_confirm" : "queued";
     const actionHash = tool.tier === 2 ? this.actionHash(taskId, tool.name, parsed.data) : undefined;
