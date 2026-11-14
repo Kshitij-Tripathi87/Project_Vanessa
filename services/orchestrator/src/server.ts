@@ -608,6 +608,7 @@ fastify.get("/api/remote/v2/devices", async (request, reply) => {
     grantedScopes: device.grantedScopes,
     pairedAt: device.pairedAt,
     revoked: device.revoked,
+    biometricApprovalAvailable: !!device.approvalPublicKeySpki,
   })));
 });
 
