@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Monitor
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -46,6 +47,8 @@ import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +59,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -152,11 +158,11 @@ internal fun VanessaApp(
                         )
                         else -> HomeScreen(
                             inset, profile, model, modelStatus, modelLoaded, modelBusy,
-                            assistantBusy, onNavigate,
+                            assistantBusy, prompt, onNavigate, onPromptChange,
+                            onRunAssistant, onSpeakRequest,
                         )
                     }
                 }
-                if (destination != "VOICE") BottomNavigation(destination, onNavigate)
             }
         }
     }
@@ -192,106 +198,144 @@ private fun HomeScreen(
     modelLoaded: Boolean,
     modelBusy: Boolean,
     assistantBusy: Boolean,
+    prompt: String,
     onNavigate: (String) -> Unit,
+    onPromptChange: (String) -> Unit,
+    onRunAssistant: () -> Unit,
+    onSpeakRequest: () -> Unit,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = inset).padding(top = 18.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+            .padding(horizontal = inset).padding(top = 8.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("VANESSA", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge, letterSpacing = 2.2.sp)
-                Text("Your personal assistant", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.Menu, contentDescription = "Open navigation menu", tint = VanessaPalette.TextPrimary)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(text = { Text("Assistant") }, onClick = { menuExpanded = false; onNavigate("HOME") })
+                    DropdownMenuItem(text = { Text("My PC") }, onClick = { menuExpanded = false; onNavigate("PC") })
+                    DropdownMenuItem(text = { Text("Settings") }, onClick = { menuExpanded = false; onNavigate("SETTINGS") })
+                }
             }
-            StatusPill(if (modelLoaded) "ON DEVICE" else "NOT READY", if (modelLoaded) VanessaPalette.Success else VanessaPalette.Warning)
-            Spacer(Modifier.width(8.dp))
-            IconButton(onClick = { onNavigate("SETTINGS") }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Settings, contentDescription = "Open settings", tint = VanessaPalette.TextSecondary)
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    "V",
+                    color = VanessaPalette.TextPrimary,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    letterSpacing = 0.sp,
+                )
+            }
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                IconButton(onClick = { onNavigate("SETTINGS") }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.Settings, contentDescription = "Open settings", tint = VanessaPalette.TextSecondary)
+                }
             }
         }
 
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            VanessaOrb(194.dp, active = assistantBusy, offline = !modelLoaded)
+            Spacer(Modifier.height(4.dp))
+            VanessaOrb(116.dp, active = assistantBusy, offline = !modelLoaded)
+            Text("How can I help?", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
             Text(
-                if (assistantBusy) "Working on your request" else "Ready when you are",
-                color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center,
-            )
-            Text(
-                if (modelLoaded) "Your model is running on this phone." else "The local model is not currently active.",
-                color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
-            )
-            PrimaryAction(
-                text = "Talk to Vanessa",
-                icon = { Icon(Icons.Outlined.Mic, contentDescription = null) },
-                onClick = { onNavigate("VOICE") },
-                modifier = Modifier.fillMaxWidth(),
+                when {
+                    modelBusy -> "Starting local model…"
+                    modelLoaded -> "Local model is ready on this device"
+                    model != null -> "Model detected · Runtime not ready"
+                    else -> "No local model detected"
+                },
+                color = if (modelLoaded) VanessaPalette.Success else VanessaPalette.TextSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
             )
         }
 
-        SectionHeading("MY DEVICES", "2 endpoints")
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(18.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                DeviceRow(
-                    icon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null) },
-                    title = profile?.let { "${it.manufacturer} ${it.model}" } ?: "This phone",
-                    subtitle = "This device · Android",
-                    status = if (modelLoaded) "Ready" else "Available",
-                    statusColor = VanessaPalette.Success,
-                )
-                ThinDivider()
-                DeviceRow(
-                    icon = { Icon(Icons.Outlined.Computer, contentDescription = null) },
-                    title = "Windows PC",
-                    subtitle = "Pair a computer to continue",
-                    status = "Not paired",
-                    statusColor = VanessaPalette.TextSecondary,
-                    onClick = { onNavigate("PC") },
-                )
-            }
-        }
-
-        SectionHeading("LOCAL MODEL", "Automatic detection")
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(18.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Memory, contentDescription = null, tint = VanessaPalette.TextSecondary)
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(model?.let { File(it.path).name } ?: "No model detected", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(model?.let { "${formatBytes(it.bytes)} · GGUF" } ?: "No local model found in app storage", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = onPromptChange,
+                modifier = Modifier.weight(1f).height(58.dp),
+                singleLine = true,
+                placeholder = { Text("Ask Vanessa…", color = VanessaPalette.TextSecondary) },
+                enabled = !assistantBusy,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = VanessaPalette.Brand,
+                    unfocusedBorderColor = VanessaPalette.Border,
+                    focusedTextColor = VanessaPalette.TextPrimary,
+                    unfocusedTextColor = VanessaPalette.TextPrimary,
+                    cursorColor = VanessaPalette.Brand,
+                    focusedContainerColor = VanessaPalette.Surface,
+                    unfocusedContainerColor = VanessaPalette.Surface,
+                ),
+                trailingIcon = {
+                    IconButton(
+                        onClick = { onNavigate("VOICE"); onSpeakRequest() },
+                        enabled = !assistantBusy,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(Icons.Outlined.Mic, contentDescription = "Start voice interaction", tint = VanessaPalette.TextSecondary)
                     }
-                    StatusPill(
-                        when { modelBusy -> "LOADING"; modelLoaded -> "ACTIVE"; model != null -> "DETECTED"; else -> "MISSING" },
-                        when { modelLoaded -> VanessaPalette.Success; modelBusy || model != null -> VanessaPalette.Warning; else -> VanessaPalette.TextSecondary },
-                    )
-                }
-                ThinDivider()
-                Text(modelStatus, color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium)
+                },
+            )
+            Button(
+                onClick = { onNavigate("VOICE"); onRunAssistant() },
+                enabled = modelLoaded && !assistantBusy && prompt.isNotBlank(),
+                modifier = Modifier.size(54.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
+            ) {
+                Icon(Icons.Outlined.Send, contentDescription = "Send request")
             }
+        }
+
+        SectionHeading("MY DEVICES")
+        Column(modifier = Modifier.fillMaxWidth()) {
+            DeviceRow(
+                icon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null) },
+                title = profile?.let { "${it.manufacturer} ${it.model}" } ?: "My Device",
+                subtitle = profile?.let {
+                    "Android API ${it.apiLevel} · Battery ${it.batteryPercent?.let { pct -> pct.toString() + "%" } ?: "Unknown"}"
+                } ?: "This phone · Checking device status",
+                status = "On device",
+                statusColor = VanessaPalette.Success,
+            )
+            ThinDivider()
+            DeviceRow(
+                icon = { Icon(Icons.Outlined.Computer, contentDescription = null) },
+                title = "My PC",
+                subtitle = "Windows companion",
+                status = "Not paired",
+                statusColor = VanessaPalette.TextSecondary,
+                onClick = { onNavigate("PC") },
+            )
         }
 
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                .background(VanessaPalette.SurfaceStrong).clickable { onNavigate("PC") }.padding(14.dp),
+                .background(VanessaPalette.SurfaceStrong)
+                .clickable { onNavigate("PC") }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Outlined.Monitor, contentDescription = null, tint = VanessaPalette.TextSecondary)
-            Spacer(Modifier.width(10.dp))
-            Text("Manage your Windows connection", modifier = Modifier.weight(1f), color = VanessaPalette.TextPrimary)
-            Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = VanessaPalette.TextSecondary)
+            Text("Connect a Windows PC", modifier = Modifier.weight(1f), color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            Icon(Icons.Outlined.ChevronRight, contentDescription = "Open PC dashboard", tint = VanessaPalette.TextSecondary)
         }
     }
 }
@@ -335,10 +379,20 @@ private fun VoiceScreen(
             modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("How can I help?", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.displaySmall, textAlign = TextAlign.Center)
-            Text("Speak naturally, or type a request below.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            Text(
+                if (voiceListening) "Listening" else "Voice interaction",
+                color = VanessaPalette.TextPrimary,
+                style = MaterialTheme.typography.displaySmall,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                "Speak a command or type instead.",
+                color = VanessaPalette.TextSecondary,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(8.dp))
-            VanessaOrb(188.dp, active = voiceListening || assistantBusy, offline = !modelLoaded)
+            VanessaOrb(152.dp, active = voiceListening || assistantBusy, offline = !modelLoaded)
             Text(
                 when { voiceListening -> "Listening…"; assistantBusy -> "Thinking on this device…"; !onDeviceSpeechAvailable -> "On-device speech unavailable"; else -> "Voice input is user initiated" },
                 color = if (voiceListening) VanessaPalette.Brand else VanessaPalette.TextSecondary,
@@ -490,6 +544,9 @@ private fun PcDashboardScreen(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text("MY PC", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
                 Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
@@ -572,6 +629,9 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text("PREFERENCES", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
                 Text("Settings", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
