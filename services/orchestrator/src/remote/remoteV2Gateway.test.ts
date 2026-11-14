@@ -163,7 +163,12 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
       // Pairing completion carries SHA-256(nonce), not the raw nonce.
       challengeNonce: createHash("sha256").update(challengePayload.nonce, "utf8").digest("hex"),
     }, PRE_SESSION_ID, 1));
-    const pending = await next("pairing.pending");
+    const pending = await next(undefined, 5000);
+    assert.equal(
+      pending.type,
+      "pairing.pending",
+      `PC rejected pairing completion: ${JSON.stringify(pending.payload)}`,
+    );
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, pending).ok, true);
     assert.equal((pending.payload as Record<string, any>).state, "awaiting_approval");
 

@@ -225,15 +225,31 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
       Buffer.from(canonicalize(binding), "utf8"),
       generated.privateKey,
     ).toString("base64url");
+    // deviceId is included in the canonical signature binding, but is
+    // resolved by the PC from the authenticated key and must not be accepted
+    // as a caller-supplied field in the request payload.
     const response = {
-      ...binding,
+      approvalId: approval.approvalId,
+      taskId: approval.taskId,
+      actionHash: approval.actionHash,
+      decision: "approved" as const,
+      approvedAt,
+      method: "biometric_strong",
       approvalProof: { keyId: approvalKeyId, signature },
     };
     const forged = {
       ...response,
-      approvalProof: { keyId: approvalKeyId, signature: Buffer.from("forged").toString("base64url") },
+      approvalProof: { keyId: approvalKeyId, signature: "A".repeat(96) },
     };
-    await assert.rejects(service.confirmTask(PHONE_KEY_ID, { ...binding }), { code: "PERMISSION_DENIED" });
+    const withoutProof = {
+      approvalId: approval.approvalId,
+      taskId: approval.taskId,
+      actionHash: approval.actionHash,
+      decision: "approved" as const,
+      approvedAt,
+      method: "biometric_strong",
+    };
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, withoutProof), { code: "PERMISSION_DENIED" });
     await assert.rejects(service.confirmTask(PHONE_KEY_ID, forged), { code: "PERMISSION_DENIED" });
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 

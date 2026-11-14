@@ -289,8 +289,16 @@ export class RemoteV2Gateway {
         this.closePeer(peer, 1003, "Only UTF-8 JSON text frames are accepted");
         return;
       }
-      peer.inboundTail = peer.inboundTail.then(() => this.handleFrame(peer, data)).catch(() => {
-        this.closePeer(peer, 1008, "Invalid remote protocol message");
+      peer.inboundTail = peer.inboundTail.then(() => this.handleFrame(peer, data)).catch(async (error: unknown) => {
+        const candidate = (error as { code?: unknown } | null)?.code;
+        const code = typeof candidate === "string" && REMOTE_ERROR_CODES.has(candidate as RemoteProtocolErrorCode)
+          ? candidate as RemoteProtocolErrorCode
+          : "INVALID_MESSAGE";
+        const safeMessage = code === "INVALID_MESSAGE"
+          ? "The remote message could not be processed."
+          : error instanceof Error ? error.message.slice(0, 240) : "The remote message was rejected.";
+        await this.sendError(peer, code, safeMessage).catch(() => undefined);
+        this.closePeer(peer, 1008, "Remote protocol message rejected");
       });
     });
     socket.on("close", () => this.cleanupPeer(peer));
