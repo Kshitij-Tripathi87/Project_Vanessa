@@ -234,80 +234,56 @@ class RemoteControlActivity : FragmentActivity() {
         val approval = pendingApproval ?: return
         val identity = approvalKeyStore.loadOrCreate()
         if (identity == null) {
-            latestEvent = "Approval blocked: no hardware-backed strong-biometric key is enrolled for this paired PC. Re-pair after enabling a strong biometric."
+            latestEvent = "Approval blocked: no hardware-backed strong-biometric key is available. Re-pair after enrolling strong biometrics."
             return
         }
-        val signature = try {
-            approvalKeyStore.createSignature()
-        } catch (error: Exception) {
-            latestEvent = "Approval key unavailable: ${error.message ?: "strong biometric is required"}"
-            return
-        }
-        val prompt = BiometricPrompt(
-            this,
-            ContextCompat.getMainExecutor(this),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    lifecycleScope.launch {
-                        try {
-                            val approvedAt = System.currentTimeMillis()
-                            val approvalId = approval["approvalId"]?.toString()?.trim('"')
-                                ?: error("Approval ID is missing.")
-                            val taskId = approval["taskId"]?.toString()?.trim('"')
-                                ?: error("Task ID is missing.")
-                            val actionHash = approval["actionHash"]?.toString()?.trim('"')
-                                ?: error("Action hash is missing.")
-                            val deviceId = approval["deviceId"]?.toString()?.trim('"')
-                                ?: error("Paired device ID is missing.")
-                            val proofBinding = buildJsonObject {
-                                put("approvalId", approvalId)
-                                put("taskId", taskId)
-                                put("actionHash", actionHash)
-                                put("decision", "approved")
-                                put("approvedAt", approvedAt)
-                                put("method", "biometric_strong")
-                                put("deviceId", deviceId)
-                            }
-                            val authenticatedSignature = result.cryptoObject?.signature
-                                ?: error("Android did not return the biometric-authorized signing object.")
-                            authenticatedSignature.update(
-                                JcsCanonicalizer.canonicalize(proofBinding).toByteArray(Charsets.UTF_8)
-                            )
-                            val encodedSignature = java.util.Base64.getUrlEncoder().withoutPadding()
-                                .encodeToString(authenticatedSignature.sign())
-                            val proof = buildJsonObject {
-                                put("keyId", identity.keyId)
-                                put("signature", encodedSignature)
-                            }
-                            bridge.confirmTask(approvalId, taskId, actionHash, true, approvedAt, proof)
-                            pendingApproval = null
-                            latestEvent = "Biometric approval sent. Waiting for the PC verifier."
-                        } catch (error: Exception) {
-                            latestEvent = "Approval failed closed: ${error.message ?: "signature error"}"
+        // Android Keystore keys configured for per-use authentication cannot
+        // sign merely by calling Signature.initSign() and then prompting.
+        // The Signature must be passed into BiometricPrompt.CryptoObject.
+        approvalKeyStore.authenticateForSignature(
+            activity = this,
+            onSuccess = { authenticatedSignature ->
+                lifecycleScope.launch {
+                    try {
+                        val approvedAt = System.currentTimeMillis()
+                        val approvalId = approval["approvalId"]?.toString()?.trim('"')
+                            ?: error("Approval ID is missing.")
+                        val taskId = approval["taskId"]?.toString()?.trim('"')
+                            ?: error("Task ID is missing.")
+                        val actionHash = approval["actionHash"]?.toString()?.trim('"')
+                            ?: error("Action hash is missing.")
+                        val deviceId = approval["deviceId"]?.toString()?.trim('"')
+                            ?: error("Paired device ID is missing.")
+                        val proofBinding = buildJsonObject {
+                            put("approvalId", approvalId)
+                            put("taskId", taskId)
+                            put("actionHash", actionHash)
+                            put("decision", "approved")
+                            put("approvedAt", approvedAt)
+                            put("method", "biometric_strong")
+                            put("deviceId", deviceId)
                         }
+                        authenticatedSignature.update(
+                            JcsCanonicalizer.canonicalize(proofBinding).toByteArray(Charsets.UTF_8)
+                        )
+                        val encodedSignature = java.util.Base64.getUrlEncoder().withoutPadding()
+                            .encodeToString(authenticatedSignature.sign())
+                        val proof = buildJsonObject {
+                            put("keyId", identity.keyId)
+                            put("signature", encodedSignature)
+                        }
+                        bridge.confirmTask(approvalId, taskId, actionHash, true, approvedAt, proof)
+                        pendingApproval = null
+                        latestEvent = "Biometric approval sent. Waiting for the PC verifier."
+                    } catch (error: Exception) {
+                        latestEvent = "Approval failed closed: ${error.message ?: "signature error"}"
                     }
                 }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    latestEvent = "Approval cancelled or failed: $errString"
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    latestEvent = "Biometric was not recognized. No approval was sent."
-                }
+            },
+            onFailure = { reason ->
+                latestEvent = "Approval cancelled or failed: $reason. No approval was sent."
             },
         )
-        val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Approve protected PC action")
-            .setSubtitle("Verify with a strong biometric")
-            .setDescription("The signature will authorize only the exact capability, target and action hash shown here.")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("Cancel")
-            .build()
-        prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
     }
 
     private fun denyPendingTask() {
