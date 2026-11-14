@@ -5,6 +5,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
 import java.security.KeyPairGenerator
+import java.security.KeyFactory
+import android.security.keystore.KeyInfo
 import java.security.KeyStore
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
@@ -22,6 +24,11 @@ class AndroidBiometricApprovalKeyStore(
         val publicKey = entry.certificate.publicKey
         require(RemoteEnvelopeCrypto.isP256(publicKey)) {
             "Stored biometric approval identity is not a P-256 key."
+        }
+        val keyInfo = KeyFactory.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
+            .getKeySpec(entry.privateKey, KeyInfo::class.java)
+        require(keyInfo.isInsideSecureHardware) {
+            "Strong-biometric approval requires a hardware-backed Android Keystore key."
         }
         return AndroidBiometricApprovalIdentity(
             keyId = RemoteEnvelopeCrypto.keyId(publicKey.encoded),
