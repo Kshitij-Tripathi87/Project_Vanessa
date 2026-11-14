@@ -5,6 +5,8 @@ import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { isIPv4 } from "node:net";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
@@ -16,6 +18,10 @@ import { getRemotePwaHtml } from "./remotePwa.js";
 import { modelRouter } from "./core/router.js";
 import { MobileGateway } from "./core/mobileGateway.js";
 import { MobileTaskEngine } from "./core/mobileTaskEngine.js";
+import { RemotePairingRegistry } from "./remote/remotePairingRegistry.js";
+import { RemoteTaskService } from "./remote/remoteTaskService.js";
+import { RemoteWebSocketGateway } from "./remote/remoteWebSocketGateway.js";
+import { HttpRemoteEnvelopeSigner } from "./remote/remoteSignerClient.js";
 import { validateToken, pairDevice, revokeDevice, getDeviceQuotaUsage, DEFAULT_PAIRING_CODE, seedPairingCode } from "./auth/authService.js";
 
 // Load .env searching current and parent directories
@@ -30,10 +36,14 @@ for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
 }
 
 const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
+const execFileAsync = promisify(execFile);
 const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
 let mobileGateway: MobileGateway | undefined;
 let mobileTaskEngine: MobileTaskEngine | undefined;
+let remotePairings: RemotePairingRegistry | undefined;
+let remoteV2Gateway: RemoteWebSocketGateway | undefined;
+let remoteV2Host: string | undefined;
 
 await fastify.register(cors, {
   // Only the local desktop development renderer needs browser access. The
@@ -564,13 +574,140 @@ fastify.get("/voice/session", async (_request, reply) => {
   }
 });
 
+
+function isTailscaleIPv4(host: string): boolean {
+  if (!isIPv4(host)) return false;
+  const octets = host.split(".").map(Number);
+  return octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127 &&
+    octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+}
+
+async function discoverTailscaleIPv4(): Promise<string | null> {
+  try {
+    const result = await execFileAsync("tailscale", ["ip", "-4"], { timeout: 3000, windowsHide: true });
+    const candidate = result.stdout.trim().split(/\\s+/)[0] ?? "";
+    return isTailscaleIPv4(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function authorizeRemoteAdmin(request: any, reply: any): boolean {
+  const expected = process.env.VANESSA_REMOTE_ADMIN_TOKEN;
+  const header = request.headers.authorization;
+  const supplied = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!expected || !supplied) {
+    reply.status(401).send({ error: "REMOTE_ADMIN_UNAUTHORIZED" });
+    return false;
+  }
+  const left = Buffer.from(expected, "utf8");
+  const right = Buffer.from(supplied, "utf8");
+  if (left.length !== right.length || !timingSafeEqual(left, right)) {
+    reply.status(401).send({ error: "REMOTE_ADMIN_UNAUTHORIZED" });
+    return false;
+  }
+  return true;
+}
+
+fastify.get("/api/remote-v2/status", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  return {
+    enabled: Boolean(remoteV2Gateway),
+    protocol: 2,
+    transport: "websocket",
+    host: remoteV2Host ?? null,
+    ...(remoteV2Gateway ? remoteV2Gateway.getStatus() : {}),
+    tailscale: Boolean(remoteV2Host && isTailscaleIPv4(remoteV2Host)),
+  };
+});
+
+fastify.post("/api/remote-v2/pairing-window", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remoteV2Gateway || !remotePairings || !remoteV2Host) {
+    return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  }
+  const signer = new HttpRemoteEnvelopeSigner(
+    process.env.VANESSA_REMOTE_SIGNER_URL ?? "",
+    process.env.VANESSA_REMOTE_SIGNER_TOKEN ?? "",
+  );
+  const identity = await signer.getIdentity();
+  const window = remotePairings.createPairingWindow();
+  return {
+    type: "vanessa_remote_v2",
+    version: 2,
+    pcIp: remoteV2Host,
+    port: remoteV2Gateway.getActualPort(),
+    pairingId: window.pairingId,
+    pairingCode: window.code,
+    expiresAt: window.expiresAt,
+    pcKeyId: identity.keyId,
+    pcPublicKey: identity.publicKeySpki,
+    pcName: identity.pcName,
+  };
+});
+
+fastify.get("/api/remote-v2/pairings/pending", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remotePairings) return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  return { pairings: remotePairings.getPendingApprovals() };
+});
+
+fastify.post("/api/remote-v2/pairings/approve", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remotePairings || !remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  const body = request.body as { pairingId?: unknown; grantedScopes?: unknown };
+  if (typeof body?.pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(body.pairingId) ||
+      !Array.isArray(body.grantedScopes) || body.grantedScopes.length > 32 ||
+      body.grantedScopes.some((scope) => typeof scope !== "string" || !/^[a-z][a-z0-9_.]{0,63}$/.test(scope)) ||
+      new Set(body.grantedScopes).size !== body.grantedScopes.length) {
+    return reply.status(400).send({ error: "INVALID_PAIRING_APPROVAL" });
+  }
+  const approved = await remotePairings.approve(body.pairingId, body.grantedScopes as string[]);
+  await remoteV2Gateway.approvePairing(body.pairingId, approved);
+  return { success: true, deviceId: approved.deviceId, grantedScopes: approved.grantedScopes };
+});
+
+fastify.post("/api/remote-v2/pairings/reject", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remotePairings || !remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  const body = request.body as { pairingId?: unknown };
+  if (typeof body?.pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(body.pairingId)) {
+    return reply.status(400).send({ error: "INVALID_PAIRING_ID" });
+  }
+  const rejected = remotePairings.reject(body.pairingId);
+  await remoteV2Gateway.rejectPairing(body.pairingId, rejected);
+  return { success: true };
+});
+
+fastify.get("/api/remote-v2/devices", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remotePairings) return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  return {
+    devices: remotePairings.listTrustedDevices().map(({ publicKeySpki: _publicKeySpki, ...device }) => device),
+  };
+});
+
+fastify.post("/api/remote-v2/devices/revoke", async (request, reply) => {
+  if (!authorizeRemoteAdmin(request, reply)) return;
+  if (!remotePairings || !remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_UNAVAILABLE" });
+  const body = request.body as { deviceId?: unknown };
+  if (typeof body?.deviceId !== "string" || !/^[0-9a-f-]{36}$/.test(body.deviceId)) {
+    return reply.status(400).send({ error: "INVALID_DEVICE_ID" });
+  }
+  const revoked = await remotePairings.revokeDevice(body.deviceId);
+  if (revoked) remoteV2Gateway.revokeDevice(body.deviceId);
+  return { success: revoked };
+});
+
+
 // Start server
 export async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: "127.0.0.1" });
     console.log(`[Vanessa Orchestrator] Online at http://127.0.0.1:${PORT}`);
-    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, ephemeralResult }) => {
+    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, deviceId, ephemeralResult }) => {
       mobileGateway?.publishTask({ ...task, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
+      remoteV2Gateway?.publishTask({ task, deviceId });
       const auditRow = mobileTaskEngine?.recentAudit(100).find((row: any) => row.taskId === task.taskId && row.state === task.state) as any;
       eventBus.emitEvent("audit:log", {
         id: `mobile-${task.taskId}-${task.state}`,
@@ -580,14 +717,50 @@ export async function startServer() {
         details: { state: task.state, ...(auditRow ? { args: auditRow.args, ...(auditRow.resultSummary ? { summary: auditRow.resultSummary } : {}) } : {}), ...(task.error ? { error: task.error } : {}) },
       });
     } });
+
+    if (process.env.VANESSA_REMOTE_V2_ENABLED === "true") {
+      const signerUrl = process.env.VANESSA_REMOTE_SIGNER_URL ?? "";
+      const signerToken = process.env.VANESSA_REMOTE_SIGNER_TOKEN ?? "";
+      const adminToken = process.env.VANESSA_REMOTE_ADMIN_TOKEN ?? "";
+      if (!signerUrl || !signerToken || adminToken.length < 32) {
+        console.warn("[Vanessa Remote v2] Disabled: Electron identity signer/admin channel is not configured.");
+      } else {
+        const configuredHost = process.env.VANESSA_REMOTE_V2_HOST?.trim();
+        const host = configuredHost || await discoverTailscaleIPv4();
+        const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+        if (!host || (!loopback && !isTailscaleIPv4(host)) ||
+            (loopback && process.env.VANESSA_REMOTE_V2_ALLOW_LOOPBACK !== "true")) {
+          console.warn("[Vanessa Remote v2] Not listening: an active Tailscale IPv4 address is required. Remote access remains off.");
+        } else {
+          const port = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
+          if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid v2 remote port.");
+          const dataDir = process.env.VANESSA_REMOTE_DATA_DIR || path.resolve(process.cwd(), "data", "remote-v2");
+          fs.mkdirSync(dataDir, { recursive: true });
+          remotePairings = new RemotePairingRegistry({ storePath: path.join(dataDir, "trusted-devices.json") });
+          await remotePairings.initialize();
+          const signer = new HttpRemoteEnvelopeSigner(signerUrl, signerToken);
+          // Confirm the PC signing identity before opening the network listener.
+          const identity = await signer.getIdentity();
+          if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
+          const remoteTasks = new RemoteTaskService(mobileTaskEngine, remotePairings);
+          remoteV2Gateway = new RemoteWebSocketGateway({
+            host, port, signer, pairings: remotePairings, tasks: remoteTasks,
+          });
+          await remoteV2Gateway.start();
+          remoteV2Host = host;
+          console.log("[Vanessa Remote v2] Authenticated listener online at ws://" + host + ":" + remoteV2Gateway.getActualPort() + "/remote-v2");
+        }
+      }
+    }
+
     if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true") {
       const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
       if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");
       const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
       const octets = host.split(".").map(Number);
       const tailscaleAddress = isIPv4(host) && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
-      if (!loopback && (!tailscaleAddress || process.env.VANESSA_MOBILE_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE !== "true")) {
-        throw new Error("Remote binding requires a Tailscale IPv4 address and explicit unauthenticated Phase 2 opt-in; keep this disabled until pairing is implemented.");
+      if (!loopback) {
+        throw new Error("Legacy v1 mobile gateway is loopback-only. Use the authenticated v2 remote gateway for Tailscale access.");
       }
       const port = Number(process.env.VANESSA_MOBILE_GATEWAY_PORT || "4320");
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid mobile gateway port.");
@@ -607,6 +780,12 @@ export async function startServer() {
       socketServer.on("listening", () => console.log(`[Vanessa Mobile Gateway] ws://${host}:${port}`));
       socketServer.on("error", (error) => console.error(`[Vanessa Mobile Gateway] ${error.message}`));
     }
+    fastify.addHook("onClose", async () => {
+      await remoteV2Gateway?.stop();
+      remoteV2Gateway = undefined;
+      mobileTaskEngine?.close();
+      mobileTaskEngine = undefined;
+    });
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
