@@ -5,8 +5,9 @@
     <!-- Calendar access is requested in-app only when the user asks for today's events. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <!-- Required for the authenticated WSS link to the paired PC over Tailscale. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Declare the platform on-device speech service without broad package visibility. -->
     <queries>
