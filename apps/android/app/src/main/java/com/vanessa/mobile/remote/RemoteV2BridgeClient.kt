@@ -120,6 +120,7 @@ class RemoteV2BridgeClient(context: Context) {
         onState: (String) -> Unit,
         onEvent: (RemoteV2Event) -> Unit,
     ): Job? {
+        stopRequested = false
         val saved = loadSavedConfig() ?: return null
         return scope.launch(Dispatchers.IO) {
             val identity = identityStore.loadOrCreate()
@@ -282,23 +283,21 @@ class RemoteV2BridgeClient(context: Context) {
                         }
                     }
                 }
-                if (challenge.type != "server.challenge" || !pairingApproved) {
-                    challenge = withTimeout(15_000) {
-                        var found: RemoteEnvelopeV2? = null
-                        while (found == null) {
-                            val next = receiveEnvelope()
-                            if (next.type == "server.challenge") {
-                                verifyServerEnvelope(next, config.pcKeyId, config.pcPublicKey)
-                                found = next
-                            } else {
-                                val checked = preSessionGuard.verifyAndAccept(next)
-                                if (checked !is RemoteEnvelopeCheck.Accepted) {
-                                    throw SecurityException("PC pre-session message was rejected: $checked")
-                                }
-                            }
+                // Approval rotates the server session ID and nonce. The initial
+                // challenge cannot be reused for client.authenticate.
+                challenge = withTimeout(15_000) {
+                    while (true) {
+                        val next = receiveEnvelope()
+                        if (next.type == "server.challenge") {
+                            verifyServerEnvelope(next, config.pcKeyId, config.pcPublicKey)
+                            return@withTimeout next
                         }
-                        found
+                        val checked = preSessionGuard.verifyAndAccept(next)
+                        if (checked !is RemoteEnvelopeCheck.Accepted) {
+                            throw SecurityException("PC pre-session message was rejected: $checked")
+                        }
                     }
+                    error("Unreachable")
                 }
             }
 
@@ -463,7 +462,7 @@ class RemoteV2BridgeClient(context: Context) {
             "PC endpoint must be a plain WebSocket URL inside Tailscale."
         }
         require(uri.host != null && isTailscaleIPv4(uri.host)) { "PC endpoint is not an assigned Tailscale IPv4 address." }
-        require(uri.port in 1..65535 && uri.path.isNullOrEmpty() || uri.path == "/") { "PC endpoint port/path is invalid." }
+        require(uri.port in 1..65535 && (uri.path.isNullOrEmpty() || uri.path == "/")) { "PC endpoint port/path is invalid." }
         require(pcKeyId.matches(Regex("^[A-Za-z0-9_-]{16,128}$"))) { "PC key ID is malformed." }
         val der = decodeBase64Url(publicKeyEncoded)
         require(RemoteEnvelopeCrypto.keyId(der) == pcKeyId) { "PC public key and key ID do not match." }

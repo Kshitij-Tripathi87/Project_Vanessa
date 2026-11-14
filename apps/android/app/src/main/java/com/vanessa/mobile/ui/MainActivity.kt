@@ -5,6 +5,7 @@ import ai.vanessa.agent.LocalPlanOutcome
 import ai.vanessa.agent.LocalPlanError
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -150,6 +151,7 @@ class MainActivity : ComponentActivity() {
                         onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                         meetings = meetings,
                         calendarMessage = calendarMessage,
+                        onRemoteControl = { startActivity(Intent(this, RemoteControlActivity::class.java)) },
                         onRefresh = ::refreshProfile,
                         onImportModel = ::chooseModel,
                         onLoadModel = ::loadModel,
@@ -449,6 +451,7 @@ private fun DeviceScreen(
     onDeviceSpeechAvailable: Boolean,
     meetings: List<CalendarMeeting>,
     calendarMessage: String?,
+    onRemoteControl: () -> Unit,
     onRefresh: () -> Unit,
     onImportModel: () -> Unit,
     onLoadModel: () -> Unit,
@@ -467,10 +470,13 @@ private fun DeviceScreen(
             Text("VANESSA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text("Your local AI agent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Private on-device reasoning and Android tools. Network pairing is intentionally unavailable in this build.",
+                "Private on-device reasoning and Android tools, with optional authenticated Windows PC control over Tailscale.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Button(onClick = onRemoteControl, modifier = Modifier.fillMaxWidth()) {
+                Text("Connect to Windows PC")
+            }
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
