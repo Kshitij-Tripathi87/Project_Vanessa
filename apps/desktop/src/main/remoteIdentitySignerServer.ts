@@ -25,6 +25,34 @@ export type RemoteIdentitySignerHandle = {
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+// A compromised/misconfigured child process must not use the Electron signer
+// to impersonate the phone or sign arbitrary bidirectional protocol messages.
+const PC_SIGNABLE_TYPES = new Set<RemoteMessageType>([
+  "server.challenge",
+  "pairing.challenge",
+  "pairing.pending",
+  "pairing.approved",
+  "pairing.rejected",
+  "pairing.expired",
+  "session.ready",
+  "session.expiring",
+  "session.close",
+  "protocol.error",
+  "manifest.snapshot",
+  "manifest.changed",
+  "task.accepted",
+  "task.snapshot",
+  "task.progress",
+  "task.confirmation_required",
+  "task.cancel_ack",
+  "task.result",
+  "task.error",
+  "sync.snapshot",
+  "sync.event",
+  "sync.complete",
+  "pong",
+]);
+
 function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left, "utf8");
   const b = Buffer.from(right, "utf8");
@@ -108,7 +136,8 @@ export async function startRemoteIdentitySignerServer(userDataPath: string): Pro
       }
       const type = input.type as RemoteMessageType;
       const direction = REMOTE_MESSAGE_DIRECTIONS[type];
-      if (!direction || (direction !== "server_to_client" && direction !== "bidirectional")) {
+      if (!PC_SIGNABLE_TYPES.has(type) || !direction ||
+          (direction !== "server_to_client" && direction !== "bidirectional")) {
         sendJson(response, 403, { error: "message_direction_forbidden" });
         return;
       }
