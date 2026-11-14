@@ -63,7 +63,7 @@ class AndroidRemoteApprovalKeyStore(
      */
     fun authenticateForSignature(
         activity: FragmentActivity,
-        onSuccess: (Signature) -> Unit,
+        onSuccess: (String, Signature) -> Unit,
         onFailure: (String) -> Unit,
     ) {
         val identity = try { loadOrCreate() } catch (error: Exception) {
@@ -89,7 +89,7 @@ class AndroidRemoteApprovalKeyStore(
                     if (authorized == null) {
                         onFailure("Android did not return the biometric-authorized signing object.")
                     } else {
-                        onSuccess(authorized)
+                        onSuccess(identity.keyId, authorized)
                     }
                 }
 
