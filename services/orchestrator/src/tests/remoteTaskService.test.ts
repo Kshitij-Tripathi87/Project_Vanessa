@@ -128,6 +128,16 @@ test("task submission resolves device identity and permission scopes on the PC",
     await waitFor(() => engine.getTask(result.accepted.taskId)?.state === "done");
     assert.equal(engine.getTask(result.accepted.taskId)?.result && (engine.getTask(result.accepted.taskId)?.result as any).metric, "cpu");
     assert.equal(engine.recentAudit()[0]?.deviceId, PHONE_DEVICE_ID);
+
+    const retried = await service.submitTask(PHONE_KEY_ID, {
+      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      idempotencyKey: "phone-request-0001",
+      capability: "system_status",
+      canonicalArguments: { metric: "cpu" },
+    });
+    assert.equal(retried.accepted.taskId, result.accepted.taskId);
+    assert.equal(retried.accepted.requestId, requestId);
+    assert.equal(retried.accepted.acceptedAt, result.accepted.acceptedAt);
   });
 });
 
