@@ -9,6 +9,7 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.readText
+import io.ktor.websocket.close
 import com.vanessa.mobile.BuildConfig
 import com.vanessa.mobile.identity.AndroidRemoteIdentity
 import com.vanessa.mobile.identity.AndroidRemoteIdentityStore
@@ -42,7 +43,6 @@ import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import java.util.UUID
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Android protocol-v2 transport. Identity signing is handled by Android
@@ -56,7 +56,7 @@ class RemoteV2BridgeClient(context: Context) {
     private val approvalKeyStore = AndroidRemoteApprovalKeyStore(appContext)
     private val http = HttpClient(Android) {
         install(WebSockets) {
-            pingInterval = 20.seconds
+            pingInterval = 20_000L
             maxFrameSize = 64L * 1024L
         }
     }
@@ -214,7 +214,8 @@ class RemoteV2BridgeClient(context: Context) {
         onEvent: (RemoteV2Event) -> Unit,
     ) {
         http.webSocket(urlString = config.endpoint) {
-            activeSession = this
+            val socketSession = this
+            activeSession = socketSession
             val initialChallenge = withTimeout(15_000) { receiveEnvelope() }
             verifyServerEnvelope(initialChallenge, config.pcKeyId, config.pcPublicKey)
             require(initialChallenge.type == "server.challenge") { "PC did not send a server challenge." }
@@ -244,7 +245,7 @@ class RemoteV2BridgeClient(context: Context) {
                     put("clientNonce", base64Url(randomBytes(32)))
                 }
                 sendEnvelope(
-                    session = this,
+                    session = socketSession,
                     type = "pairing.claim",
                     payload = claim,
                     keyId = identity.keyId,
