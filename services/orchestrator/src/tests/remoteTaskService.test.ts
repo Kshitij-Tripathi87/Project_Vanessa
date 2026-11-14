@@ -240,8 +240,11 @@ test("destructive approval remains blocked until a biometric-bound proof verifie
   });
 });
 
-test("an authenticated phone may deny its own pending approval without an approval proof", async () => {
-  const device = trustedDevice(["files.delete"]);
+test("an authenticated phone with a registered biometric key may deny its pending approval without a proof", async () => {
+  const device = trustedDevice(["files.delete"], {
+    approvalPublicKeySpki: "registered-p256-test-key",
+    approvalKeyId: "registered_approval_key_123",
+  });
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device));
     const submission = await service.submitTask(PHONE_KEY_ID, {
