@@ -295,9 +295,9 @@ class RemoteControlActivity : FragmentActivity() {
                 "task.progress" -> latestEvent = event.payload["safeSummary"]?.toString() ?: "PC task is running."
                 "task.result" -> {
                     val commandResult = event.payload["result"] as? JsonObject
-                    val spokenSummary = commandResult?.get("spokenSummary"]
+                    val spokenSummary = commandResult?.get("spokenSummary")
                         ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
-                    val outcome = commandResult?.get("status"]
+                    val outcome = commandResult?.get("status")
                         ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
                     latestEvent = spokenSummary ?: "PC result: ${event.payload}"
                     if (!outcome.isNullOrBlank()) {

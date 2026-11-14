@@ -45,7 +45,6 @@ const GRANTED_DEFAULT_SCOPES = [
   "apps.launch",
   "browser.open",
   "files.open",
-  "assistant.execute",
 ] as const;
 
 /**
@@ -318,7 +317,7 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
         "Key ID: " + pairing.keyId,
         "PC-verified strong-biometric key attestation: " + (pairing.biometricApprovalAvailable ? "verified" : "not verified"),
         "",
-        "Limited access: read PC status, search approved files, launch allow-listed apps/URLs, open approved files, and submit natural-language requests to the Vanessa orchestrator. PC policy and approvals still apply.",
+        "Limited access: read PC status, search approved files, launch allow-listed apps/URLs, and open approved files.",
         pairing.biometricApprovalAvailable
           ? "Optional file deletion: moves selected files to the Windows Recycle Bin. Every deletion still requires a separate strong-biometric approval on this phone."
           : "File deletion is disabled because the PC has not verified an Android hardware-attestation chain for this phone's approval key.",
