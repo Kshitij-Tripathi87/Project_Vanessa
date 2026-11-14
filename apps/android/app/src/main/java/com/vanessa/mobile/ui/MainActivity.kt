@@ -61,7 +61,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Local-first assistant. Network and the legacy pairing client remain disabled in this build. */
+/** Local-first assistant with authenticated protocol-v2 remote PC control. */
 class MainActivity : ComponentActivity() {
     private var profile by mutableStateOf<DeviceProfile?>(null)
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
