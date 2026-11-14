@@ -315,12 +315,12 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
         "Platform: " + pairing.platform,
         "App version: " + pairing.appVersion,
         "Key ID: " + pairing.keyId,
-        "Strong biometric approval key: " + (pairing.biometricApprovalAvailable ? "enrolled" : "not available"),
+        "PC-verified strong-biometric key attestation: " + (pairing.biometricApprovalAvailable ? "verified" : "not verified"),
         "",
         "Limited access: read PC status, search approved files, launch allow-listed apps/URLs, and open approved files.",
         pairing.biometricApprovalAvailable
           ? "Optional file deletion: moves selected files to the Windows Recycle Bin. Every deletion still requires a separate strong-biometric approval on this phone."
-          : "File deletion is unavailable because this phone did not enroll a hardware-backed strong-biometric approval key.",
+          : "File deletion is disabled because the PC has not verified an Android hardware-attestation chain for this phone's approval key.",
         "Lock, system-control and screen-capture scopes remain disabled.",
       ].join("\n"),
       buttons,
