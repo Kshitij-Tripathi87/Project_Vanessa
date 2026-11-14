@@ -119,6 +119,9 @@ export class RemoteTaskService {
     if (!capability.scopes.every((scope) => granted.has(scope))) {
       serviceError("SCOPE_REQUIRED", "This paired device has not been granted the required capability scope.");
     }
+    if (capability.tier === "T2" && (!device.approvalKeyId || !device.approvalPublicKeySpki)) {
+      serviceError("PERMISSION_DENIED", "This phone must be paired with a strong-biometric approval key before it can request this action.");
+    }
 
     const submitted = await this.engine.submit({
       requestId: payload.requestId,
