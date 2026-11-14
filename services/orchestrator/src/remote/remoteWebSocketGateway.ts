@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import {
   PRE_SESSION_ID,
+  decodeRemoteEnvelope,
   RemoteSessionGuard,
   computeKeyId,
   normalizeIdentityPublicKey,
@@ -112,6 +113,7 @@ export class RemoteWebSocketGateway {
   private readonly maxMessagesPerSecond: number;
   private readonly sessionTtlMs: number;
   private actualPort = 0;
+  private pcIdentity?: RemotePcPublicIdentity;
 
   constructor(private readonly options: RemoteWebSocketGatewayOptions) {
     this.now = options.now ?? Date.now;
@@ -132,6 +134,7 @@ export class RemoteWebSocketGateway {
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(identity.keyId) || computeKeyId(identity.publicKeySpki) !== identity.keyId) {
       throw new Error("The desktop signer returned an invalid PC identity.");
     }
+    this.pcIdentity = identity;
 
     this.httpServer = createServer((request, response) => {
       if (request.method === "GET" && request.url === "/health") {
@@ -285,8 +288,8 @@ export class RemoteWebSocketGateway {
     ws.on("error", () => this.removeConnection(connection));
     void this.sendPreSession(connection, "server.challenge", {
       serverNonce: connection.serverNonce,
-      pcId: `pc_${(connectionIdPart(connection.id))}`,
-      pcName: "Vanessa PC",
+      pcId: this.pcIdentity?.pcId ?? "pc_unknown",
+      pcName: this.pcIdentity?.pcName ?? "Vanessa PC",
       protocolVersion: 2,
       supportedVersions: [2],
       issuedAt: this.now(),
@@ -306,12 +309,11 @@ export class RemoteWebSocketGateway {
       }
       connection.messageTimes.push(now);
 
-      const envelope = safeParseRemoteEnvelope((await import("@vanessa/protocol")).decodeRemoteEnvelope(asBuffer(raw)));
-      if (!envelope.success) throw new Error("Invalid v2 envelope.");
+      const envelope = decodeRemoteEnvelope(asBuffer(raw));
       if (connection.authenticated) {
-        await this.handleAuthenticatedFrame(connection, envelope.data);
+        await this.handleAuthenticatedFrame(connection, envelope);
       } else {
-        await this.handlePreSessionFrame(connection, envelope.data);
+        await this.handlePreSessionFrame(connection, envelope);
       }
     } catch (error) {
       const code = errorCode(error);
@@ -352,9 +354,6 @@ export class RemoteWebSocketGateway {
       const payload = parsed.data;
       if (payload.serverNonce !== connection.serverNonce) {
         throw Object.assign(new Error("Server challenge was not echoed."), { code: "PAIRING_PROOF_INVALID" });
-      }
-      if (envelope.keyId !== (payload as any).publicKey && false) {
-        throw Object.assign(new Error("Invalid key."), { code: "UNKNOWN_KEY" });
       }
       const device = this.options.pairings.getTrustedDeviceByKeyId(envelope.keyId);
       if (!device) throw Object.assign(new Error("Phone is not paired with this PC."), { code: "UNKNOWN_KEY" });
@@ -549,6 +548,3 @@ export class RemoteWebSocketGateway {
   }
 }
 
-function connectionIdPart(value: string): string {
-  return value.replace(/-/g, "").slice(0, 16);
-}
