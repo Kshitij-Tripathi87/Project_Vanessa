@@ -55,6 +55,7 @@ type ActiveSocket = {
   serverSequence: number;
   eventSequence: number;
   expiresAt: number;
+  inboundMessageTimes: number[];
 };
 
 export type RemoteV2GatewayOptions = {
@@ -414,6 +415,7 @@ export class RemoteV2Gateway {
       serverSequence: 0,
       eventSequence: 0,
       expiresAt,
+      inboundMessageTimes: [],
     };
     this.sockets.set(state.socket, active);
     const sessions = this.activeByDeviceId.get(device.deviceId) ?? new Set<ActiveSocket>();
