@@ -1,433 +1,555 @@
 package com.vanessa.mobile.bridge
 
-import io.ktor.client.*
-import io.ktor.client.engine.android.*
-import io.ktor.client.plugins.logging.*
-import io.ktor.client.plugins.websocket.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
-import io.ktor.websocket.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import android.os.Build
 import android.util.Log
-import org.json.JSONObject
+import com.vanessa.mobile.di.StoredPairing
+import com.vanessa.mobile.identity.AndroidRemoteIdentityStore
+import com.vanessa.protocol.v2.PRE_SESSION_ID
+import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
+import com.vanessa.protocol.v2.RemoteEnvelopeSeedV2
+import com.vanessa.protocol.v2.RemoteEnvelopeSessionGuard
+import com.vanessa.protocol.v2.RemoteEnvelopeCheck
+import com.vanessa.protocol.v2.RemoteEnvelopeV2
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
+import io.ktor.websocket.close
+import io.ktor.websocket.send
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.net.URLEncoder
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.security.PublicKey
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.UUID
-
-/**
- * Phase 4.1: WebSocket Bridge Client
- *
- * Connects to PC Gateway, handles protocol messages,
- * manages connection lifecycle with auto-reconnect.
- */
 
 sealed class ConnectionState {
-    object Disconnected : ConnectionState()
-    object Connecting : ConnectionState()
+    data object Disconnected : ConnectionState()
+    data object Connecting : ConnectionState()
     data class Connected(val pcIP: String) : ConnectionState()
     data class Error(val message: String) : ConnectionState()
 }
 
 sealed class BridgeEvent {
     data class ManifestReceived(val tools: List<ToolDefinition>) : BridgeEvent()
+    data class PairingApproved(val deviceId: String) : BridgeEvent()
+    data class PairingPending(val pairingId: String) : BridgeEvent()
     data class TaskAccepted(val taskId: String) : BridgeEvent()
     data class TaskProgress(val taskId: String, val state: String, val message: String?) : BridgeEvent()
     data class TaskResult(val taskId: String, val result: Any) : BridgeEvent()
     data class TaskError(val taskId: String?, val code: String, val message: String) : BridgeEvent()
     data class ConfirmationRequired(
         val taskId: String,
+        val approvalId: String,
         val summary: String,
         val actionHash: String,
-        val expiresAt: Long
+        val expiresAt: Long,
     ) : BridgeEvent()
+    data class SessionClosed(val reason: String) : BridgeEvent()
 }
 
 data class ToolDefinition(
     val name: String,
     val description: String,
     val tier: String,
-    val timeout: Int
+    val timeout: Int,
 )
 
-/** Result of exchanging a pairing code at `POST /pair` on the PC gateway. */
-data class PairingGrant(
-    val deviceId: String,
-    val secret: String,
-    val pcName: String?
-)
+private class UnknownRemoteIdentity(message: String) : Exception(message)
+private class PairingRejected(message: String) : Exception(message)
 
+/**
+ * Protocol-v2 Android transport. The phone has a non-exportable P-256
+ * identity in Android Keystore; the PC identity is pinned from the QR code.
+ * Every application message is ES256-signed and guarded by session sequence,
+ * timestamp and replay checks.
+ */
 @Singleton
 class VanessaBridgeClient @Inject constructor() {
-    private val TAG = "VanessaBridge"
-
-    private val client = HttpClient(Android) {
-        install(WebSockets) {
-            pingInterval = 30_000 // 30 seconds
-        }
-        install(Logging) {
-            logger = object : Logger {
-                override fun log(message: String) {
-                    Log.d(TAG, message)
-                }
-            }
-            level = LogLevel.INFO
-        }
+    private val tag = "VanessaRemoteV2"
+    private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
+    private val identityStore = AndroidRemoteIdentityStore()
+    private val http = HttpClient(Android) {
+        install(WebSockets) { pingInterval = 25_000 }
     }
-
-    private var session: DefaultClientWebSocketSession? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
+    private val sendMutex = Mutex()
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
-
-    private val _events = MutableSharedFlow<BridgeEvent>(replay = 0)
+    private val _events = MutableSharedFlow<BridgeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<BridgeEvent> = _events.asSharedFlow()
 
-    private var reconnectAttempts = 0
-    private val maxReconnectAttempts = 5
-    private var reconnectJob: Job? = null
-
-    // Credentials and address for the current pairing, reused on reconnect.
-    private var activeDeviceId: String? = null
-    private var activeSecret: String? = null
-    private var rememberedIp: String? = null
-    private var rememberedPort: Int = 8765
+    @Volatile private var activeSocket: DefaultClientWebSocketSession? = null
+    @Volatile private var activeSessionId: String? = null
+    @Volatile private var activePairing: StoredPairing? = null
+    @Volatile private var outgoingSequence = 0
+    @Volatile private var manualDisconnect = false
+    private var pingJob: Job? = null
+    private val connectionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val requestIds = mutableMapOf<String, String>()
 
     /**
-     * Exchange the scanned single-use pairing code for this phone's HMAC
-     * secret. The QR never carries the secret; it is issued once, here.
+     * Maintains a connection and reconnects with bounded backoff. A new QR
+     * claim is attempted only when a signed authenticate receives UNKNOWN_KEY.
      */
-    suspend fun redeemPairing(
-        pcIp: String,
-        port: Int,
-        pairingCode: String,
-        deviceName: String? = null
-    ): PairingGrant? {
-        return try {
-            val body = JSONObject().apply {
-                put("pairingCode", pairingCode)
-                if (!deviceName.isNullOrBlank()) put("deviceName", deviceName)
+    suspend fun connect(pairing: StoredPairing) {
+        if (_connectionState.value is ConnectionState.Connected) return
+        activePairing = pairing
+        manualDisconnect = false
+        var preferPairingClaim = pairing.deviceId == null
+        var attempts = 0
+
+        while (!manualDisconnect && currentCoroutineContext().isActive) {
+            try {
+                _connectionState.value = ConnectionState.Connecting
+                connectOnce(activePairing ?: pairing, preferPairingClaim) { deviceId ->
+                    activePairing = (activePairing ?: pairing).copy(deviceId = deviceId)
+                    _events.emit(BridgeEvent.PairingApproved(deviceId))
+                    preferPairingClaim = false
+                }
+                attempts = 0
+                if (!manualDisconnect) {
+                    _connectionState.value = ConnectionState.Error("PC connection closed. Reconnecting…")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (unknown: UnknownRemoteIdentity) {
+                val current = activePairing ?: pairing
+                if (current.deviceId == null && current.expiresAt > System.currentTimeMillis()) {
+                    preferPairingClaim = true
+                    continue
+                }
+                _connectionState.value = ConnectionState.Error("This phone is not trusted by the PC. Pair it again from a new QR code.")
+                return
+            } catch (rejected: PairingRejected) {
+                _connectionState.value = ConnectionState.Error(rejected.message ?: "The PC rejected pairing.")
+                return
+            } catch (error: Exception) {
+                Log.w(tag, "Remote v2 connection failed", error)
+                _connectionState.value = ConnectionState.Error(error.message ?: "Remote connection failed")
+            } finally {
+                activeSocket = null
+                activeSessionId = null
+                pingJob?.cancel()
+                pingJob = null
             }
 
-            val response = client.post("http://$pcIp:$port/pair") {
-                contentType(ContentType.Application.Json)
-                setBody(body.toString())
+            if (!manualDisconnect && currentCoroutineContext().isActive) {
+                attempts += 1
+                delay((1_000L * (1L shl attempts.coerceAtMost(4))).coerceAtMost(15_000L))
             }
-
-            if (response.status.value != 200) {
-                Log.w(TAG, "Pairing rejected: ${response.status}")
-                return null
-            }
-
-            val json = JSONObject(response.bodyAsText())
-            val deviceId = json.optString("deviceId")
-            val secret = json.optString("secret")
-            if (deviceId.isEmpty() || secret.isEmpty()) {
-                Log.w(TAG, "Pairing response missing deviceId or secret")
-                return null
-            }
-
-            PairingGrant(
-                deviceId = deviceId,
-                secret = secret,
-                pcName = json.optString("pcName").ifEmpty { null }
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Pairing redemption failed", e)
-            null
         }
+        if (manualDisconnect) _connectionState.value = ConnectionState.Disconnected
     }
 
-    /**
-     * Connect to PC Gateway.
-     *
-     * The claimed device id travels on the upgrade URL: the gateway needs it to
-     * select the secret it will verify this socket's signatures with. The id
-     * alone grants nothing — every message still has to be signed.
-     */
-    suspend fun connect(pcIP: String, port: Int = 8765, deviceId: String, secret: String) {
-        if (_connectionState.value is ConnectionState.Connected) {
-            Log.w(TAG, "Already connected")
-            return
-        }
+    private suspend fun connectOnce(
+        pairing: StoredPairing,
+        preferPairingClaim: Boolean,
+        onPaired: suspend (String) -> Unit,
+    ) {
+        val identity = identityStore.loadOrCreate()
+        val pcPublicKey = decodePcKey(pairing.pcPublicKey)
+        val pcKeyId = RemoteEnvelopeCrypto.keyId(pcPublicKey.encoded)
+        require(pcKeyId == pairing.pcKeyId) { "The PC public key does not match the QR fingerprint." }
+        val url = pairing.scheme + "://" + pairing.pcIp + ":" + pairing.port + pairing.path
 
-        activeDeviceId = deviceId
-        activeSecret = secret
-        rememberedIp = pcIP
-        rememberedPort = port
-        _connectionState.value = ConnectionState.Connecting
+        http.webSocket(urlString = url) {
+            activeSocket = this
+            val challengeGuard = RemoteEnvelopeSessionGuard(PRE_SESSION_ID, pcKeyId, pcPublicKey)
+            val challengeEnvelope = receiveVerified(pcPublicKey, challengeGuard)
+            require(challengeEnvelope.type == "server.challenge") { "PC did not send the expected v2 server challenge." }
+            val serverNonce = challengeEnvelope.payload.requiredString("serverNonce")
 
-        try {
-            val encodedDevice = java.net.URLEncoder.encode(deviceId, "UTF-8")
-            client.webSocket(urlString = "ws://$pcIP:$port/?device=$encodedDevice") {
-                session = this
-                _connectionState.value = ConnectionState.Connected(pcIP)
-                reconnectAttempts = 0
+            if (preferPairingClaim) {
+                performPairingClaim(pairing, identity, pcPublicKey, pcKeyId, challengeGuard)
+            } else {
+                val clientNonce = randomBase64Url(32)
+                val authPayload = buildJsonObject {
+                    put("serverNonce", serverNonce)
+                    put("clientNonce", clientNonce)
+                    put("publicKey", identity.publicKeyBase64Url)
+                    put("deviceHint", deviceHint())
+                    put("platform", "android")
+                    put("appVersion", "0.1.0")
+                }
+                sendPreSession("client.authenticate", authPayload, identity, 0)
+            }
 
-                Log.i(TAG, "Connected to $pcIP:$port")
+            val readyEnvelope = if (preferPairingClaim) {
+                // The PC sends pairing.approved before starting the new session.
+                val approved = waitForPairingApproval(pcPublicKey, challengeGuard)
+                onPaired(approved.requiredString("deviceId"))
+                receiveSessionReady(pcPublicKey, pcKeyId)
+            } else {
+                val response = receiveVerifiedOrError(pcPublicKey, challengeGuard)
+                if (response.type == "protocol.error" && response.payload.optionalString("code") == "UNKNOWN_KEY") {
+                    throw UnknownRemoteIdentity("Phone identity has not been approved on this PC.")
+                }
+                verifySessionReady(response, pcPublicKey, pcKeyId)
+            }
 
-                // Send ping to keep connection alive
-                launch {
-                    while (isActive) {
-                        delay(30_000)
-                        try {
-                            sendPing()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Ping failed", e)
-                        }
+            val sessionId = readyEnvelope.requiredString("sessionId")
+            activeSessionId = sessionId
+            outgoingSequence = 0
+            _connectionState.value = ConnectionState.Connected(pairing.pcIp)
+            val deviceId = readyEnvelope.requiredString("deviceId")
+            onPaired(deviceId)
+            sendSessionMessage("manifest.get", buildJsonObject {})
+            pingJob = launch {
+                while (isActive) {
+                    delay(25_000)
+                    runCatching {
+                        sendSessionMessage("ping", buildJsonObject {
+                            put("sentAt", System.currentTimeMillis())
+                            put("nonce", randomBase64Url(12))
+                        })
+                    }.onFailure { Log.d(tag, "Keepalive failed: " + it.message) }
+                }
+            }
+
+            try {
+                for (frame in incoming) {
+                    if (frame !is Frame.Text) continue
+                    val envelope = RemoteEnvelopeCrypto.decode(frame.readText())
+                    val guard = sessionGuard ?: throw IllegalStateException("Session guard was not initialized.")
+                    when (guard.verifyAndAccept(envelope)) {
+                        RemoteEnvelopeCheck.Accepted -> handleSessionMessage(envelope)
+                        else -> throw SecurityException("PC session message failed signature, sequence or replay validation.")
                     }
                 }
-
-                // Receive messages
-                try {
-                    for (frame in incoming) {
-                        when (frame) {
-                            is Frame.Text -> {
-                                val text = frame.readText()
-                                handleMessage(text)
-                            }
-                            is Frame.Close -> {
-                                Log.i(TAG, "Connection closed by server")
-                                break
-                            }
-                            else -> {}
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Receive error", e)
-                } finally {
-                    handleDisconnect()
-                }
+            } finally {
+                pingJob?.cancel()
+                activeSessionId = null
+                activeSocket = null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Connection error", e)
-            _connectionState.value = ConnectionState.Error(e.message ?: "Connection failed")
-            scheduleReconnect()
         }
     }
 
-    /**
-     * Disconnect from PC Gateway
-     */
-    suspend fun disconnect() {
-        reconnectJob?.cancel()
-        session?.close(CloseReason(CloseReason.Codes.NORMAL, "Client disconnect"))
-        session = null
-        _connectionState.value = ConnectionState.Disconnected
-        Log.i(TAG, "Disconnected")
+    private var sessionGuard: RemoteEnvelopeSessionGuard? = null
+
+    private suspend fun performPairingClaim(
+        pairing: StoredPairing,
+        identity: com.vanessa.mobile.identity.AndroidRemoteIdentity,
+        pcPublicKey: PublicKey,
+        pcKeyId: String,
+        challengeGuard: RemoteEnvelopeSessionGuard,
+    ) {
+        val clientNonce = randomBase64Url(32)
+        val claim = buildJsonObject {
+            put("pairingId", pairing.pairingId)
+            put("code", pairing.pairingCode)
+            put("publicKey", identity.publicKeyBase64Url)
+            put("keyId", identity.keyId)
+            put("deviceHint", deviceHint())
+            put("platform", "android")
+            put("appVersion", "0.1.0")
+            put("clientNonce", clientNonce)
+        }
+        sendPreSession("pairing.claim", claim, identity, 0)
+        val challenge = receiveVerified(pcPublicKey, challengeGuard)
+        if (challenge.type == "protocol.error") throw PairingRejected(challenge.payload.optionalString("message") ?: "The PC rejected the pairing claim.")
+        require(challenge.type == "pairing.challenge") { "PC did not issue a pairing proof challenge." }
+        val nonce = challenge.payload.requiredString("nonce")
+        val challengeNonce = MessageDigest.getInstance("SHA-256")
+            .digest(nonce.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val complete = buildJsonObject {
+            put("pairingId", pairing.pairingId)
+            put("challengeNonce", challengeNonce)
+        }
+        sendPreSession("pairing.complete", complete, identity, 1)
+        val pending = receiveVerified(pcPublicKey, challengeGuard)
+        if (pending.type == "protocol.error") throw PairingRejected(pending.payload.optionalString("message") ?: "The PC rejected the pairing proof.")
+        require(pending.type == "pairing.pending" &&
+            pending.payload.requiredString("state") == "awaiting_approval") {
+            "PC did not place this phone into the local approval queue."
+        }
+        _events.emit(BridgeEvent.PairingPending(pairing.pairingId))
     }
 
-    /**
-     * Submit a task to PC
-     */
-    suspend fun submitTask(tool: String, args: Map<String, Any>, idempotencyKey: String, secret: String) {
-        val message = signMessage(mapOf(
-            "v" to 1,
-            "id" to UUID.randomUUID().toString(),
-            "timestamp" to System.currentTimeMillis(),
-            "type" to "task.submit",
-            "tool" to tool,
-            "args" to args,
-            "idempotencyKey" to idempotencyKey
-        ), secret)
-
-        sendMessage(message)
+    private suspend fun waitForPairingApproval(
+        pcPublicKey: PublicKey,
+        challengeGuard: RemoteEnvelopeSessionGuard,
+    ): JsonObject = withTimeout(120_000) {
+        while (true) {
+            val response = receiveVerified(pcPublicKey, challengeGuard)
+            when (response.type) {
+                "pairing.approved" -> return@withTimeout response.payload
+                "pairing.rejected", "pairing.expired" ->
+                    throw PairingRejected("The PC declined or expired this pairing request.")
+                "protocol.error" -> throw PairingRejected(response.payload.optionalString("message") ?: "Pairing failed.")
+                else -> Log.d(tag, "Ignoring pre-session message " + response.type)
+            }
+        }
+        throw IllegalStateException("Pairing did not complete.")
     }
 
-    /**
-     * Send confirmation for T2 action
-     */
-    suspend fun sendConfirmation(taskId: String, approved: Boolean, actionHash: String, secret: String) {
-        val message = signMessage(mapOf(
-            "v" to 1,
-            "id" to UUID.randomUUID().toString(),
-            "timestamp" to System.currentTimeMillis(),
-            "type" to "task.confirm",
-            "taskId" to taskId,
-            "approved" to approved,
-            "actionHash" to actionHash
-        ), secret)
-
-        sendMessage(message)
+    private suspend fun receiveSessionReady(pcPublicKey: PublicKey, pcKeyId: String): JsonObject {
+        val envelope = receiveEnvelope()
+        require(envelope.type == "session.ready" && envelope.keyId == pcKeyId) {
+            "PC did not establish the authenticated session."
+        }
+        return verifySessionReady(envelope, pcPublicKey, pcKeyId)
     }
 
-    /**
-     * Cancel a running task
-     */
-    suspend fun cancelTask(taskId: String, secret: String) {
-        val message = signMessage(mapOf(
-            "v" to 1,
-            "id" to UUID.randomUUID().toString(),
-            "timestamp" to System.currentTimeMillis(),
-            "type" to "task.cancel",
-            "taskId" to taskId
-        ), secret)
-
-        sendMessage(message)
+    private fun verifySessionReady(
+        envelope: RemoteEnvelopeV2,
+        pcPublicKey: PublicKey,
+        pcKeyId: String,
+    ): JsonObject {
+        require(envelope.type == "session.ready") { "Expected session.ready from the PC." }
+        val sessionId = envelope.payload.requiredString("sessionId")
+        require(sessionId == envelope.sessionId) { "PC session id does not match its signed envelope." }
+        val serverNonce = envelope.payload.requiredString("serverNonce")
+        val clientNonce = envelope.payload.requiredString("clientNonce")
+        require(serverNonce.isNotBlank() && clientNonce.isNotBlank()) { "Session nonce echo is missing." }
+        val guard = RemoteEnvelopeSessionGuard(sessionId, pcKeyId, pcPublicKey)
+        require(guard.verifyAndAccept(envelope) == RemoteEnvelopeCheck.Accepted) {
+            "PC session.ready signature is invalid."
+        }
+        sessionGuard = guard
+        return envelope.payload
     }
 
-    /**
-     * Send ping to keep connection alive. Pings carry no signature fields in
-     * the schema and are only accepted by the gateway once the socket has
-     * authenticated with a signed message.
-     */
-    private suspend fun sendPing() {
-        val message = mapOf(
-            "v" to 1,
-            "id" to UUID.randomUUID().toString(),
-            "timestamp" to System.currentTimeMillis(),
-            "type" to "ping",
-            "sentAt" to System.currentTimeMillis()
+    private suspend fun receiveVerified(
+        pcPublicKey: PublicKey,
+        guard: RemoteEnvelopeSessionGuard,
+    ): RemoteEnvelopeV2 {
+        val envelope = receiveEnvelope()
+        require(envelope.sessionId == PRE_SESSION_ID) { "PC sent a non-handshake session message." }
+        require(envelope.keyId == RemoteEnvelopeCrypto.keyId(pcPublicKey.encoded)) { "PC signed with an unexpected identity." }
+        require(RemoteEnvelopeCrypto.verify(envelope, pcPublicKey)) { "PC handshake signature is invalid." }
+        require(guard.verifyAndAccept(envelope) == RemoteEnvelopeCheck.Accepted) {
+            "PC handshake message failed freshness or replay checks."
+        }
+        return envelope
+    }
+
+    private suspend fun receiveVerifiedOrError(
+        pcPublicKey: PublicKey,
+        guard: RemoteEnvelopeSessionGuard,
+    ): RemoteEnvelopeV2 = receiveVerified(pcPublicKey, guard)
+
+    private suspend fun receiveEnvelope(): RemoteEnvelopeV2 {
+        while (true) {
+            when (val frame = incoming.receive()) {
+                is Frame.Text -> return RemoteEnvelopeCrypto.decode(frame.readText())
+                is Frame.Close -> throw IllegalStateException("PC closed the remote connection.")
+                else -> continue
+            }
+        }
+    }
+
+    private suspend fun sendPreSession(
+        type: String,
+        payload: JsonObject,
+        identity: com.vanessa.mobile.identity.AndroidRemoteIdentity,
+        sequence: Int,
+    ) {
+        val envelope = RemoteEnvelopeCrypto.sign(
+            RemoteEnvelopeSeedV2(type, payload, identity.keyId, sequence = sequence),
+            identity.privateKey,
+            identity.publicKey,
         )
-
-        sendMessage(message)
+        send(Frame.Text(RemoteEnvelopeCrypto.encode(envelope)))
     }
 
-    /**
-     * Handle incoming message from PC
-     */
-    private suspend fun handleMessage(text: String) {
-        try {
-            val message = JSONObject(text)
-            val type = message.optString("type")
-            if (type.isEmpty()) return
+    private suspend fun sendSessionMessage(type: String, payload: JsonObject) {
+        sendMutex.withLock {
+            val socket = activeSocket ?: throw IllegalStateException("Phone is not connected to a PC session.")
+            val sessionId = activeSessionId ?: throw IllegalStateException("Phone session is not authenticated.")
+            val identity = identityStore.loadOrCreate()
+            val sequence = outgoingSequence++
+            val envelope = RemoteEnvelopeCrypto.sign(
+                RemoteEnvelopeSeedV2(type, payload, identity.keyId, sessionId = sessionId, sequence = sequence),
+                identity.privateKey,
+                identity.publicKey,
+            )
+            socket.send(Frame.Text(RemoteEnvelopeCrypto.encode(envelope)))
+        }
+    }
 
-            when (type) {
-                "manifest.sync" -> {
-                    val array = message.optJSONArray("tools")
-                    val tools = buildList {
-                        for (index in 0 until (array?.length() ?: 0)) {
-                            val item = array?.optJSONObject(index) ?: continue
-                            add(
-                                ToolDefinition(
-                                    name = item.optString("name"),
-                                    description = item.optString("description"),
-                                    tier = item.optString("tier", "T0"),
-                                    timeout = item.optInt("timeout", 30)
-                                )
+    private suspend fun handleSessionMessage(envelope: RemoteEnvelopeV2) {
+        val payload = envelope.payload
+        when (envelope.type) {
+            "manifest.snapshot" -> {
+                val capabilities = payload["capabilities"]?.toString()?.let { raw ->
+                    runCatching {
+                        val root = json.parseToJsonElement(raw)
+                        (root as? kotlinx.serialization.json.JsonArray)?.mapNotNull { element ->
+                            val item = element as? JsonObject ?: return@mapNotNull null
+                            ToolDefinition(
+                                name = item.optionalString("name") ?: return@mapNotNull null,
+                                description = item.optionalString("description") ?: "",
+                                tier = item.optionalString("tier") ?: "T0",
+                                timeout = item["timeoutMs"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30_000,
                             )
-                        }
-                    }
-
-                    _events.emit(BridgeEvent.ManifestReceived(tools))
-                }
-
-                "task.accepted" -> {
-                    val taskId = message.optString("taskId")
-                    if (taskId.isEmpty()) return
-                    _events.emit(BridgeEvent.TaskAccepted(taskId))
-                }
-
-                "task.progress" -> {
-                    val taskId = message.optString("taskId")
-                    if (taskId.isEmpty()) return
-                    val state = message.optString("state")
-                    val msg = message.optString("message").ifEmpty { null }
-                    _events.emit(BridgeEvent.TaskProgress(taskId, state, msg))
-                }
-
-                "task.result" -> {
-                    val taskId = message.optString("taskId")
-                    if (taskId.isEmpty()) return
-                    val result = message.opt("result") ?: emptyMap<String, Any>()
-                    _events.emit(BridgeEvent.TaskResult(taskId, result))
-                }
-
-                "task.error" -> {
-                    val taskId = message.optString("taskId").ifEmpty { null }
-                    val code = message.optString("code", "UNKNOWN")
-                    val msg = message.optString("message", "Unknown error")
-                    _events.emit(BridgeEvent.TaskError(taskId, code, msg))
-                }
-
-                "task.confirm_required" -> {
-                    val taskId = message.optString("taskId")
-                    if (taskId.isEmpty()) return
-                    val summary = message.optString("summary")
-                    val actionHash = message.optString("actionHash")
-                    val expiresAt = message.optLong("expiresAt", 0L)
-                    _events.emit(BridgeEvent.ConfirmationRequired(taskId, summary, actionHash, expiresAt))
-                }
-
-                "pong" -> {
-                    Log.d(TAG, "Received pong")
-                }
-
-                else -> {
-                    Log.w(TAG, "Unknown message type: $type")
-                }
+                        } ?: emptyList()
+                    }.getOrDefault(emptyList())
+                } ?: emptyList()
+                _events.emit(BridgeEvent.ManifestReceived(capabilities))
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to handle message", e)
+            "task.accepted" -> {
+                val taskId = payload.requiredString("taskId")
+                val requestId = payload.requiredString("requestId")
+                synchronized(requestIds) { requestIds[taskId] = requestId }
+                _events.emit(BridgeEvent.TaskAccepted(taskId))
+            }
+            "task.progress" -> {
+                _events.emit(
+                    BridgeEvent.TaskProgress(
+                        payload.requiredString("taskId"),
+                        payload.requiredString("state"),
+                        payload.optionalString("safeSummary"),
+                    )
+                )
+            }
+            "task.result" -> {
+                _events.emit(BridgeEvent.TaskResult(
+                    payload.requiredString("taskId"),
+                    payload["result"] ?: payload.optionalString("safeSummary").orEmpty(),
+                ))
+            }
+            "task.confirmation_required" -> {
+                val approval = payload["approval"] as? JsonObject ?: return
+                _events.emit(
+                    BridgeEvent.ConfirmationRequired(
+                        taskId = approval.requiredString("taskId"),
+                        approvalId = approval.requiredString("approvalId"),
+                        summary = approval.requiredString("consequence"),
+                        actionHash = approval.requiredString("actionHash"),
+                        expiresAt = approval.requiredLong("expiresAt"),
+                    )
+                )
+            }
+            "task.error", "protocol.error" -> {
+                _events.emit(
+                    BridgeEvent.TaskError(
+                        taskId = payload.optionalString("taskId"),
+                        code = payload.optionalString("code") ?: "UNKNOWN",
+                        message = payload.optionalString("message") ?: "PC rejected the request.",
+                    )
+                )
+            }
+            "session.close" -> {
+                val reason = payload.optionalString("reason") ?: "closed"
+                _events.emit(BridgeEvent.SessionClosed(reason))
+                activeSessionId = null
+                activeSocket?.close(CloseReason(CloseReason.Codes.NORMAL, reason))
+            }
+            "pong", "task.cancel_ack", "sync.snapshot", "sync.complete", "manifest.changed" -> Unit
+            else -> Log.w(tag, "Unsupported authenticated message: " + envelope.type)
         }
     }
 
-    /**
-     * Send message to PC
-     */
-    private suspend fun sendMessage(message: Map<String, Any>) {
-        try {
-            val payload = JSONObject(message as Map<*, *>).toString()
-            session?.send(Frame.Text(payload))
-            Log.d(TAG, "Sent: ${message["type"]}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send message", e)
-            throw e
+    suspend fun submitTask(
+        capability: String,
+        arguments: Map<String, Any?>,
+        idempotencyKey: String = UUID.randomUUID().toString(),
+        intent: String? = null,
+    ) {
+        val requestId = UUID.randomUUID().toString()
+        val args = json.encodeToJsonElement(arguments).jsonObject
+        val payload = buildJsonObject {
+            put("requestId", requestId)
+            put("idempotencyKey", idempotencyKey)
+            put("capability", capability)
+            put("canonicalArguments", args)
+            if (!intent.isNullOrBlank()) put("intent", intent.take(300))
         }
+        sendSessionMessage("task.submit", payload)
     }
 
-    /**
-     * Sign a message with HMAC-SHA256.
-     *
-     * Contract shared with the PC (`messageSecurity.ts`), implemented in
-     * [MessageSigning] and covered by a cross-language test vector:
-     *
-     *   signature = hex(HMAC-SHA256(secret, canonicalJson(message - signature)))
-     */
-    private fun signMessage(message: Map<String, Any>, secret: String): Map<String, Any> =
-        MessageSigning.sign(message, secret)
+    suspend fun cancelTask(taskId: String) {
+        val requestId = synchronized(requestIds) { requestIds[taskId] }
+            ?: throw IllegalArgumentException("Request correlation is not available for this task.")
+        sendSessionMessage("task.cancel", buildJsonObject {
+            put("taskId", taskId)
+            put("requestId", requestId)
+            put("reason", "Cancelled from the Android client.")
+        })
+    }
 
-    /**
-     * Handle disconnection and schedule reconnect
-     */
-    private fun handleDisconnect() {
-        session = null
+    suspend fun sendDenial(taskId: String, approvalId: String, actionHash: String) {
+        sendSessionMessage("task.confirmation_response", buildJsonObject {
+            put("approvalId", approvalId)
+            put("taskId", taskId)
+            put("actionHash", actionHash)
+            put("decision", "denied")
+            put("approvedAt", System.currentTimeMillis())
+            put("method", "user_denied")
+        })
+    }
+
+    suspend fun disconnect() {
+        manualDisconnect = true
+        pingJob?.cancel()
+        activeSocket?.close(CloseReason(CloseReason.Codes.NORMAL, "User disconnected"))
+        activeSocket = null
+        activeSessionId = null
         _connectionState.value = ConnectionState.Disconnected
-
-        if (reconnectAttempts < maxReconnectAttempts) {
-            scheduleReconnect()
-        } else {
-            _connectionState.value = ConnectionState.Error("Max reconnect attempts reached")
-        }
     }
 
-    /**
-     * Schedule reconnection with exponential backoff
-     */
-    private fun scheduleReconnect() {
-        val pcIP = rememberedIp ?: return
-        val deviceId = activeDeviceId ?: return
-        val secret = activeSecret ?: return
-
-        reconnectJob?.cancel()
-        reconnectAttempts++
-
-        val delay = minOf(1000L * (1 shl reconnectAttempts), 30_000L) // Max 30s
-        Log.i(TAG, "Reconnecting in ${delay}ms (attempt $reconnectAttempts)")
-
-        reconnectJob = scope.launch {
-            delay(delay)
-            connect(pcIP = pcIP, port = rememberedPort, deviceId = deviceId, secret = secret)
-        }
+    private fun decodePcKey(base64Url: String): PublicKey {
+        val bytes = Base64.getUrlDecoder().decode(base64Url)
+        val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(bytes))
+        require(RemoteEnvelopeCrypto.isP256(key)) { "QR code PC identity is not P-256." }
+        return key
     }
 
-    /**
-     * Cleanup resources
-     */
-    fun close() {
-        scope.cancel()
-        client.close()
+    private fun deviceHint(): String {
+        val safe = "android_" + Build.MODEL.lowercase().replace(Regex("[^a-z0-9_-]"), "_").take(48)
+        return safe.padEnd(8, '_')
+    }
+
+    private fun randomBase64Url(size: Int): String {
+        val bytes = ByteArray(size).also { java.security.SecureRandom().nextBytes(it) }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun JsonObject.requiredString(key: String): String =
+        this[key]?.jsonPrimitive?.content
+            ?: throw IllegalArgumentException("Remote message is missing '$key'.")
+
+    private fun JsonObject.optionalString(key: String): String? =
+        this[key]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+
+    private fun JsonObject.requiredLong(key: String): Long =
+        this[key]?.jsonPrimitive?.content?.toLongOrNull()
+            ?: throw IllegalArgumentException("Remote message is missing numeric '$key'.")
+
+    companion object {
+        private const val TAG = "VanessaRemoteV2"
     }
 }
