@@ -632,6 +632,12 @@ fastify.post("/internal/remote-v2/pairings/:pairingId/approve", async (request, 
       scopes.some((scope) => typeof scope !== "string" || !REMOTE_V2_LOCAL_SCOPES.has(scope))) {
     return reply.status(400).send({ error: "INVALID_SCOPE_SELECTION" });
   }
+  if (scopes.includes("files.delete")) {
+    const pending = remotePairingRegistry?.getPendingApprovals().find((item) => item.pairingId === pairingId);
+    if (!pending?.biometricApprovalAvailable) {
+      return reply.status(403).send({ error: "BIOMETRIC_ATTESTATION_REQUIRED" });
+    }
+  }
   const approved = await remoteV2Gateway.approvePairing(pairingId, scopes as string[]);
   return reply.send({ approved: true, pairing: approved });
 });
