@@ -366,12 +366,20 @@ export class RemoteWebSocketGateway {
     }
 
     if (envelope.type === "pairing.claim") {
-      const challenge = this.options.pairings.claim(envelope);
-      connection.pairingId = challenge.pairingId;
+      let response:
+        | { type: "pairing.challenge"; payload: RemotePayloadFor<"pairing.challenge"> }
+        | { type: "pairing.pending"; payload: RemotePayloadFor<"pairing.pending"> };
+      try {
+        const challenge = this.options.pairings.claim(envelope);
+        response = { type: "pairing.challenge", payload: challenge };
+      } catch (error) {
+        if (errorCode(error) !== "PAIRING_ALREADY_CLAIMED") throw error;
+        response = this.options.pairings.resumeClaim(envelope);
+      }
+      connection.pairingId = response.payload.pairingId;
       connection.clientKeyId = envelope.keyId;
-      connection.pairingClientNonce = challenge.clientNonce;
-      this.pairingConnections.set(challenge.pairingId, connection.id);
-      await this.sendPreSession(connection, "pairing.challenge", challenge as unknown as Record<string, unknown>);
+      this.pairingConnections.set(response.payload.pairingId, connection.id);
+      await this.sendPreSession(connection, response.type, response.payload as unknown as Record<string, unknown>);
       return;
     }
 
