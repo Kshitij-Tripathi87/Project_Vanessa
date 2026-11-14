@@ -60,3 +60,18 @@ export function resolveOrchestratorWebSocketUrl(env: RuntimeEnvironment = proces
   url.hash = "";
   return url.toString();
 }
+
+
+/**
+ * Keep both voice-agent orchestrator clients pointed at the same resolved
+ * local control-plane endpoint. The voice server uses VANESSA_ORCHESTRATOR_URL
+ * for usage/session hooks; OrchestratorClient uses ORCHESTRATOR_URL.
+ */
+export function applyOrchestratorRuntimeUrls(
+  env: RuntimeEnvironment & { VANESSA_ORCHESTRATOR_URL?: string },
+): string {
+  const url = resolveOrchestratorHttpUrl(env);
+  env.ORCHESTRATOR_URL = url;
+  env.VANESSA_ORCHESTRATOR_URL = url;
+  return url;
+}
