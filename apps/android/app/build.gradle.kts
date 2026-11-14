@@ -87,6 +87,7 @@ android {
 }
 
 dependencies {
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     // Generated protocol contract (single source of truth for the wire format)
     implementation(project(":core:protocol"))
     implementation(project(":core:agent"))

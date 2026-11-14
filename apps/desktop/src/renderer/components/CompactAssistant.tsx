@@ -105,6 +105,7 @@ export function CompactAssistant({
   const [remotePairingJson, setRemotePairingJson] = useState("");
   const [remoteQrImage, setRemoteQrImage] = useState("");
   const [remotePending, setRemotePending] = useState<RemoteV2PendingPairing[]>([]);
+  const [remoteDevices, setRemoteDevices] = useState<RemoteV2TrustedDevice[]>([]);
   const [remoteScopes, setRemoteScopes] = useState<string[]>(["system.read", "files.read", "apps.launch", "browser.open"]);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remoteError, setRemoteError] = useState("");
@@ -115,6 +116,8 @@ export function CompactAssistant({
       if (status && "enabled" in status) setRemoteStatus(status);
       const pending = await window.vanessa.getRemoteV2PendingPairings?.();
       if (Array.isArray(pending)) setRemotePending(pending);
+      const devices = await window.vanessa.getRemoteV2Devices?.();
+      if (Array.isArray(devices)) setRemoteDevices(devices);
     } catch (error) {
       setRemoteError(error instanceof Error ? error.message : "Remote pairing status is unavailable.");
     }
@@ -180,6 +183,21 @@ export function CompactAssistant({
       await refreshRemotePairings();
     } catch (error) {
       setRemoteError(error instanceof Error ? error.message : "Could not reject this device.");
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+  const revokeRemoteDevice = async (deviceId: string) => {
+    setRemoteBusy(true);
+    setRemoteError("");
+    try {
+      const result = await window.vanessa.revokeRemoteV2Device?.(deviceId);
+      if (result && typeof result === "object" && "error" in result) {
+        throw new Error(String((result as { error: unknown }).error));
+      }
+      await refreshRemotePairings();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Could not revoke trusted device.");
     } finally {
       setRemoteBusy(false);
     }
@@ -345,6 +363,19 @@ export function CompactAssistant({
                     <span>{label}</span>
                     {scope === "files.delete" && <em>High risk</em>}
                   </label>
+                ))}
+                <div className="menu-title">Trusted phones</div>
+                {remoteDevices.length === 0 ? <p className="remote-empty">No trusted phones have been paired.</p> : remoteDevices.map((device) => (
+                  <div className="remote-pending-card" key={device.deviceId}>
+                    <strong>{device.deviceHint} {device.revoked ? "· Revoked" : "· Trusted"}</strong>
+                    <span>{device.platform} · {device.appVersion}</span>
+                    <span>Permissions: {device.grantedScopes.join(", ") || "None"}</span>
+                    {!device.revoked && (
+                      <div className="remote-pending-actions">
+                        <button onClick={() => void revokeRemoteDevice(device.deviceId)} disabled={remoteBusy}>Revoke device</button>
+                      </div>
+                    )}
+                  </div>
                 ))}
                 <div className="menu-title">Phones awaiting local approval</div>
                 {remotePending.length === 0 ? <p className="remote-empty">No pending phone requests.</p> : remotePending.map((device) => (

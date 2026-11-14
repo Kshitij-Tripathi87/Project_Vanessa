@@ -191,6 +191,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not load pending pairings." }; }
   });
 
+  ipcMain.handle("vanessa:remote-v2-devices", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2Api("/api/remote-v2/devices"); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not load trusted devices." }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-revoke-device", async (event, deviceId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof deviceId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(deviceId)) {
+      return { success: false, error: "Device ID is invalid." };
+    }
+    try { return await remoteV2Api(`/api/remote-v2/devices/${deviceId}/revoke`, "POST", {}); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not revoke device." }; }
+  });
+
   ipcMain.handle("vanessa:remote-v2-approve-pairing", async (event, pairingId: unknown, scopes: unknown) => {
     assertTrustedRenderer(event, mainWindow);
     if (typeof pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(pairingId) ||

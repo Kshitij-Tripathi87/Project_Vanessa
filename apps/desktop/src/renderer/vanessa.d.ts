@@ -42,6 +42,17 @@ declare global {
     payload: string;
   }
 
+  interface RemoteV2TrustedDevice {
+    deviceId: string;
+    keyId: string;
+    deviceHint: string;
+    platform: "android" | "desktop" | "web" | "unknown";
+    appVersion: string;
+    grantedScopes: string[];
+    pairedAt: number;
+    revoked: boolean;
+  }
+
   interface RemoteV2Status {
     enabled: boolean;
     loopbackOnly: boolean;
@@ -60,6 +71,8 @@ declare global {
       remoteV2Status?: () => Promise<RemoteV2Status | { success: false; error: string }>;
       createRemoteV2Pairing?: () => Promise<RemoteV2PairingWindow | { success: false; error: string }>;
       getRemoteV2PendingPairings?: () => Promise<RemoteV2PendingPairing[] | { success: false; error: string }>;
+      getRemoteV2Devices?: () => Promise<RemoteV2TrustedDevice[] | { success: false; error: string }>;
+      revokeRemoteV2Device?: (deviceId: string) => Promise<unknown>;
       approveRemoteV2Pairing?: (pairingId: string, scopes: string[]) => Promise<unknown>;
       rejectRemoteV2Pairing?: (pairingId: string) => Promise<unknown>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;

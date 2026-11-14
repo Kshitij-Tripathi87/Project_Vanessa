@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld("vanessa", {
 
   getRemoteV2PendingPairings: () => ipcRenderer.invoke("vanessa:remote-v2-pending-pairings"),
 
+  getRemoteV2Devices: () => ipcRenderer.invoke("vanessa:remote-v2-devices"),
+
+  revokeRemoteV2Device: (deviceId: string) => ipcRenderer.invoke("vanessa:remote-v2-revoke-device", deviceId),
+
   approveRemoteV2Pairing: (pairingId: string, scopes: string[]) =>
     ipcRenderer.invoke("vanessa:remote-v2-approve-pairing", pairingId, scopes),
 
