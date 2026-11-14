@@ -13,6 +13,7 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.security.KeyFactory
@@ -37,7 +39,7 @@ import java.util.UUID
 class RemoteV2Client {
     private val client = HttpClient(Android) {
         install(WebSockets) {
-            pingIntervalMillis = 20_000L
+            pingInterval = 20_000L
         }
     }
 
@@ -270,6 +272,16 @@ class RemoteV2LiveSession internal constructor(
     }
 
     suspend fun requestManifest() = send("manifest.get", buildJsonObject {})
+
+    /** Resume from the last cursor persisted after a complete sync barrier. */
+    suspend fun resumeSync(lastEventSeq: Long) {
+        send("sync.resume", buildJsonObject {
+            put("lastEventSeq", lastEventSeq.coerceAtLeast(0L))
+            put("activeTaskIds", buildJsonArray { })
+            put("clientNonce", Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(UUID.randomUUID().toString().toByteArray()))
+        })
+    }
 
     suspend fun submitTask(capability: String, arguments: JsonObject, intent: String? = null): String {
         val requestId = UUID.randomUUID().toString()

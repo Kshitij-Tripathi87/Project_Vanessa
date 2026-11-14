@@ -87,7 +87,6 @@ android {
 }
 
 dependencies {
-    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     // Generated protocol contract (single source of truth for the wire format)
     implementation(project(":core:protocol"))
     implementation(project(":core:agent"))
@@ -132,8 +131,6 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.8")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.8")
 
-    // Google Play services QR scanner presents a system UI without requiring camera permission.
-    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     // QR Code Scanner / CameraX dependencies remain available for custom capture flows.
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
     implementation("androidx.camera:camera-core:1.3.1")

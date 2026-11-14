@@ -202,6 +202,51 @@ export class MobileTaskEngine {
     return this.db.prepare("SELECT seq,at,device_id AS deviceId,task_id AS taskId,request_id AS requestId,tool,args_json AS args,tier,state,result_summary AS resultSummary,duration_ms AS durationMs FROM mobile_audit ORDER BY seq DESC LIMIT ?").all(count);
   }
 
+  /** Recent durable tasks belonging to one trusted phone, newest updates first. */
+  recentTasksForDevice(deviceId: string, limit = 50) {
+    const count = Math.max(1, Math.min(50, Math.floor(limit)));
+    return this.db.prepare(`
+      SELECT
+        t.task_id AS taskId,
+        t.request_id AS requestId,
+        t.tool AS capability,
+        t.tier AS tier,
+        t.state AS state,
+        t.created_at AS createdAt,
+        t.updated_at AS updatedAt,
+        t.result_json AS resultJson,
+        COALESCE((
+          SELECT MAX(a.seq) FROM mobile_audit a WHERE a.task_id = t.task_id AND a.device_id = t.device_id
+        ), 0) AS lastEventSeq
+      FROM mobile_tasks t
+      WHERE t.device_id = ?
+      ORDER BY t.updated_at DESC
+      LIMIT ?
+    `).all(deviceId, count);
+  }
+
+  /** Device-scoped append-only events after the last acknowledged global audit sequence. */
+  recentAuditForDevice(deviceId: string, afterSeq: number, limit = 200) {
+    const cursor = Math.max(0, Math.floor(afterSeq));
+    const count = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.db.prepare(`
+      SELECT
+        seq, at, task_id AS taskId, request_id AS requestId,
+        tool AS capability, state, result_summary AS resultSummary
+      FROM mobile_audit
+      WHERE device_id = ? AND seq > ?
+      ORDER BY seq ASC
+      LIMIT ?
+    `).all(deviceId, cursor, count);
+  }
+
+  latestAuditSequenceForDevice(deviceId: string): number {
+    const row = this.db.prepare(
+      "SELECT COALESCE(MAX(seq), 0) AS latestSeq FROM mobile_audit WHERE device_id = ?",
+    ).get(deviceId) as { latestSeq?: number } | undefined;
+    return Number(row?.latestSeq ?? 0);
+  }
+
   close(): void { this.db.close(); }
 
   private actionHash(taskId: string, tool: string, args: unknown, expiresAt: number): string {

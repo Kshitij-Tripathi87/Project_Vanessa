@@ -38,6 +38,7 @@ object RemoteV2PairingPayloadParser {
         val expiresAt = json.optLong("expiresAt", 0L)
         val uri = runCatching { URI(wsUrl) }.getOrNull()
         if (uri == null || uri.scheme != "wss" || uri.host.isNullOrBlank() ||
+            !uri.host.lowercase().endsWith(".ts.net") || uri.port != -1 ||
             uri.userInfo != null || uri.query != null || uri.fragment != null ||
             uri.path != "/remote-v2") {
             return RemoteV2PairingPayloadResult.Invalid("Pairing requires the PC's Tailscale WSS address.")

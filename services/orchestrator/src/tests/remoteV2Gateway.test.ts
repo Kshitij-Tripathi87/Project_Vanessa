@@ -31,9 +31,13 @@ test("remote v2 gateway refuses every non-loopback bind address", () => {
   assert.throws(() => createGateway({ host: "100.64.0.4" }), /localhost/);
 });
 
-test("remote v2 gateway rejects non-WSS or mismatched ingress URLs", () => {
+test("remote v2 gateway accepts only Tailscale MagicDNS WSS ingress", () => {
   const http = createGateway({ publicWebSocketUrl: "https://vanessa.example.ts.net/remote-v2" });
-  assert.throws(() => http.createPairingPayload(), /wss/);
+  assert.throws(() => http.createPairingPayload(), /Tailscale MagicDNS/);
+  const publicHost = createGateway({ publicWebSocketUrl: "wss://vanessa.example.com/remote-v2" });
+  assert.throws(() => publicHost.createPairingPayload(), /Tailscale MagicDNS/);
+  const customPort = createGateway({ publicWebSocketUrl: "wss://vanessa.example.ts.net:444/remote-v2" });
+  assert.throws(() => customPort.createPairingPayload(), /Tailscale MagicDNS/);
   const wrongPath = createGateway({ publicWebSocketUrl: "wss://vanessa.example.ts.net/other" });
   assert.throws(() => wrongPath.createPairingPayload(), /path/);
 });

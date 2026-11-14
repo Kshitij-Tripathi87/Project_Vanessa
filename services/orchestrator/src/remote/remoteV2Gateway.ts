@@ -136,6 +136,23 @@ export class RemoteV2Gateway {
       clientTracking: true,
     });
     this.server = server;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+        const onError = (error: Error) => {
+          server.off("listening", onListening);
+          reject(error);
+        };
+        server.once("listening", onListening);
+        server.once("error", onError);
+      });
+    } catch (error) {
+      this.server = undefined;
+      throw error;
+    }
     server.on("connection", (socket, request) => {
       if (request.headers.origin) {
         socket.close(1008, "Browser origins are not accepted.");
@@ -192,8 +209,9 @@ export class RemoteV2Gateway {
       throw new Error("Set VANESSA_REMOTE_V2_PUBLIC_URL to the Tailscale Serve WSS URL before creating a remote pairing code.");
     }
     const parsed = new URL(publicUrl);
-    if (parsed.protocol !== "wss:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error("Remote pairing requires a clean wss:// URL served by Tailscale Serve.");
+    if (parsed.protocol !== "wss:" || parsed.username || parsed.password || parsed.search || parsed.hash ||
+        parsed.port || !parsed.hostname.toLowerCase().endsWith(".ts.net")) {
+      throw new Error("Remote pairing requires a Tailscale MagicDNS wss://<node>.<tailnet>.ts.net URL.");
     }
     if (parsed.pathname === "" || parsed.pathname === "/") parsed.pathname = this.path;
     if (parsed.pathname !== this.path) {
@@ -419,9 +437,20 @@ export class RemoteV2Gateway {
         break;
       }
       case "sync.resume": {
-        await this.send(state, "sync.snapshot", { lastEventSeq: 0, historyGap: true, tasks: [], events: [] }, state.sessionId);
+        const parsed = safeParseRemotePayload("sync.resume", envelope.payload);
+        if (!parsed.success) {
+          await this.sendError(state, "INVALID_PAYLOAD", "Sync resume payload is invalid.", undefined, state.sessionId);
+          break;
+        }
+        const sync = this.options.tasks.syncSnapshot(state.clientKeyId, parsed.data.lastEventSeq);
+        await this.send(state, "sync.snapshot", sync.snapshot, state.sessionId);
+        // Results are replayed before sync.complete; clients persist their cursor
+        // only after this barrier so an interrupted replay is safely retried.
+        for (const result of sync.results) {
+          await this.send(state, "task.result", result, state.sessionId);
+        }
         await this.send(state, "sync.complete", {
-          lastEventSeq: 0,
+          lastEventSeq: sync.snapshot.lastEventSeq,
           resumedAt: now,
           sessionExpiresAt: state.sessionExpiresAt!,
         }, state.sessionId);

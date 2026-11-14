@@ -40,9 +40,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.gms.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.android.gms.mlkit.vision.codescanner.GmsBarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
 import com.vanessa.mobile.R
 import com.vanessa.mobile.di.PairingRepository
 import com.vanessa.mobile.di.StoredRemoteV2Pairing
@@ -188,7 +185,6 @@ class MainActivity : FragmentActivity() {
                         remotePendingApproval = remotePendingApproval,
                         onRemoteQrChange = { remoteQrJson = it },
                         onPairRemote = ::pairRemote,
-                        onScanRemoteQr = ::scanRemotePairingQr,
                         onReconnectRemote = ::restoreRemoteSession,
                         onRemoteUrlChange = { remoteOpenUrl = it },
                         onOpenRemoteUrl = ::openRemoteUrl,
@@ -265,7 +261,7 @@ class MainActivity : FragmentActivity() {
                 remoteBusy = true
                 remoteStatus = "Reconnecting to ${saved.pcName}…"
                 val session = withContext(Dispatchers.IO) { newRemoteClient().reconnect(configuration) }
-                attachRemoteSession(session)
+                attachRemoteSession(session, saved.lastEventSeq)
                 remoteStatus = "Connected to ${saved.pcName} over authenticated v2."
             } catch (error: Exception) {
                 remoteStatus = "PC offline or unreachable: ${error.message ?: "reconnect failed"}. Local phone tools remain available."
@@ -273,29 +269,6 @@ class MainActivity : FragmentActivity() {
                 remoteBusy = false
             }
         }
-    }
-
-    private fun scanRemotePairingQr() {
-        val options = GmsBarcodeScannerOptions.Builder()
-            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-            .build()
-        GmsBarcodeScanning.getClient(this, options)
-            .startScan()
-            .addOnSuccessListener { barcode ->
-                val raw = barcode.rawValue
-                if (raw.isNullOrBlank()) {
-                    remoteStatus = "The scanned QR code did not contain a Vanessa pairing payload."
-                } else {
-                    remoteQrJson = raw
-                    pairRemote(raw)
-                }
-            }
-            .addOnCanceledListener {
-                remoteStatus = "QR scan cancelled."
-            }
-            .addOnFailureListener { error ->
-                remoteStatus = "QR scanner unavailable: ${error.message ?: "unknown error"}"
-            }
     }
 
     private fun pairRemote(rawQrPayload: String) {
@@ -321,7 +294,7 @@ class MainActivity : FragmentActivity() {
                                 grantedScopesJson = session.grantedScopesJson,
                             ),
                         )
-                        attachRemoteSession(session)
+                        attachRemoteSession(session, 0L)
                         remoteQrJson = ""
                         remoteStatus = "Paired and connected to ${parsed.configuration.pcName}."
                     } catch (error: Exception) {
@@ -334,7 +307,7 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun attachRemoteSession(session: RemoteV2LiveSession) {
+    private fun attachRemoteSession(session: RemoteV2LiveSession, lastEventSeq: Long) {
         remoteEventsJob?.cancel()
         remoteSession?.takeIf { it !== session }?.close()
         remoteSession = session
@@ -342,6 +315,23 @@ class MainActivity : FragmentActivity() {
             session.events.collect { envelope ->
                 val payload = envelope.payload
                 when (envelope.type) {
+                    "sync.snapshot" -> {
+                        val tasks = payload["tasks"] as? kotlinx.serialization.json.JsonArray
+                        val count = tasks?.size ?: 0
+                        remoteTaskStatus = "Restored $count recent PC task records."
+                        if (payload["historyGap"]?.jsonPrimitive?.content == "true") {
+                            remoteTaskStatus = "PC task history was reset. Restored $count available task records."
+                        }
+                    }
+                    "sync.complete" -> {
+                        val cursor = payload["lastEventSeq"]?.jsonPrimitive?.content?.toLongOrNull() ?: lastEventSeq
+                        lifecycleScope.launch {
+                            val saved = pairingRepository.remoteV2Pairing.first()
+                            if (saved?.deviceId == session.deviceId) {
+                                pairingRepository.saveRemoteV2Pairing(saved.copy(lastEventSeq = cursor))
+                            }
+                        }
+                    }
                     "task.accepted" -> {
                         val taskId = payload["taskId"]?.jsonPrimitive?.content.orEmpty()
                         remoteTaskStatus = if (taskId.isNotBlank()) "Accepted by Windows PC. Task: $taskId" else "Task accepted by Windows PC."
@@ -372,6 +362,10 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+        lifecycleScope.launch {
+            runCatching { session.resumeSync(lastEventSeq) }
+                .onFailure { remoteTaskStatus = "Could not restore prior PC tasks: ${it.message ?: "sync failed"}" }
         }
     }
 
@@ -721,7 +715,6 @@ private fun DeviceScreen(
     remotePendingApproval: JsonObject?,
     onRemoteQrChange: (String) -> Unit,
     onPairRemote: (String) -> Unit,
-    onScanRemoteQr: () -> Unit,
     onReconnectRemote: () -> Unit,
     onRemoteUrlChange: (String) -> Unit,
     onOpenRemoteUrl: () -> Unit,
@@ -857,14 +850,11 @@ private fun DeviceScreen(
                     maxLines = 5,
                     enabled = !remoteBusy,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onScanRemoteQr, enabled = !remoteBusy, modifier = Modifier.weight(1f)) {
-                        Text("Scan QR")
-                    }
-                    Button(onClick = onReconnectRemote, enabled = !remoteBusy, modifier = Modifier.weight(1f)) {
-                        Text("Reconnect")
-                    }
-                }
+                Button(
+                    onClick = onReconnectRemote,
+                    enabled = !remoteBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Reconnect to paired PC") }
                 Button(
                     onClick = { onPairRemote(remoteQrJson) },
                     enabled = !remoteBusy && remoteQrJson.isNotBlank(),

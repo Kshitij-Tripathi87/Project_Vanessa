@@ -31,6 +31,7 @@ data class StoredRemoteV2Pairing(
     val pcName: String,
     val deviceId: String,
     val grantedScopesJson: String,
+    val lastEventSeq: Long = 0,
 )
 
 /**
@@ -54,6 +55,7 @@ class PairingRepository @Inject constructor(
         val REMOTE_V2_PC_NAME = stringPreferencesKey("remote_v2_pc_name")
         val REMOTE_V2_DEVICE_ID = stringPreferencesKey("remote_v2_device_id")
         val REMOTE_V2_GRANTED_SCOPES = stringPreferencesKey("remote_v2_granted_scopes")
+        val REMOTE_V2_LAST_EVENT_SEQ = longPreferencesKey("remote_v2_last_event_seq")
     }
 
     val pairing: Flow<StoredPairing?> = dataStore.data.map { preferences ->
@@ -83,6 +85,7 @@ class PairingRepository @Inject constructor(
             pcName = preferences[Keys.REMOTE_V2_PC_NAME] ?: "Vanessa PC",
             deviceId = deviceId,
             grantedScopesJson = preferences[Keys.REMOTE_V2_GRANTED_SCOPES] ?: "[]",
+            lastEventSeq = preferences[Keys.REMOTE_V2_LAST_EVENT_SEQ] ?: 0L,
         )
     }
 
@@ -94,6 +97,7 @@ class PairingRepository @Inject constructor(
             preferences[Keys.REMOTE_V2_PC_NAME] = pairing.pcName
             preferences[Keys.REMOTE_V2_DEVICE_ID] = pairing.deviceId
             preferences[Keys.REMOTE_V2_GRANTED_SCOPES] = pairing.grantedScopesJson
+            preferences[Keys.REMOTE_V2_LAST_EVENT_SEQ] = pairing.lastEventSeq
         }
     }
 
@@ -105,6 +109,7 @@ class PairingRepository @Inject constructor(
             preferences.remove(Keys.REMOTE_V2_PC_NAME)
             preferences.remove(Keys.REMOTE_V2_DEVICE_ID)
             preferences.remove(Keys.REMOTE_V2_GRANTED_SCOPES)
+            preferences.remove(Keys.REMOTE_V2_LAST_EVENT_SEQ)
         }
     }
 
