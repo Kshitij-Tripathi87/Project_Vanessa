@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  applyOrchestratorRuntimeUrls,
   resolveOrchestratorHttpUrl,
   resolveOrchestratorPort,
   resolveOrchestratorWebSocketUrl,
@@ -48,4 +49,21 @@ test("HTTP and WebSocket overrides are validated and resolved independently", ()
   );
   assert.throws(() => resolveOrchestratorHttpUrl({ ORCHESTRATOR_URL: "file:///tmp/api" }), /http or https/);
   assert.throws(() => resolveOrchestratorWebSocketUrl({ ORCHESTRATOR_WS: "http://127.0.0.1:4319" }), /ws or wss/);
+});
+
+
+test("voice-agent orchestrator clients receive the same resolved endpoint", () => {
+  const env = { VANESSA_PORT: "4421" };
+  const resolved = applyOrchestratorRuntimeUrls(env);
+  assert.equal(resolved, "http://127.0.0.1:4421");
+  assert.equal(env.ORCHESTRATOR_URL, resolved);
+  assert.equal(env.VANESSA_ORCHESTRATOR_URL, resolved);
+});
+
+test("explicit orchestrator URL is propagated to both voice-agent clients", () => {
+  const env = { ORCHESTRATOR_URL: "http://127.0.0.1:5123" };
+  const resolved = applyOrchestratorRuntimeUrls(env);
+  assert.equal(resolved, "http://127.0.0.1:5123");
+  assert.equal(env.ORCHESTRATOR_URL, resolved);
+  assert.equal(env.VANESSA_ORCHESTRATOR_URL, resolved);
 });
