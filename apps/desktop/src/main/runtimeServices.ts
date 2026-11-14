@@ -1,12 +1,20 @@
 import { app } from "electron";
+import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { applyOrchestratorRuntimeUrls, resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
+import { RemotePcIdentityStore, type RemotePcIdentity } from "./remotePcIdentityStore.js";
+import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
 
 const managedChildren = new Map<string, ChildProcess>();
 let shuttingDown = false;
+let remoteAdminToken: string | undefined;
+
+export function getRemoteAdminToken(): string | undefined {
+  return remoteAdminToken;
+}
 
 export function parseEnvironmentFile(contents: string): Record<string, string> {
   const parsed: Record<string, string> = {};
@@ -112,6 +120,7 @@ async function startService(options: {
   healthUrl: string;
   serviceIdentity: string;
   startupTimeoutMs?: number;
+  remoteIdentity?: RemotePcIdentity;
 }): Promise<void> {
   if (await serviceHealthy(options.healthUrl, options.serviceIdentity)) {
     console.info("[Vanessa Runtime] Reusing healthy " + options.name + " service.");
@@ -127,11 +136,55 @@ async function startService(options: {
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
   const child = spawn(path.join(process.resourcesPath, "runtime", "node.exe"), [options.entryPath], {
     cwd: options.workingDirectory,
-    env: { ...childEnvironment, HOST: "127.0.0.1" },
-    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...childEnvironment,
+      HOST: "127.0.0.1",
+      ...(options.remoteIdentity ? {
+        VANESSA_REMOTE_V2_ENABLED: "true",
+        VANESSA_REMOTE_PC_KEY_ID: options.remoteIdentity.keyId,
+        VANESSA_REMOTE_PC_PUBLIC_KEY: options.remoteIdentity.publicKeySpki,
+        VANESSA_REMOTE_LOCAL_ADMIN_TOKEN: remoteAdminToken,
+        VANESSA_REMOTE_DEVICE_STORE: path.join(app.getPath("userData"), "remote-v2", "trusted-devices.json"),
+      } : { VANESSA_REMOTE_V2_ENABLED: "false" }),
+    },
+    stdio: options.remoteIdentity ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
     windowsHide: true,
     shell: false,
   });
+  if (options.remoteIdentity) {
+    const identity = options.remoteIdentity;
+    child.on("message", (rawMessage: unknown) => {
+      if (!rawMessage || typeof rawMessage !== "object") return;
+      const request = rawMessage as { type?: string; requestId?: string; envelope?: unknown };
+      if (request.type !== "vanessa.remote.sign" || typeof request.requestId !== "string" || !request.envelope) return;
+      void (async () => {
+        try {
+          const protocol = await import("@vanessa/protocol");
+          const candidate = request.envelope as Record<string, unknown>;
+          const parsed = protocol.safeParseRemoteEnvelope({
+            ...candidate,
+            auth: { algorithm: "ES256", signature: "AAAAAAAAAAAAAAAA" },
+          });
+          if (!parsed.success || parsed.data.keyId !== identity.keyId) {
+            throw new Error("PC signer rejected an invalid or foreign-key envelope.");
+          }
+          const direction = protocol.REMOTE_MESSAGE_DIRECTIONS[parsed.data.type];
+          if (direction === "client_to_server") {
+            throw new Error("PC signer cannot sign a client-to-server protocol message.");
+          }
+          const { auth: _unsignedAuth, ...unsigned } = parsed.data;
+          const envelope = protocol.signRemoteEnvelope(identity.privateKey, unsigned);
+          if (child.connected) child.send({ type: "vanessa.remote.sign.response", requestId: request.requestId, envelope });
+        } catch (error) {
+          if (child.connected) child.send({
+            type: "vanessa.remote.sign.response",
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message.slice(0, 200) : "PC signature failed.",
+          });
+        }
+      })();
+    });
+  }
   managedChildren.set(options.name, child);
   appendServiceLogs(options.name, child);
 
@@ -195,6 +248,26 @@ export async function startPackagedServices(): Promise<void> {
 
   const orchestratorPort = resolveOrchestratorPort(process.env);
   const voiceAgentPort = resolveVoiceAgentPort(process.env);
+  let remoteIdentity: RemotePcIdentity | undefined;
+  remoteAdminToken = undefined;
+  if (process.env.VANESSA_REMOTE_V2_ENABLED === "true") {
+    try {
+      const identityStore = new RemotePcIdentityStore(
+        path.join(app.getPath("userData"), "remote-v2", "pc-identity.json"),
+        new ElectronPcIdentityEncryption(),
+      );
+      remoteIdentity = await identityStore.loadOrCreate();
+      remoteAdminToken = randomBytes(32).toString("base64url");
+      process.env.VANESSA_REMOTE_PC_KEY_ID = remoteIdentity.keyId;
+      process.env.VANESSA_REMOTE_PC_PUBLIC_KEY = remoteIdentity.publicKeySpki;
+      process.env.VANESSA_REMOTE_LOCAL_ADMIN_TOKEN = remoteAdminToken;
+      process.env.VANESSA_REMOTE_DEVICE_STORE = path.join(app.getPath("userData"), "remote-v2", "trusted-devices.json");
+      console.info("[Vanessa Remote v2] OS-protected PC identity ready.");
+    } catch (error) {
+      process.env.VANESSA_REMOTE_V2_ENABLED = "false";
+      console.error("[Vanessa Remote v2] Identity unavailable; remote pairing remains disabled:", error);
+    }
+  }
   process.env.VANESSA_PORT = String(orchestratorPort);
   process.env.VOICE_AGENT_PORT = String(voiceAgentPort);
   // Keep both voice-agent call sites aligned with the packaged orchestrator
@@ -210,6 +283,7 @@ export async function startPackagedServices(): Promise<void> {
     port: orchestratorPort,
     healthUrl: "http://127.0.0.1:" + orchestratorPort + "/health",
     serviceIdentity: "vanessa-orchestrator",
+    ...(remoteIdentity ? { remoteIdentity } : {}),
   });
   await startService({
     name: "voice-agent",

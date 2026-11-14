@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
 import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
 import { resolveOrchestratorHttpUrl, resolveOrchestratorWebSocketUrl } from "./runtimeConfig.js";
+import { getRemoteAdminToken } from "./runtimeServices.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
@@ -153,6 +154,61 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     mainWindow?.close();
     return { success: true };
+  });
+
+  async function remoteV2Api(path: string, method = "GET", body?: unknown) {
+    const token = getRemoteAdminToken();
+    if (!token) return { success: false, enabled: false, error: "Remote v2 is disabled or the PC identity is unavailable." };
+    const response = await fetch(`${resolveOrchestratorHttpUrl(process.env)}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "x-vanessa-admin-token": token,
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(5000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((payload as { error?: string }).error || `Remote v2 request failed (${response.status}).`);
+    return payload;
+  }
+
+  ipcMain.handle("vanessa:remote-v2-status", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2Api("/api/remote-v2/status"); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Status unavailable." }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-create-pairing", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2Api("/api/remote-v2/pairing/window", "POST", {}); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not create pairing code." }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-pending-pairings", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2Api("/api/remote-v2/pairing/pending"); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not load pending pairings." }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-approve-pairing", async (event, pairingId: unknown, scopes: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(pairingId) ||
+        !Array.isArray(scopes) || scopes.length > 10 ||
+        scopes.some((scope) => typeof scope !== "string" || scope.length > 64)) {
+      return { success: false, error: "Pairing approval request is invalid." };
+    }
+    try { return await remoteV2Api(`/api/remote-v2/pairing/${pairingId}/approve`, "POST", { scopes }); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not approve pairing." }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-reject-pairing", async (event, pairingId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(pairingId)) {
+      return { success: false, error: "Pairing ID is invalid." };
+    }
+    try { return await remoteV2Api(`/api/remote-v2/pairing/${pairingId}/reject`, "POST", {}); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "Could not reject pairing." }; }
   });
 
   // Connect to WebSocket stream and forward to Renderer

@@ -463,6 +463,8 @@ const PairingClaimPayload = z
     pairingId: OpaqueIdSchema,
     code: z.string().min(10).max(64).regex(/^[A-Za-z0-9-]+$/),
     publicKey: Base64UrlSchema.min(46).max(400),
+    /** Separate P-256 key requiring strong user authentication for destructive approvals. */
+    approvalPublicKey: Base64UrlSchema.min(46).max(400).optional(),
     keyId: z.string().min(16).max(64).regex(/^[A-Za-z0-9_-]+$/),
     deviceHint: DeviceHintSchema,
     platform: PlatformSchema,
@@ -600,6 +602,12 @@ const TaskConfirmationResponsePayload = z
     approvedAt: EpochMsSchema,
     /** Method used to authorize, e.g. `biometric_strong` or `pc_local`. */
     method: z.string().min(3).max(40),
+    /** Signed by a separate Android Keystore key requiring strong biometric authentication. */
+    approvalProof: z.object({
+      keyId: z.string().min(16).max(64).regex(/^[A-Za-z0-9_-]+$/),
+      signature: Base64UrlSchema.min(16).max(200),
+      signedAt: EpochMsSchema,
+    }).strict().optional(),
   })
   .strict();
 

@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, verify as verifySignature } from "node:crypto";
 
 import {
   canonicalize,
+  computeKeyId,
+  isSupportedIdentityKey,
+  normalizeIdentityPublicKey,
   safeParseRemotePayload,
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
@@ -18,8 +21,31 @@ import {
 export type RemoteApprovalProofContext = {
   device: TrustedRemoteDevice;
   response: RemotePayloadFor<"task.confirmation_response">;
-  proof: unknown;
+  proof: RemotePayloadFor<"task.confirmation_response">["approvalProof"];
 };
+
+function verifyDeviceApprovalProof(context: RemoteApprovalProofContext, now: number): boolean {
+  const { device, response, proof } = context;
+  if (!proof || !device.approvalPublicKeySpki) return false;
+  if (proof.keyId !== computeKeyId(device.approvalPublicKeySpki)) return false;
+  if (!Number.isSafeInteger(proof.signedAt) || proof.signedAt !== response.approvedAt) return false;
+  if (Math.abs(now - proof.signedAt) > 60_000) return false;
+  let publicKey;
+  try { publicKey = normalizeIdentityPublicKey(device.approvalPublicKeySpki); } catch { return false; }
+  if (!isSupportedIdentityKey(publicKey)) return false;
+  const binding = {
+    taskId: response.taskId,
+    approvalId: response.approvalId,
+    actionHash: response.actionHash,
+    decision: "approved" as const,
+    approvedAt: response.approvedAt,
+    method: "biometric_strong" as const,
+  };
+  try {
+    return verifySignature("sha256", Buffer.from(canonicalize(binding), "utf8"), publicKey,
+      Buffer.from(proof.signature, "base64url"));
+  } catch { return false; }
+}
 
 /**
  * Verifies a separate, hardware-backed proof from the phone's biometric-bound
@@ -202,11 +228,14 @@ export class RemoteTaskService {
       if (parsed.data.method !== "biometric_strong") {
         serviceError("PERMISSION_DENIED", "A strong biometric approval method is required for remote destructive actions.");
       }
-      const verifier = this.options.verifyApprovalProof;
-      if (!verifier) {
-        serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
-      }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const context: RemoteApprovalProofContext = {
+        device,
+        response: parsed.data,
+        proof: parsed.data.approvalProof,
+      };
+      const verified = this.options.verifyApprovalProof
+        ? await this.options.verifyApprovalProof(context)
+        : verifyDeviceApprovalProof(context, this.now());
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }

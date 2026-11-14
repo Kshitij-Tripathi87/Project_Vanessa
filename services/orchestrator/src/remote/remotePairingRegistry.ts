@@ -56,6 +56,8 @@ export type TrustedRemoteDevice = {
   keyId: string;
   /** Base64url SPKI DER. Public material only; the phone's private key stays in Android Keystore. */
   publicKeySpki: string;
+  /** Separate P-256 approval key; private half is hardware-backed on Android. */
+  approvalPublicKeySpki?: string;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
@@ -76,6 +78,7 @@ type PairingEntry = {
   phoneGuard?: RemoteSessionGuard;
   keyId?: string;
   publicKeySpki?: string;
+  approvalPublicKeySpki?: string;
   deviceHint?: string;
   platform?: PendingRemotePairing["platform"];
   appVersion?: string;
@@ -269,6 +272,18 @@ export class RemotePairingRegistry {
     entry.phoneGuard = guard;
     entry.keyId = derivedKeyId;
     entry.publicKeySpki = payload.publicKey;
+    if (payload.approvalPublicKey) {
+      let approvalPublicKey;
+      try {
+        approvalPublicKey = normalizeIdentityPublicKey(payload.approvalPublicKey);
+      } catch {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Phone biometric approval key is invalid.");
+      }
+      if (!isSupportedIdentityKey(approvalPublicKey)) {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Phone biometric approval key must use P-256.");
+      }
+      entry.approvalPublicKeySpki = payload.approvalPublicKey;
+    }
     entry.deviceHint = payload.deviceHint;
     entry.platform = payload.platform;
     entry.appVersion = payload.appVersion;
@@ -354,6 +369,7 @@ export class RemotePairingRegistry {
       deviceId: randomUUID(),
       keyId: entry.keyId,
       publicKeySpki: entry.publicKeySpki,
+      ...(entry.approvalPublicKeySpki ? { approvalPublicKeySpki: entry.approvalPublicKeySpki } : {}),
       deviceHint: entry.deviceHint,
       platform: entry.platform,
       appVersion: entry.appVersion,
@@ -464,6 +480,17 @@ export class RemotePairingRegistry {
     if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== value.keyId) {
       throw new Error("Trusted-device store contains an invalid P-256 identity.");
     }
+    let approvalPublicKeySpki: string | undefined;
+    if (value.approvalPublicKeySpki !== undefined) {
+      if (typeof value.approvalPublicKeySpki !== "string") {
+        throw new Error("Trusted-device store contains an invalid approval public key.");
+      }
+      const approvalKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
+      if (!isSupportedIdentityKey(approvalKey)) {
+        throw new Error("Trusted-device store contains a non-P-256 approval public key.");
+      }
+      approvalPublicKeySpki = value.approvalPublicKeySpki;
+    }
     if (value.grantedScopes.length > 32 ||
         new Set(value.grantedScopes).size !== value.grantedScopes.length ||
         value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
@@ -473,6 +500,7 @@ export class RemotePairingRegistry {
       deviceId: value.deviceId,
       keyId: value.keyId,
       publicKeySpki: value.publicKeySpki,
+      ...(approvalPublicKeySpki ? { approvalPublicKeySpki } : {}),
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
