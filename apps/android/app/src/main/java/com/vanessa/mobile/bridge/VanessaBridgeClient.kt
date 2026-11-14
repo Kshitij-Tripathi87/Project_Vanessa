@@ -161,6 +161,11 @@ class VanessaBridgeClient @Inject constructor() {
                     _events.emit(BridgeEvent.SessionReady(connectedDevice.first, connectedDevice.second))
                     _connectionState.value = ConnectionState.Connected(pairing.endpoint)
 
+                    sendEnvelope(this, "sync.resume", buildJsonObject {
+                        put("lastEventSeq", 0)
+                        put("activeTaskIds", JsonArray(emptyList()))
+                        put("clientNonce", randomNonce())
+                    }, readySessionId, outboundSequence++, identity)
                     sendEnvelope(
                         this,
                         "manifest.get",
@@ -207,6 +212,22 @@ class VanessaBridgeClient @Inject constructor() {
                                 val approval = envelope.payload["approval"] as? JsonObject
                                 if (approval != null) _events.emit(BridgeEvent.ConfirmationRequired(approval))
                             }
+                            "sync.snapshot" -> {
+                                val tasks = envelope.payload["tasks"] as? JsonArray ?: JsonArray(emptyList())
+                                val historyGap = envelope.payload["historyGap"]?.toString() == "true"
+                                for (element in tasks) {
+                                    val task = element as? JsonObject ?: continue
+                                    val taskId = task["taskId"]?.toString()?.trim('"') ?: continue
+                                    val state = task["state"]?.toString()?.trim('"') ?: "unknown"
+                                    val summary = task["safeSummary"]?.toString()?.trim('"')
+                                    _events.emit(BridgeEvent.TaskProgress(
+                                        taskId,
+                                        state,
+                                        (if (historyGap) "Restored from PC task ledger. " else "") + (summary ?: "Recovered task state."),
+                                    ))
+                                }
+                            }
+                            "sync.complete" -> Unit
                             "task.error", "protocol.error" -> _events.emit(BridgeEvent.TaskError(
                                 envelope.payload["taskId"]?.toString()?.trim('"'),
                                 envelope.payload["code"]?.toString()?.trim('"') ?: "REMOTE_ERROR",
