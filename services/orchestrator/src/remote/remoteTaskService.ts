@@ -239,6 +239,10 @@ export class RemoteTaskService {
     }
 
     if (parsed.data.decision === "approved") {
+      const capability = this.engine.getRemoteCapabilities().find((entry) => entry.name === task.tool);
+      if (!capability || !capability.scopes.every((scope) => device.grantedScopes.includes(scope))) {
+        serviceError("SCOPE_REQUIRED", "This device no longer has the required scope to approve the pending PC action.");
+      }
       if (parsed.data.method !== "biometric_strong") {
         serviceError("PERMISSION_DENIED", "A strong biometric approval method is required for remote destructive actions.");
       }
@@ -271,7 +275,8 @@ export class RemoteTaskService {
     const capabilities = new Map(this.engine.getRemoteCapabilities().map((entry) => [entry.name, entry]));
     return this.engine.getTaskRecoveryForDevice(taskIds, device.deviceId).map((item) => {
       const capability = capabilities.get(item.task.tool as never);
-      if (!capability || !item.confirmation || !item.task.actionHash) {
+      if (!capability || !item.confirmation || !item.task.actionHash ||
+          !capability.scopes.every((scope) => device.grantedScopes.includes(scope))) {
         return { snapshot: item.snapshot, task: item.task };
       }
       const approval = {
