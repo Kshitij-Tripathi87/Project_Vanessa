@@ -66,6 +66,21 @@ if (typeof window !== "undefined" && !window.vanessa) {
         return res.ok ? res.json() : [];
       } catch { return []; }
     },
+
+    createRemoteV2PairingWindow: async () => ({
+      error: "Remote device pairing is available in the packaged Vanessa desktop app, not browser preview.",
+    }),
+    getRemoteV2PendingPairings: async () => [],
+    getRemoteV2Devices: async () => [],
+    approveRemoteV2Pairing: async () => ({
+      error: "Remote device approval is available in the packaged Vanessa desktop app.",
+    }),
+    rejectRemoteV2Pairing: async () => ({
+      error: "Remote device approval is available in the packaged Vanessa desktop app.",
+    }),
+    revokeRemoteV2Device: async () => ({
+      error: "Remote device administration is available in the packaged Vanessa desktop app.",
+    }),
     onEvent: (callback) => {
       eventListeners.push(callback);
       return () => {
