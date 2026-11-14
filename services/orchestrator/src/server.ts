@@ -600,19 +600,32 @@ async function discoverTailscaleDnsName(): Promise<string | null> {
   }
 }
 
-async function startTailscaleServe(localPort: number): Promise<{ host: string; port: number }> {
+async function startTailscaleServe(localPort: number): Promise<{ host: string; port: number; owned: boolean }> {
+  const target = "127.0.0.1:" + localPort;
   const status = await execFileAsync("tailscale", ["serve", "status"], { timeout: 4000, windowsHide: true })
     .then((result) => result.stdout)
     .catch(() => "");
-  if (status.includes(":43443") && !status.includes("127.0.0.1:" + localPort)) {
-    throw new Error("Tailscale Serve port 43443 is already assigned to another service; refusing to replace it.");
+  const portConfigured = status.includes(":43443");
+  if (portConfigured && !status.includes(target)) {
+    throw new Error("Tailscale Serve port 43443 is already assigned to a different target; Vanessa will not replace it.");
   }
-  await execFileAsync("tailscale", [
-    "serve", "--bg", "--https=43443", "http://127.0.0.1:" + localPort,
-  ], { timeout: 10000, windowsHide: true });
-  const host = await discoverTailscaleDnsName();
-  if (!host) throw new Error("Tailscale Serve started, but the PC MagicDNS TLS name could not be verified.");
-  return { host, port: 43443 };
+
+  let owned = false;
+  if (!portConfigured) {
+    await execFileAsync("tailscale", [
+      "serve", "--bg", "--https=43443", "http://127.0.0.1:" + localPort,
+    ], { timeout: 10000, windowsHide: true });
+    owned = true;
+  }
+
+  try {
+    const host = await discoverTailscaleDnsName();
+    if (!host) throw new Error("Tailscale Serve is configured, but this PC's MagicDNS TLS name could not be verified.");
+    return { host, port: 43443, owned };
+  } catch (error) {
+    if (owned) await stopTailscaleServe();
+    throw error;
+  }
 }
 
 async function stopTailscaleServe(): Promise<void> {
@@ -733,6 +746,21 @@ fastify.post("/api/remote-v2/devices/revoke", async (request, reply) => {
 });
 
 
+fastify.addHook("onClose", async () => {
+  await remoteV2Gateway?.stop();
+  remoteV2Gateway = undefined;
+  if (remoteV2ServeOwned) {
+    await stopTailscaleServe();
+    remoteV2ServeOwned = false;
+  }
+  remotePairings = undefined;
+  remoteV2Host = undefined;
+  remoteV2Port = undefined;
+  remoteV2Scheme = undefined;
+  mobileTaskEngine?.close();
+  mobileTaskEngine = undefined;
+});
+
 // Start server
 export async function startServer() {
   try {
@@ -758,39 +786,53 @@ export async function startServer() {
       if (!signerUrl || !signerToken || adminToken.length < 32) {
         console.warn("[Vanessa Remote v2] Disabled: Electron identity signer/admin channel is not configured.");
       } else {
-        const configuredHost = process.env.VANESSA_REMOTE_V2_HOST?.trim();
-        const localTestMode = configuredHost === "127.0.0.1" &&
-          process.env.VANESSA_REMOTE_V2_ALLOW_LOOPBACK === "true";
-        const localPort = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
-        if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) throw new Error("Invalid v2 remote port.");
-        const dataDir = process.env.VANESSA_REMOTE_DATA_DIR || path.resolve(process.cwd(), "data", "remote-v2");
-        fs.mkdirSync(dataDir, { recursive: true });
-        remotePairings = new RemotePairingRegistry({ storePath: path.join(dataDir, "trusted-devices.json") });
-        await remotePairings.initialize();
-        const signer = new HttpRemoteEnvelopeSigner(signerUrl, signerToken);
-        // Confirm the PC signing identity before opening either listener.
-        const identity = await signer.getIdentity();
-        if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
-        const remoteTasks = new RemoteTaskService(mobileTaskEngine!, remotePairings, {
-          verifyApprovalProof: verifyRemoteBiometricApproval,
-        });
-        remoteV2Gateway = new RemoteWebSocketGateway({
-          host: "127.0.0.1", port: localPort, signer, pairings: remotePairings, tasks: remoteTasks,
-        });
-        await remoteV2Gateway.start();
-        if (localTestMode) {
-          remoteV2Host = "127.0.0.1";
-          remoteV2Port = localPort;
-          remoteV2Scheme = "ws";
-        } else {
-          const published = await startTailscaleServe(remoteV2Gateway.getActualPort());
-          remoteV2Host = published.host;
-          remoteV2Port = published.port;
-          remoteV2Scheme = "wss";
-          remoteV2ServeOwned = true;
+        try {
+          const configuredHost = process.env.VANESSA_REMOTE_V2_HOST?.trim();
+          const localTestMode = configuredHost === "127.0.0.1" &&
+            process.env.VANESSA_REMOTE_V2_ALLOW_LOOPBACK === "true";
+          const localPort = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
+          if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) throw new Error("Invalid v2 remote port.");
+          const dataDir = process.env.VANESSA_REMOTE_DATA_DIR || path.resolve(process.cwd(), "data", "remote-v2");
+          fs.mkdirSync(dataDir, { recursive: true });
+          remotePairings = new RemotePairingRegistry({ storePath: path.join(dataDir, "trusted-devices.json") });
+          await remotePairings.initialize();
+          const signer = new HttpRemoteEnvelopeSigner(signerUrl, signerToken);
+          // Confirm the PC signing identity before opening either listener.
+          const identity = await signer.getIdentity();
+          if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
+          const remoteTasks = new RemoteTaskService(mobileTaskEngine!, remotePairings, {
+            verifyApprovalProof: verifyRemoteBiometricApproval,
+          });
+          remoteV2Gateway = new RemoteWebSocketGateway({
+            host: "127.0.0.1", port: localPort, signer, pairings: remotePairings, tasks: remoteTasks,
+          });
+          await remoteV2Gateway.start();
+          if (localTestMode) {
+            remoteV2Host = "127.0.0.1";
+            remoteV2Port = localPort;
+            remoteV2Scheme = "ws";
+          } else {
+            const published = await startTailscaleServe(remoteV2Gateway.getActualPort());
+            remoteV2Host = published.host;
+            remoteV2Port = published.port;
+            remoteV2Scheme = "wss";
+            remoteV2ServeOwned = published.owned;
+          }
+          console.log("[Vanessa Remote v2] Authenticated listener online at " +
+            remoteV2Scheme + "://" + remoteV2Host + ":" + remoteV2Port + "/remote-v2");
+        } catch (error) {
+          console.warn("[Vanessa Remote v2] Offline; local Vanessa remains available. Remote setup failed:", error);
+          await remoteV2Gateway?.stop().catch(() => undefined);
+          remoteV2Gateway = undefined;
+          remotePairings = undefined;
+          if (remoteV2ServeOwned) {
+            await stopTailscaleServe();
+            remoteV2ServeOwned = false;
+          }
+          remoteV2Host = undefined;
+          remoteV2Port = undefined;
+          remoteV2Scheme = undefined;
         }
-        console.log("[Vanessa Remote v2] Authenticated listener online at " +
-          remoteV2Scheme + "://" + remoteV2Host + ":" + remoteV2Port + "/remote-v2");
       }
     }
 
@@ -821,14 +863,6 @@ export async function startServer() {
       socketServer.on("listening", () => console.log(`[Vanessa Mobile Gateway] ws://${host}:${port}`));
       socketServer.on("error", (error) => console.error(`[Vanessa Mobile Gateway] ${error.message}`));
     }
-    fastify.addHook("onClose", async () => {
-      await remoteV2Gateway?.stop();
-      remoteV2Gateway = undefined;
-      if (remoteV2ServeOwned) { await stopTailscaleServe(); remoteV2ServeOwned = false; }
-      remoteV2Host = undefined; remoteV2Port = undefined; remoteV2Scheme = undefined;
-      mobileTaskEngine?.close();
-      mobileTaskEngine = undefined;
-    });
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
@@ -836,5 +870,7 @@ export async function startServer() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js")) {
+  process.once("SIGINT", () => { void fastify.close().catch((error) => console.error("[Vanessa] SIGINT shutdown failed:", error)); });
+  process.once("SIGTERM", () => { void fastify.close().catch((error) => console.error("[Vanessa] SIGTERM shutdown failed:", error)); });
   startServer();
 }
