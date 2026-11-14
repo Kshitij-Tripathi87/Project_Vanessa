@@ -13,6 +13,7 @@ import java.util.Base64
 import kotlin.coroutines.resume
 
 data class BiometricApprovalProof(
+    val approvedAt: Long,
     val keyId: String,
     val signature: String,
 )
@@ -69,6 +70,7 @@ class AndroidBiometricApprovalManager(
                             if (continuation.isActive) {
                                 continuation.resume(
                                     BiometricApprovalProof(
+                                        approvedAt = approvedAt,
                                         keyId = identity.keyId,
                                         signature = Base64.getUrlEncoder().withoutPadding().encodeToString(signed),
                                     )
