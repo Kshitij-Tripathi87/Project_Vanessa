@@ -60,6 +60,8 @@ export type TrustedRemoteDevice = {
   /** Optional public key paired with a per-use strong-biometric Android Keystore key. */
   approvalPublicKeySpki?: string;
   approvalKeyId?: string;
+  /** Set only after PC-side Android hardware-key attestation verification. */
+  approvalKeyHardwareAttested?: boolean;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
@@ -381,6 +383,9 @@ export class RemotePairingRegistry {
       ...(entry.approvalPublicKeySpki && entry.approvalKeyId
         ? { approvalPublicKeySpki: entry.approvalPublicKeySpki, approvalKeyId: entry.approvalKeyId }
         : {}),
+      // A public key in a signed pairing claim is self-asserted. It does not
+      // prove Android Keystore hardware backing or per-use authentication.
+      approvalKeyHardwareAttested: false,
       deviceHint: entry.deviceHint,
       platform: entry.platform,
       appVersion: entry.appVersion,
@@ -434,7 +439,8 @@ export class RemotePairingRegistry {
         appVersion: entry.appVersion!,
         requestedAt: entry.requestedAt!,
         expiresAt: entry.challengeExpiresAt!,
-        biometricApprovalAvailable: !!entry.approvalPublicKeySpki && !!entry.approvalKeyId,
+        // Fail closed until the PC validates an Android key-attestation chain.
+        biometricApprovalAvailable: false,
       }))
       .sort((a, b) => a.requestedAt - b.requestedAt);
   }
@@ -480,6 +486,7 @@ export class RemotePairingRegistry {
         ((value.approvalPublicKeySpki === undefined) !== (value.approvalKeyId === undefined)) ||
         (value.approvalPublicKeySpki !== undefined && typeof value.approvalPublicKeySpki !== "string") ||
         (value.approvalKeyId !== undefined && (typeof value.approvalKeyId !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(value.approvalKeyId))) ||
+        (value.approvalKeyHardwareAttested !== undefined && typeof value.approvalKeyHardwareAttested !== "boolean") ||
         typeof value.deviceHint !== "string" ||
         !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
@@ -513,6 +520,7 @@ export class RemotePairingRegistry {
       ...(typeof value.approvalPublicKeySpki === "string" && typeof value.approvalKeyId === "string"
         ? { approvalPublicKeySpki: value.approvalPublicKeySpki, approvalKeyId: value.approvalKeyId }
         : {}),
+      approvalKeyHardwareAttested: value.approvalKeyHardwareAttested === true,
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
