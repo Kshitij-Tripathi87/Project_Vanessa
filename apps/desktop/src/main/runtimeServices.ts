@@ -125,6 +125,13 @@ async function startService(options: {
 
   const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
+  if (options.name === "orchestrator") {
+    // Packaged remote control uses only authenticated protocol v2. A stale
+    // user .env must not be able to re-enable the legacy HMAC mobile gateway.
+    childEnvironment.VANESSA_PACKAGED_DESKTOP = "true";
+    childEnvironment.VANESSA_MOBILE_GATEWAY_ENABLED = "false";
+    childEnvironment.VANESSA_MOBILE_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE = "false";
+  }
   // Only the orchestrator needs the ephemeral signer capability. Do not leak
   // it into the voice-agent child or unrelated packaged services.
   if (options.name !== "orchestrator") {
