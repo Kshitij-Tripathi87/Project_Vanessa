@@ -6,7 +6,6 @@ import {
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
   type RemoteTaskState,
-  type TaskSubmitPayload,
   type TaskConfirmationResponsePayload,
 } from "@vanessa/protocol";
 
@@ -110,7 +109,7 @@ export class RemoteTaskService {
     if (!parsed.success) serviceError("INVALID_PAYLOAD", "Task submission payload is invalid.");
 
     const device = this.requireTrustedDevice(keyId);
-    const payload: TaskSubmitPayload = parsed.data;
+    const payload = parsed.data;
     const capability = this.engine.getRemoteCapabilities().find((entry) => entry.name === payload.capability);
     if (!capability) serviceError("CAPABILITY_DISABLED", "The requested PC capability is not available.");
 
