@@ -8,7 +8,7 @@ import com.vanessa.mobile.identity.AndroidRemoteApprovalKeyStore
 import com.vanessa.protocol.v2.JcsCanonicalizer
 import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,7 +45,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /** UI for pairing and remote execution over the authenticated protocol-v2 bridge. */
-class RemoteControlActivity : ComponentActivity() {
+class RemoteControlActivity : FragmentActivity() {
     private val bridge by lazy { RemoteV2BridgeClient(applicationContext) }
     private val approvalKeyStore by lazy { AndroidRemoteApprovalKeyStore(applicationContext) }
     private val qrScanner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
