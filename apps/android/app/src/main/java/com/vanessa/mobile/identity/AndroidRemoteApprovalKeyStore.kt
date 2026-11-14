@@ -35,7 +35,10 @@ class AndroidRemoteApprovalKeyStore(
             val privateKey = entry.privateKey
             val keyInfo = KeyFactory.getInstance(privateKey.algorithm, ANDROID_KEYSTORE)
                 .getKeySpec(privateKey, KeyInfo::class.java)
-            if (!keyInfo.isInsideSecureHardware) return null
+            if (!keyInfo.isInsideSecureHardware ||
+                !keyInfo.isUserAuthenticationRequired ||
+                keyInfo.userAuthenticationValidityDurationSeconds != -1 ||
+                keyInfo.userAuthenticationType and KeyProperties.AUTH_BIOMETRIC_STRONG == 0) return null
             val publicKey = entry.certificate.publicKey
             require(RemoteEnvelopeCrypto.isP256(publicKey)) { "Approval key is not P-256." }
             AndroidRemoteApprovalIdentity(

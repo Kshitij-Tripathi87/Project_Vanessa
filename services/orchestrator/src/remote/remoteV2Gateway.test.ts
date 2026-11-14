@@ -127,6 +127,17 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
   try {
     await gateway.start();
     const address = gateway.address();
+    // Web browsers are not supported clients. Their Origin header is rejected
+    // before the server allocates a connection or emits a challenge.
+    const browserAttempt = new WebSocket(`ws://${address.host}:${address.port}`, {
+      headers: { Origin: "https://attacker.example" },
+    });
+    const browserStatus = await new Promise<number>((resolve, reject) => {
+      browserAttempt.once("unexpected-response", (_request, response) => resolve(response.statusCode ?? 0));
+      browserAttempt.once("error", reject);
+    });
+    assert.equal(browserStatus, 403);
+
     socket = new WebSocket(`ws://${address.host}:${address.port}`);
     const next = createFrameReader(socket);
     await new Promise<void>((resolve, reject) => {

@@ -189,6 +189,15 @@ export class RemoteV2Gateway {
       perMessageDeflate: false,
       clientTracking: true,
       backlog: 16,
+      // Browser-origin requests have no legitimate use: Android is a native
+      // Ktor client. Reject them before allocating a peer slot (CSWSH/DoS).
+      verifyClient: (info, callback) => {
+        if (info.origin) {
+          callback(false, 403, "Browser origins are not accepted");
+          return;
+        }
+        callback(true);
+      },
     });
     this.server = server;
     try {
