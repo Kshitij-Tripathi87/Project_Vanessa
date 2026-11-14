@@ -87,6 +87,7 @@ export class RemoteV2Gateway {
   private readonly maxMessagesPerMinute: number;
   private readonly server: Server;
   private readonly sockets = new Map<WebSocket, PendingSocket | ActiveSocket>();
+  private readonly sendTails = new Map<WebSocket, Promise<void>>();
   private readonly pendingByPairingId = new Map<string, PendingSocket>();
   private readonly activeByDeviceId = new Map<string, Set<ActiveSocket>>();
   private wss?: WebSocketServer;
@@ -177,8 +178,9 @@ export class RemoteV2Gateway {
     qrPayload: string;
   } {
     if (this.listeningPort === undefined) throw new Error("Remote v2 gateway is not listening.");
+    if (!this.publicEndpoint) throw new Error("Set VANESSA_REMOTE_V2_PUBLIC_ENDPOINT to the HTTPS/WSS Tailscale Serve endpoint before creating a pairing QR.");
     const created = this.options.pairings.createPairingWindow(this.now());
-    const endpoint = this.publicEndpoint ?? ("ws://" + this.options.host + ":" + this.listeningPort + "/remote/v2");
+    const endpoint = this.publicEndpoint;
     const value = {
       version: 2,
       endpoint,
@@ -572,23 +574,28 @@ export class RemoteV2Gateway {
     payload: RemotePayloadFor<T>,
     sequence: number,
   ): Promise<void> {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    const unsigned = {
-      v: 2 as const,
-      messageId: randomUUID(),
-      sessionId,
-      type,
-      sentAt: this.now(),
-      sequence,
-      keyId: this.options.signer.keyId,
-      payload,
-    };
-    const signed = await this.options.signer.sign(unsigned);
-    const parsed = safeParseRemoteEnvelope(signed);
-    if (!parsed.success || parsed.data.keyId !== this.options.signer.keyId || parsed.data.type !== type) {
-      throw new Error("PC signing provider returned an invalid envelope.");
-    }
-    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(signed));
+    const previous = this.sendTails.get(socket) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const unsigned = {
+        v: 2 as const,
+        messageId: randomUUID(),
+        sessionId,
+        type,
+        sentAt: this.now(),
+        sequence,
+        keyId: this.options.signer.keyId,
+        payload,
+      };
+      const signed = await this.options.signer.sign(unsigned);
+      const parsed = safeParseRemoteEnvelope(signed);
+      if (!parsed.success || parsed.data.keyId !== this.options.signer.keyId || parsed.data.type !== type) {
+        throw new Error("PC signing provider returned an invalid envelope.");
+      }
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(signed));
+    });
+    this.sendTails.set(socket, next.catch(() => undefined));
+    await next;
   }
 
   private dropSocket(socket: WebSocket): void {
@@ -600,6 +607,7 @@ export class RemoteV2Gateway {
     }
     if (state && "pairingId" in state && state.pairingId) this.pendingByPairingId.delete(state.pairingId);
     this.sockets.delete(socket);
+    this.sendTails.delete(socket);
   }
 
   private assertSafeBind(host: string, allowTailscale: boolean): void {
