@@ -88,7 +88,7 @@ test("verified narration redacts secrets, strips URLs and normalizes multiline e
   const task = verifiedTask({
     verification: {
       verified: true,
-      details: "Read-back succeeded. Token: sk-test-abcdefghijklmnopqrstuvwxyz123456 and https://private.example/path",
+      details: "Read-back succeeded. Token: sk-test-abcdefghijklmnopqrstuvwxyz123456; api_key=nvapi-abcdefghijklmnopqrstuvwxyz1234567890; https://private.example/path",
       postconditions: [],
       outcome: "succeeded",
     },
@@ -96,6 +96,7 @@ test("verified narration redacts secrets, strips URLs and normalizes multiline e
 
   const summary = narrator.narrateVerifiedSuccess([task]);
   assert.doesNotMatch(summary, /sk-test-abcdefghijklmnopqrstuvwxyz123456/);
+  assert.doesNotMatch(summary, /nvapi-abcdefghijklmnopqrstuvwxyz1234567890/);
   assert.doesNotMatch(summary, /https:\/\//);
   assert.match(summary, /link/);
 });

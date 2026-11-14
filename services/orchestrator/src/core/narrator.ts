@@ -104,6 +104,8 @@ export class Narrator {
     const clean = redacted
       .replace(/[A-Za-z]:\\[\w\-\\]+/g, "local folder")
       .replace(/https?:\/\/[^\s]+/g, "link")
+      .replace(/\b((?:api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED_SECRET]")
+      .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|nvapi-[A-Za-z0-9_-]{12,}|hf_[A-Za-z0-9]{12,})\b/g, "[REDACTED_SECRET]")
       .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "")
       .replace(/[\r\n]+/g, " ")
       .trim();
