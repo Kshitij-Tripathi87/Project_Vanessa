@@ -39,7 +39,6 @@ import com.vanessa.mobile.voice.RemoteSpeechInput
 import com.vanessa.mobile.voice.OfflineTtsController
 import android.Manifest
 import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
 import java.util.Locale
 import kotlinx.serialization.json.jsonPrimitive
 import com.vanessa.mobile.R
