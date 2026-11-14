@@ -159,7 +159,7 @@ test("a disconnected phone can resume a challenge that has not yet been complete
     if (resumed.type !== "pairing.challenge") assert.fail("Expected challenge after resume");
     assert.equal(resumed.payload.nonce, first.nonce);
     assert.equal(resumed.payload.pairingId, window.pairingId);
-    assert.equal(resumed.payload.clientNonce, first.clientNonce);
+    assert.equal(resumed.payload.clientNonce, resumedClientNonce);
     const pending = registry.complete(
       completeEnvelope(phone, window.pairingId, resumed.payload.nonce),
       NOW + 200,
