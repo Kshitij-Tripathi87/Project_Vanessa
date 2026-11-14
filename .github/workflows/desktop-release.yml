@@ -50,6 +50,31 @@ jobs:
       - name: Build all workspace packages
         run: pnpm build
 
+      - name: Launch orchestrator, voice agent and Electron renderer together
+        shell: pwsh
+        env:
+          VANESSA_PORT: "4319"
+          VOICE_AGENT_PORT: "4500"
+          PLANNER_PROVIDER: sarvam
+          SARVAM_CHAT_PROVIDER: sarvam
+          SARVAM_API_KEY: test-sarvam-key
+          SARVAM_CHAT_MODEL: sarvam-105b-conversations
+          VOICE_ASR_PROVIDER: fish
+          VOICE_TTS_PROVIDER: fish
+          FISH_API_KEY: sk-fish-sandbox-key
+          FISH_TTS_VOICE_ID: vanessa-sandbox-voice
+          FISH_ASR_MODEL: transcribe-stream-1
+          FISH_TTS_MODEL: s2.1-pro-free
+          VOICE_ALLOW_FALLBACK: "false"
+          VOICE_TTS_FALLBACK_PROVIDER: none
+          VOICE_STRICT_CONFIG: "true"
+          VANESSA_RUNTIME_SMOKE_DEBUG_PORT: "9222"
+        run: |
+          $env:VANESSA_CONFIG_HOME = Join-Path $env:RUNNER_TEMP 'Vanessa-Runtime-Smoke'
+          $env:VANESSA_WORKSPACE_ROOT = $env:GITHUB_WORKSPACE
+          node scripts/launch-vanessa.cjs --dev --runtime-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Test launcher, desktop layout, microphone, and provider contracts
         shell: pwsh
         run: |
