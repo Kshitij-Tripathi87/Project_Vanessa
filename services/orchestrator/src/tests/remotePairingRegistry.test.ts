@@ -248,3 +248,33 @@ test("trusted-device restore rejects duplicate capability scopes", async () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("trusted-device restore strips a previously persisted destructive scope without PC-verified attestation", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vanessa-v2-legacy-delete-scope-"));
+  const storePath = path.join(directory, "trusted-devices.json");
+  const phone = newPhone();
+  fs.writeFileSync(storePath, JSON.stringify({
+    version: 1,
+    devices: [{
+      deviceId: "11112222-3333-4444-8555-666677778888",
+      keyId: phone.keyId,
+      publicKeySpki: phone.publicKey,
+      approvalKeyHardwareAttested: true,
+      deviceHint: "pixel-9-pro",
+      platform: "android",
+      appVersion: "0.1.0",
+      grantedScopes: ["system.read", "files.delete"],
+      pairedAt: NOW,
+      revoked: false,
+    }],
+  }), "utf8");
+  const registry = new RemotePairingRegistry({ storePath });
+  try {
+    await registry.initialize();
+    const restored = registry.getTrustedDeviceByKeyId(phone.keyId);
+    assert.deepEqual(restored?.grantedScopes, ["system.read"]);
+    assert.equal(restored?.approvalKeyHardwareAttested, false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
