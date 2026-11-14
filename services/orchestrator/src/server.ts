@@ -35,6 +35,15 @@ for (let i = 0; i < 4 && process.env.VANESSA_SKIP_DOTENV !== "true"; i++) {
 const PORT = parseInt(process.env.VANESSA_PORT || "4319", 10);
 const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
+
+function hasRemoteControlCapability(request: { headers: Record<string, unknown> }): boolean {
+  const expected = process.env.VANESSA_REMOTE_CONTROL_TOKEN;
+  const authorization = request.headers.authorization;
+  if (!expected || typeof authorization !== "string" || !authorization.startsWith("Bearer ")) return false;
+  const supplied = Buffer.from(authorization.slice(7), "utf8");
+  const known = Buffer.from(expected, "utf8");
+  return supplied.length === known.length && timingSafeEqual(supplied, known);
+}
 let mobileGateway: MobileGateway | undefined;
 let mobileTaskEngine: MobileTaskEngine | undefined;
 let remotePairingRegistry: RemotePairingRegistry | undefined;
@@ -569,7 +578,83 @@ fastify.get("/voice/session", async (_request, reply) => {
   }
 });
 
-// Local desktop control surface for v2 pairing. The orchestrator HTTP server is loopback-only.
+// Local-only v2 device administration; calls must originate from the trusted Electron main process.
+fastify.post("/api/remote/v2/pairing-window", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  try { return reply.send(remoteV2Gateway.createPairingWindow()); }
+  catch (error) {
+    return reply.status(503).send({
+      error: "PAIRING_WINDOW_UNAVAILABLE",
+      message: (error as Error).message.slice(0, 200),
+    });
+  }
+});
+
+fastify.get("/api/remote/v2/pairings/pending", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remotePairingRegistry) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  return reply.send(remotePairingRegistry.getPendingApprovals());
+});
+
+fastify.get("/api/remote/v2/devices", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remotePairingRegistry) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  return reply.send(remotePairingRegistry.listTrustedDevices().map((device) => ({
+    deviceId: device.deviceId,
+    deviceHint: device.deviceHint,
+    platform: device.platform,
+    appVersion: device.appVersion,
+    grantedScopes: device.grantedScopes,
+    pairedAt: device.pairedAt,
+    revoked: device.revoked,
+  })));
+});
+
+fastify.post("/api/remote/v2/pairings/approve", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  const body = request.body as { pairingId?: string; scopes?: unknown };
+  if (typeof body?.pairingId !== "string" || !Array.isArray(body.scopes) ||
+      body.scopes.some((scope) => typeof scope !== "string")) {
+    return reply.status(400).send({ error: "INVALID_PAIRING_APPROVAL" });
+  }
+  try {
+    await remoteV2Gateway.approvePairing(body.pairingId, body.scopes as string[]);
+    return reply.send({ success: true });
+  } catch (error) {
+    return reply.status(409).send({ error: (error as { code?: string })?.code ?? "PAIRING_APPROVAL_FAILED" });
+  }
+});
+
+fastify.post("/api/remote/v2/pairings/reject", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  const body = request.body as { pairingId?: string };
+  if (typeof body?.pairingId !== "string") return reply.status(400).send({ error: "INVALID_PAIRING_ID" });
+  try {
+    remoteV2Gateway.rejectPairing(body.pairingId);
+    return reply.send({ success: true });
+  } catch (error) {
+    return reply.status(409).send({ error: (error as { code?: string })?.code ?? "PAIRING_REJECTION_FAILED" });
+  }
+});
+
+fastify.post("/api/remote/v2/devices/revoke", async (request, reply) => {
+  if (!hasRemoteControlCapability(request)) return reply.status(401).send({ error: "UNAUTHORIZED" });
+  if (!remotePairingRegistry || !remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
+  const body = request.body as { deviceId?: string };
+  if (typeof body?.deviceId !== "string") return reply.status(400).send({ error: "INVALID_DEVICE_ID" });
+  try {
+    const revoked = await remotePairingRegistry.revokeDevice(body.deviceId);
+    if (revoked) remoteV2Gateway.revokeDevice(body.deviceId);
+    return reply.send({ success: revoked });
+  } catch {
+    return reply.status(500).send({ error: "DEVICE_REVOCATION_FAILED" });
+  }
+});
+
+// Legacy unauthenticated v1 control routes are loopback-only and not accepted by the v2 listener.
 fastify.post("/api/remote/v2/pairing-window", async (_request, reply) => {
   if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
   try {
@@ -646,7 +731,8 @@ export async function startServer() {
         tasks: remoteTasks,
         signer,
         pcName: process.env.COMPUTERNAME || "Vanessa PC",
-        allowTailscaleBind: process.env.VANESSA_REMOTE_V2_ALLOW_TAILSCALE === "true",
+        allowTailscaleBind: false,
+        publicEndpoint: process.env.VANESSA_REMOTE_V2_PUBLIC_ENDPOINT,
       });
       await remoteV2Gateway.start();
       console.log("[Vanessa Remote v2] Authenticated listener online at ws://" + host + ":" + port + "/remote/v2");
