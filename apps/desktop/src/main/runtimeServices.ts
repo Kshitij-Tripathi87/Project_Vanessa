@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
+import { applyOrchestratorRuntimeUrls, resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
 
 const managedChildren = new Map<string, ChildProcess>();
 let shuttingDown = false;
@@ -197,6 +197,10 @@ export async function startPackagedServices(): Promise<void> {
   const voiceAgentPort = resolveVoiceAgentPort(process.env);
   process.env.VANESSA_PORT = String(orchestratorPort);
   process.env.VOICE_AGENT_PORT = String(voiceAgentPort);
+  // Keep both voice-agent call sites aligned with the packaged orchestrator
+  // port. Without this, voice sessions silently fall back to 4319 when the
+  // user has selected another valid VANESSA_PORT.
+  applyOrchestratorRuntimeUrls(process.env);
   const orchestratorHome = path.join(installRoot, "orchestrator");
   const voiceHome = path.join(installRoot, "voice-agent");
   await startService({
