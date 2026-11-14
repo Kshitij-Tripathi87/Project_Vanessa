@@ -32,9 +32,10 @@ import java.util.concurrent.Executors
 /**
  * Camera-backed QR scanner.
  *
- * The PC shows a QR payload of {pairingCode, pcIP, port, timestamp, expiresAt}.
- * The payload never contains the long-lived HMAC secret: the phone must redeem
- * the code with the PC, which is not yet exposed over the gateway.
+ * The PC shows a protocol-v2 QR payload containing a one-time pairing code,
+ * a WSS/Tailscale endpoint, and the PC's pinned P-256 public identity.
+ * The phone proves its Keystore identity over the signed WebSocket challenge;
+ * the PC owner must then approve the device locally.
  */
 class QrScannerActivity : ComponentActivity() {
 
