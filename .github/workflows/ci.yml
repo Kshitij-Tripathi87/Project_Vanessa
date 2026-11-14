@@ -60,7 +60,7 @@ jobs:
         run: pnpm --filter @vanessa/orchestrator build
 
       - name: Test authenticated v2 pairing, task adapter, and idempotency
-        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/remotePairingRegistry.test.ts src/tests/remoteTaskService.test.ts src/tests/mobileTaskEngine.test.ts src/remote/remoteApprovalProof.test.ts
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/remotePairingRegistry.test.ts src/tests/remoteTaskService.test.ts src/tests/mobileTaskEngine.test.ts src/remote/remoteApprovalProof.test.ts src/remote/remoteWebSocketGateway.test.ts
 
       - name: Build voice agent
         run: pnpm --filter @vanessa/voice-agent build
