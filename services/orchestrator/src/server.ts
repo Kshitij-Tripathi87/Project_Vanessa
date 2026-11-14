@@ -827,7 +827,8 @@ export async function startServer() {
       }
     }
 
-    if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true") {
+    if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true" &&
+        process.env.VANESSA_PACKAGED_DESKTOP !== "true") {
       const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
       if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");
       const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
