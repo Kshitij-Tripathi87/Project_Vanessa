@@ -7,7 +7,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -61,7 +61,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /** Local-first assistant. Network and the legacy pairing client remain disabled in this build. */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private var profile by mutableStateOf<DeviceProfile?>(null)
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
     private val calendarTool by lazy { CalendarSearchTool(applicationContext) }
