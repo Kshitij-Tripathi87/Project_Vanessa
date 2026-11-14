@@ -35,6 +35,13 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import com.vanessa.mobile.voice.RemoteSpeechInput
+import com.vanessa.mobile.voice.OfflineTtsController
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import java.util.Locale
+import kotlinx.serialization.json.jsonPrimitive
 import com.vanessa.mobile.R
 import com.vanessa.mobile.remote.RemoteV2BridgeClient
 import com.vanessa.mobile.remote.RemoteV2Event
@@ -63,9 +70,25 @@ class RemoteControlActivity : FragmentActivity() {
     private var bridgeJob: Job? by mutableStateOf(null)
     private var requestBusy by mutableStateOf(false)
     private var pendingApproval by mutableStateOf<JsonObject?>(null)
+    private var commandDraft by mutableStateOf("")
+    private var voiceStatus by mutableStateOf("Select Speak to dictate a command, or type one below.")
+    private var remoteSpeechInput: RemoteSpeechInput? = null
+    private var responseTts: OfflineTtsController? = null
+    private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRemoteSpeechInput()
+        else voiceStatus = "Microphone permission denied. You can type a command instead."
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        remoteSpeechInput = RemoteSpeechInput(
+            context = this,
+            onTranscript = { transcript -> runOnUiThread { commandDraft = transcript } },
+            onState = { state -> runOnUiThread { voiceStatus = state } },
+        )
+        responseTts = OfflineTtsController(applicationContext) { ready, message ->
+            if (!ready) runOnUiThread { voiceStatus = message }
+        }
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -121,6 +144,30 @@ class RemoteControlActivity : FragmentActivity() {
                         }
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("ASK VANESSA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                OutlinedTextField(
+                                    value = commandDraft,
+                                    onValueChange = { commandDraft = it.take(4000) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("What should the laptop do?") },
+                                    placeholder = { Text("e.g. Inspect my project and explain the failing tests") },
+                                    minLines = 2,
+                                    maxLines = 5,
+                                    enabled = !requestBusy,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = ::requestRemoteSpeechInput,
+                                        enabled = !requestBusy,
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("Speak") }
+                                    Button(
+                                        onClick = ::submitAssistantCommand,
+                                        enabled = connectionStatus.startsWith("Connected") && !requestBusy && commandDraft.isNotBlank(),
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("Send to laptop") }
+                                }
+                                Text(voiceStatus, style = MaterialTheme.typography.bodySmall)
                                 Text("PC TASKS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                 Button(
                                     onClick = { runRemoteTask("system_status") },
@@ -185,6 +232,43 @@ class RemoteControlActivity : FragmentActivity() {
         if (bridgeJob == null) connectionStatus = "No paired PC is saved. Paste a fresh PC pairing QR payload."
     }
 
+    private fun requestRemoteSpeechInput() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        startRemoteSpeechInput()
+    }
+
+    private fun startRemoteSpeechInput() {
+        val started = remoteSpeechInput?.start() == true
+        if (!started) voiceStatus = "Speech recognition is unavailable on this phone. Type your command instead."
+    }
+
+    private fun submitAssistantCommand() {
+        val command = commandDraft.trim()
+        if (command.isEmpty() || requestBusy) return
+        requestBusy = true
+        latestEvent = "Sending your request to the laptop orchestrator…"
+        lifecycleScope.launch {
+            try {
+                val requestId = bridge.submitTask(
+                    capability = "assistant_command",
+                    arguments = buildJsonObject {
+                        put("command", command)
+                        put("language", Locale.getDefault().toLanguageTag())
+                    },
+                    intent = command.take(300),
+                )
+                latestEvent = "Request submitted: $requestId"
+            } catch (error: Exception) {
+                latestEvent = "Request was not submitted: ${error.message ?: "unknown error"}"
+            } finally {
+                requestBusy = false
+            }
+        }
+    }
+
     private fun runRemoteTask(
         capability: String,
         arguments: kotlinx.serialization.json.JsonObject = buildJsonObject {},
@@ -209,7 +293,18 @@ class RemoteControlActivity : FragmentActivity() {
             when (event.type) {
                 "task.accepted" -> latestEvent = "PC accepted task ${event.payload["taskId"]?.toString() ?: ""}"
                 "task.progress" -> latestEvent = event.payload["safeSummary"]?.toString() ?: "PC task is running."
-                "task.result" -> latestEvent = "PC result: ${event.payload}"
+                "task.result" -> {
+                    val commandResult = event.payload["result"] as? JsonObject
+                    val spokenSummary = commandResult?.get("spokenSummary"]
+                        ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                    val outcome = commandResult?.get("status"]
+                        ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                    latestEvent = spokenSummary ?: "PC result: ${event.payload}"
+                    if (!outcome.isNullOrBlank()) {
+                        latestEvent = "${outcome.uppercase(Locale.ROOT)} — ${latestEvent}"
+                    }
+                    if (!spokenSummary.isNullOrBlank()) responseTts?.speak(spokenSummary)
+                }
                 "task.confirmation_required" -> {
                     pendingApproval = event.payload["approval"] as? JsonObject
                     latestEvent = "A protected action needs your explicit confirmation."
@@ -297,6 +392,7 @@ class RemoteControlActivity : FragmentActivity() {
     }
 
     private fun disconnect() {
+        remoteSpeechInput?.stop()
         bridgeJob?.cancel()
         bridge.disconnect()
         connectionStatus = "Disconnected"
@@ -304,6 +400,8 @@ class RemoteControlActivity : FragmentActivity() {
 
     override fun onDestroy() {
         bridgeJob?.cancel()
+        remoteSpeechInput?.close()
+        responseTts?.close()
         bridge.close()
         super.onDestroy()
     }
