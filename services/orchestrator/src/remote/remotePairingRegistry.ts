@@ -56,6 +56,9 @@ export type TrustedRemoteDevice = {
   keyId: string;
   /** Base64url SPKI DER. Public material only; the phone's private key stays in Android Keystore. */
   publicKeySpki: string;
+  /** Optional distinct P-256 key, whose Android Keystore use requires strong biometrics. */
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
@@ -76,6 +79,8 @@ type PairingEntry = {
   phoneGuard?: RemoteSessionGuard;
   keyId?: string;
   publicKeySpki?: string;
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
   deviceHint?: string;
   platform?: PendingRemotePairing["platform"];
   appVersion?: string;
@@ -265,10 +270,28 @@ export class RemotePairingRegistry {
       throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
     }
 
+    let approvalPublicKeySpki: string | undefined;
+    let approvalKeyId: string | undefined;
+    if (payload.approvalPublicKey !== undefined && payload.approvalKeyId !== undefined) {
+      try {
+        const approvalKey = normalizeIdentityPublicKey(payload.approvalPublicKey);
+        const derivedApprovalKeyId = computeKeyId(approvalKey);
+        if (!isSupportedIdentityKey(approvalKey) || derivedApprovalKeyId !== payload.approvalKeyId) {
+          throw new Error("Biometric approval identity key is invalid.");
+        }
+        approvalPublicKeySpki = payload.approvalPublicKey;
+        approvalKeyId = derivedApprovalKeyId;
+      } catch {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval identity key is invalid.");
+      }
+    }
+
     entry.state = "challenge_issued";
     entry.phoneGuard = guard;
     entry.keyId = derivedKeyId;
     entry.publicKeySpki = payload.publicKey;
+    entry.approvalPublicKeySpki = approvalPublicKeySpki;
+    entry.approvalKeyId = approvalKeyId;
     entry.deviceHint = payload.deviceHint;
     entry.platform = payload.platform;
     entry.appVersion = payload.appVersion;
@@ -354,6 +377,9 @@ export class RemotePairingRegistry {
       deviceId: randomUUID(),
       keyId: entry.keyId,
       publicKeySpki: entry.publicKeySpki,
+      ...(entry.approvalPublicKeySpki && entry.approvalKeyId
+        ? { approvalPublicKeySpki: entry.approvalPublicKeySpki, approvalKeyId: entry.approvalKeyId }
+        : {}),
       deviceHint: entry.deviceHint,
       platform: entry.platform,
       appVersion: entry.appVersion,
@@ -449,6 +475,9 @@ export class RemotePairingRegistry {
         typeof value.keyId !== "string" ||
         !/^[A-Za-z0-9_-]{16,128}$/.test(value.keyId) ||
         typeof value.publicKeySpki !== "string" ||
+        (value.approvalPublicKeySpki !== undefined && typeof value.approvalPublicKeySpki !== "string") ||
+        (value.approvalKeyId !== undefined && typeof value.approvalKeyId !== "string") ||
+        ((value.approvalPublicKeySpki === undefined) !== (value.approvalKeyId === undefined)) ||
         typeof value.deviceHint !== "string" ||
         !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
@@ -464,6 +493,16 @@ export class RemotePairingRegistry {
     if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== value.keyId) {
       throw new Error("Trusted-device store contains an invalid P-256 identity.");
     }
+    let approvalPublicKeySpki: string | undefined;
+    let approvalKeyId: string | undefined;
+    if (typeof value.approvalPublicKeySpki === "string" && typeof value.approvalKeyId === "string") {
+      const approvalKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
+      if (!isSupportedIdentityKey(approvalKey) || computeKeyId(approvalKey) !== value.approvalKeyId) {
+        throw new Error("Trusted-device store contains an invalid biometric approval identity.");
+      }
+      approvalPublicKeySpki = value.approvalPublicKeySpki;
+      approvalKeyId = value.approvalKeyId;
+    }
     if (value.grantedScopes.length > 32 ||
         new Set(value.grantedScopes).size !== value.grantedScopes.length ||
         value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
@@ -473,6 +512,7 @@ export class RemotePairingRegistry {
       deviceId: value.deviceId,
       keyId: value.keyId,
       publicKeySpki: value.publicKeySpki,
+      ...(approvalPublicKeySpki && approvalKeyId ? { approvalPublicKeySpki, approvalKeyId } : {}),
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
