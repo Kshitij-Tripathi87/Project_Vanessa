@@ -23,6 +23,16 @@ data class StoredPairing(
     val secret: String? = null,
 )
 
+/** Public-only trust configuration for protocol v2. Private keys remain in Android Keystore. */
+data class StoredRemoteV2Pairing(
+    val wsUrl: String,
+    val pcKeyId: String,
+    val pcPublicKeySpki: String,
+    val pcName: String,
+    val deviceId: String,
+    val grantedScopesJson: String,
+)
+
 /**
  * Persists the PC address, the short-lived pairing code, and (after
  * redemption) the device id and secret issued by the PC.
@@ -38,6 +48,12 @@ class PairingRepository @Inject constructor(
         val PAIRING_EXPIRES_AT = longPreferencesKey("pairing_expires_at")
         val DEVICE_ID = stringPreferencesKey("paired_device_id")
         val DEVICE_SECRET = stringPreferencesKey("paired_device_secret")
+        val REMOTE_V2_WS_URL = stringPreferencesKey("remote_v2_ws_url")
+        val REMOTE_V2_PC_KEY_ID = stringPreferencesKey("remote_v2_pc_key_id")
+        val REMOTE_V2_PC_PUBLIC_KEY = stringPreferencesKey("remote_v2_pc_public_key")
+        val REMOTE_V2_PC_NAME = stringPreferencesKey("remote_v2_pc_name")
+        val REMOTE_V2_DEVICE_ID = stringPreferencesKey("remote_v2_device_id")
+        val REMOTE_V2_GRANTED_SCOPES = stringPreferencesKey("remote_v2_granted_scopes")
     }
 
     val pairing: Flow<StoredPairing?> = dataStore.data.map { preferences ->
@@ -52,6 +68,44 @@ class PairingRepository @Inject constructor(
             deviceId = preferences[Keys.DEVICE_ID],
             secret = preferences[Keys.DEVICE_SECRET],
         )
+    }
+
+    val remoteV2Pairing: Flow<StoredRemoteV2Pairing?> = dataStore.data.map { preferences ->
+        val wsUrl = preferences[Keys.REMOTE_V2_WS_URL]
+        val keyId = preferences[Keys.REMOTE_V2_PC_KEY_ID]
+        val publicKey = preferences[Keys.REMOTE_V2_PC_PUBLIC_KEY]
+        val deviceId = preferences[Keys.REMOTE_V2_DEVICE_ID]
+        if (wsUrl == null || keyId == null || publicKey == null || deviceId == null) null
+        else StoredRemoteV2Pairing(
+            wsUrl = wsUrl,
+            pcKeyId = keyId,
+            pcPublicKeySpki = publicKey,
+            pcName = preferences[Keys.REMOTE_V2_PC_NAME] ?: "Vanessa PC",
+            deviceId = deviceId,
+            grantedScopesJson = preferences[Keys.REMOTE_V2_GRANTED_SCOPES] ?: "[]",
+        )
+    }
+
+    suspend fun saveRemoteV2Pairing(pairing: StoredRemoteV2Pairing) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMOTE_V2_WS_URL] = pairing.wsUrl
+            preferences[Keys.REMOTE_V2_PC_KEY_ID] = pairing.pcKeyId
+            preferences[Keys.REMOTE_V2_PC_PUBLIC_KEY] = pairing.pcPublicKeySpki
+            preferences[Keys.REMOTE_V2_PC_NAME] = pairing.pcName
+            preferences[Keys.REMOTE_V2_DEVICE_ID] = pairing.deviceId
+            preferences[Keys.REMOTE_V2_GRANTED_SCOPES] = pairing.grantedScopesJson
+        }
+    }
+
+    suspend fun clearRemoteV2Pairing() {
+        dataStore.edit { preferences ->
+            preferences.remove(Keys.REMOTE_V2_WS_URL)
+            preferences.remove(Keys.REMOTE_V2_PC_KEY_ID)
+            preferences.remove(Keys.REMOTE_V2_PC_PUBLIC_KEY)
+            preferences.remove(Keys.REMOTE_V2_PC_NAME)
+            preferences.remove(Keys.REMOTE_V2_DEVICE_ID)
+            preferences.remove(Keys.REMOTE_V2_GRANTED_SCOPES)
+        }
     }
 
     suspend fun savePairing(pairing: StoredPairing) {

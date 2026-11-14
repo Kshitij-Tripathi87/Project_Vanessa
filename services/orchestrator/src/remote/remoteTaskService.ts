@@ -21,11 +21,12 @@ import {
 export type RemoteApprovalProofContext = {
   device: TrustedRemoteDevice;
   response: RemotePayloadFor<"task.confirmation_response">;
-  proof: RemotePayloadFor<"task.confirmation_response">["approvalProof"];
+  proof: unknown;
 };
 
 function verifyDeviceApprovalProof(context: RemoteApprovalProofContext, now: number): boolean {
-  const { device, response, proof } = context;
+  const { device, response } = context;
+  const proof = context.proof as RemotePayloadFor<"task.confirmation_response">["approvalProof"];
   if (!proof || !device.approvalPublicKeySpki) return false;
   if (proof.keyId !== computeKeyId(device.approvalPublicKeySpki)) return false;
   if (!Number.isSafeInteger(proof.signedAt) || proof.signedAt !== response.approvedAt) return false;
@@ -231,7 +232,7 @@ export class RemoteTaskService {
       const context: RemoteApprovalProofContext = {
         device,
         response: parsed.data,
-        proof: parsed.data.approvalProof,
+        proof: proof ?? parsed.data.approvalProof,
       };
       const verified = this.options.verifyApprovalProof
         ? await this.options.verifyApprovalProof(context)

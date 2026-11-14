@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { randomBytes } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -76,6 +76,69 @@ function copyMissing(sourcePath: string, destinationPath: string): void {
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
     fs.copyFileSync(sourcePath, destinationPath);
   }
+}
+
+function runExecutable(file: string, args: string[], timeout = 15_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, timeout, encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        const detail = String(stderr || error.message || "Command failed").trim().slice(0, 500);
+        reject(new Error(detail));
+      } else {
+        resolve(String(stdout || ""));
+      }
+    });
+  });
+}
+
+/**
+ * Configure the v2 WSS ingress only after the user explicitly enables remote
+ * access. Tailscale Serve proxies to the localhost-only gateway; we never bind
+ * the orchestrator to a network interface or start Funnel.
+ */
+async function configureTailscaleRemoteIngress(): Promise<string | undefined> {
+  if (process.env.VANESSA_REMOTE_V2_ENABLED !== "true") return undefined;
+
+  const candidates = [
+    process.env.TAILSCALE_CLI_PATH,
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Tailscale", "tailscale.exe"),
+    "tailscale.exe",
+    "tailscale",
+  ].filter((value): value is string => Boolean(value?.trim()));
+
+  let lastError: unknown;
+  for (const executable of [...new Set(candidates)]) {
+    try {
+      const rawStatus = await runExecutable(executable, ["status", "--json"]);
+      const status = JSON.parse(rawStatus) as {
+        BackendState?: string;
+        Self?: { DNSName?: string };
+      };
+      if (status.BackendState !== "Running") {
+        throw new Error("Tailscale is not connected. Sign in to the same tailnet on both devices.");
+      }
+      const dnsName = status.Self?.DNSName?.replace(/\\.$/, "").trim();
+      if (!dnsName || !/^[a-zA-Z0-9.-]+$/.test(dnsName)) {
+        throw new Error("Tailscale did not report a valid MagicDNS name for this Windows PC.");
+      }
+      // Serve is private to this tailnet, provides TLS, and proxies WebSocket
+      // upgrades to the loopback HTTP listener.
+      await runExecutable(executable, [
+        "serve", "--bg", "--set-path=/remote-v2", "http://127.0.0.1:4321",
+      ]);
+      const url = "wss://" + dnsName + "/remote-v2";
+      process.env.VANESSA_REMOTE_V2_PUBLIC_URL = url;
+      console.info("[Vanessa Remote v2] Tailscale Serve configured for " + url);
+      return url;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.warn(
+    "[Vanessa Remote v2] Tailscale Serve could not be configured. The gateway remains loopback-only; " +
+    (lastError instanceof Error ? lastError.message : "Install/sign in to Tailscale and retry."),
+  );
+  return undefined;
 }
 
 function portAvailable(port: number): Promise<boolean> {
@@ -268,6 +331,7 @@ export async function startPackagedServices(): Promise<void> {
       console.error("[Vanessa Remote v2] Identity unavailable; remote pairing remains disabled:", error);
     }
   }
+  if (remoteIdentity) await configureTailscaleRemoteIngress();
   process.env.VANESSA_PORT = String(orchestratorPort);
   process.env.VOICE_AGENT_PORT = String(voiceAgentPort);
   // Keep both voice-agent call sites aligned with the packaged orchestrator

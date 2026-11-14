@@ -7,7 +7,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +40,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.android.gms.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
 import com.vanessa.mobile.R
+import com.vanessa.mobile.di.PairingRepository
+import com.vanessa.mobile.di.StoredRemoteV2Pairing
+import com.vanessa.mobile.identity.AndroidBiometricApprovalKeyStore
+import com.vanessa.mobile.pairing.RemoteV2PairingConfiguration
+import com.vanessa.mobile.pairing.RemoteV2PairingPayloadParser
+import com.vanessa.mobile.pairing.RemoteV2PairingPayloadResult
+import com.vanessa.mobile.remote.RemoteV2Client
+import com.vanessa.mobile.remote.RemoteV2LiveSession
 import com.vanessa.mobile.agent.AndroidLocalToolExecutor
 import com.vanessa.mobile.inference.LlamaCppInference
 import com.vanessa.mobile.model.InstalledModel
@@ -56,12 +69,30 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.content
+import kotlinx.serialization.json.put
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Local-first assistant. Network and the legacy pairing client remain disabled in this build. */
-class MainActivity : ComponentActivity() {
+/** Local-first assistant with an authenticated v2 Windows-PC remote session. */
+@AndroidEntryPoint
+class MainActivity : FragmentActivity() {
+    @Inject lateinit var pairingRepository: PairingRepository
+    private fun newRemoteClient() = RemoteV2Client()
+    private var remoteSession: RemoteV2LiveSession? = null
+    private var remoteEventsJob: Job? = null
+    private var remoteQrJson by mutableStateOf("")
+    private var remoteStatus by mutableStateOf("No Windows PC paired.")
+    private var remoteBusy by mutableStateOf(false)
+    private var remoteOpenUrl by mutableStateOf("https://www.google.com")
+    private var remoteTaskStatus by mutableStateOf("")
+    private var remotePendingApproval by mutableStateOf<JsonObject?>(null)
     private var profile by mutableStateOf<DeviceProfile?>(null)
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
     private val calendarTool by lazy { CalendarSearchTool(applicationContext) }
@@ -150,6 +181,20 @@ class MainActivity : ComponentActivity() {
                         onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                         meetings = meetings,
                         calendarMessage = calendarMessage,
+                        remoteQrJson = remoteQrJson,
+                        remoteStatus = remoteStatus,
+                        remoteBusy = remoteBusy,
+                        remoteOpenUrl = remoteOpenUrl,
+                        remoteTaskStatus = remoteTaskStatus,
+                        remotePendingApproval = remotePendingApproval,
+                        onRemoteQrChange = { remoteQrJson = it },
+                        onPairRemote = ::pairRemote,
+                        onScanRemoteQr = ::scanRemotePairingQr,
+                        onReconnectRemote = ::restoreRemoteSession,
+                        onRemoteUrlChange = { remoteOpenUrl = it },
+                        onOpenRemoteUrl = ::openRemoteUrl,
+                        onApproveRemote = ::approveRemoteAction,
+                        onDenyRemote = ::denyRemoteAction,
                         onRefresh = ::refreshProfile,
                         onImportModel = ::chooseModel,
                         onLoadModel = ::loadModel,
@@ -186,6 +231,7 @@ class MainActivity : ComponentActivity() {
 
         refreshProfile()
         refreshModelState()
+        restoreRemoteSession()
     }
 
     override fun onResume() {
@@ -198,7 +244,226 @@ class MainActivity : ComponentActivity() {
         onDeviceSpeechInput?.close()
         offlineTts = null
         onDeviceSpeechInput = null
+        remoteEventsJob?.cancel()
+        remoteSession?.close()
+        remoteSession = null
         super.onDestroy()
+    }
+
+    private fun restoreRemoteSession() {
+        lifecycleScope.launch {
+            try {
+                val saved = pairingRepository.remoteV2Pairing.first() ?: return@launch
+                val configuration = RemoteV2PairingConfiguration(
+                    wsUrl = saved.wsUrl,
+                    pcKeyId = saved.pcKeyId,
+                    pcPublicKeySpki = saved.pcPublicKeySpki,
+                    pcName = saved.pcName,
+                    pairingId = "",
+                    code = "",
+                    expiresAt = Long.MAX_VALUE,
+                )
+                remoteBusy = true
+                remoteStatus = "Reconnecting to ${saved.pcName}…"
+                val session = withContext(Dispatchers.IO) { newRemoteClient().reconnect(configuration) }
+                attachRemoteSession(session)
+                remoteStatus = "Connected to ${saved.pcName} over authenticated v2."
+            } catch (error: Exception) {
+                remoteStatus = "PC offline or unreachable: ${error.message ?: "reconnect failed"}. Local phone tools remain available."
+            } finally {
+                remoteBusy = false
+            }
+        }
+    }
+
+    private fun scanRemotePairingQr() {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+        GmsBarcodeScanning.getClient(this, options)
+            .startScan()
+            .addOnSuccessListener { barcode ->
+                val raw = barcode.rawValue
+                if (raw.isNullOrBlank()) {
+                    remoteStatus = "The scanned QR code did not contain a Vanessa pairing payload."
+                } else {
+                    remoteQrJson = raw
+                    pairRemote(raw)
+                }
+            }
+            .addOnCanceledListener {
+                remoteStatus = "QR scan cancelled."
+            }
+            .addOnFailureListener { error ->
+                remoteStatus = "QR scanner unavailable: ${error.message ?: "unknown error"}"
+            }
+    }
+
+    private fun pairRemote(rawQrPayload: String) {
+        if (remoteBusy) return
+        when (val parsed = RemoteV2PairingPayloadParser.parse(rawQrPayload)) {
+            is RemoteV2PairingPayloadResult.Invalid -> {
+                remoteStatus = parsed.reason
+                return
+            }
+            is RemoteV2PairingPayloadResult.Valid -> {
+                remoteBusy = true
+                remoteStatus = "Connecting securely. Approve this phone on the Windows PC…"
+                lifecycleScope.launch {
+                    try {
+                        val session = withContext(Dispatchers.IO) { newRemoteClient().pair(parsed.configuration) }
+                        pairingRepository.saveRemoteV2Pairing(
+                            StoredRemoteV2Pairing(
+                                wsUrl = parsed.configuration.wsUrl,
+                                pcKeyId = parsed.configuration.pcKeyId,
+                                pcPublicKeySpki = parsed.configuration.pcPublicKeySpki,
+                                pcName = parsed.configuration.pcName,
+                                deviceId = session.deviceId,
+                                grantedScopesJson = session.grantedScopesJson,
+                            ),
+                        )
+                        attachRemoteSession(session)
+                        remoteQrJson = ""
+                        remoteStatus = "Paired and connected to ${parsed.configuration.pcName}."
+                    } catch (error: Exception) {
+                        remoteStatus = "Pairing failed: ${error.message ?: "unknown error"}"
+                    } finally {
+                        remoteBusy = false
+                    }
+                }
+            }
+        }
+    }
+
+    private fun attachRemoteSession(session: RemoteV2LiveSession) {
+        remoteEventsJob?.cancel()
+        remoteSession?.takeIf { it !== session }?.close()
+        remoteSession = session
+        remoteEventsJob = lifecycleScope.launch {
+            session.events.collect { envelope ->
+                val payload = envelope.payload
+                when (envelope.type) {
+                    "task.accepted" -> {
+                        val taskId = payload["taskId"]?.jsonPrimitive?.content.orEmpty()
+                        remoteTaskStatus = if (taskId.isNotBlank()) "Accepted by Windows PC. Task: $taskId" else "Task accepted by Windows PC."
+                    }
+                    "task.progress" -> {
+                        remoteTaskStatus = payload["safeSummary"]?.jsonPrimitive?.content
+                            ?: payload["state"]?.jsonPrimitive?.content
+                            ?: "Windows PC is working…"
+                    }
+                    "task.confirmation_required" -> {
+                        remotePendingApproval = payload["approval"] as? JsonObject
+                        remoteTaskStatus = "Windows PC requires biometric approval for this action."
+                    }
+                    "task.result" -> {
+                        remotePendingApproval = null
+                        remoteTaskStatus = payload["safeSummary"]?.jsonPrimitive?.content
+                            ?: "The Windows PC returned a task result."
+                    }
+                    "protocol.error", "task.error" -> {
+                        remotePendingApproval = null
+                        remoteTaskStatus = payload["message"]?.jsonPrimitive?.content
+                            ?: payload["code"]?.jsonPrimitive?.content
+                            ?: "The PC rejected the remote request."
+                    }
+                    "session.close" -> {
+                        remoteStatus = "Remote session closed. Reconnect when the PC is available."
+                        remoteSession = null
+                    }
+                }
+            }
+        }
+    }
+
+    private fun openRemoteUrl() {
+        val url = remoteOpenUrl.trim()
+        if (url.isEmpty()) {
+            remoteTaskStatus = "Enter a URL first."
+            return
+        }
+        val session = remoteSession
+        if (session == null) {
+            remoteTaskStatus = "Connect to a paired Windows PC first."
+            return
+        }
+        remoteTaskStatus = "Submitting open URL request to the PC…"
+        lifecycleScope.launch {
+            try {
+                val requestId = session.submitTask(
+                    capability = "open_url",
+                    arguments = buildJsonObject { put("url", url) },
+                    intent = "Open this URL on the paired Windows PC",
+                )
+                remoteTaskStatus = "Request sent to PC. Request ID: $requestId"
+            } catch (error: Exception) {
+                remoteTaskStatus = "Could not submit task: ${error.message ?: "unknown error"}"
+            }
+        }
+    }
+
+    private fun approveRemoteAction() {
+        val approval = remotePendingApproval ?: return
+        val session = remoteSession ?: run {
+            remoteTaskStatus = "Remote session is not active."
+            return
+        }
+        val approvalId = approval["approvalId"]?.jsonPrimitive?.content ?: return
+        val taskId = approval["taskId"]?.jsonPrimitive?.content ?: return
+        val actionHash = approval["actionHash"]?.jsonPrimitive?.content ?: return
+        lifecycleScope.launch {
+            try {
+                remoteTaskStatus = "Waiting for Android strong biometric authentication…"
+                val proof = AndroidBiometricApprovalKeyStore().signApproval(
+                    activity = this@MainActivity,
+                    taskId = taskId,
+                    approvalId = approvalId,
+                    actionHash = actionHash,
+                )
+                val response = buildJsonObject {
+                    put("approvalId", approvalId)
+                    put("taskId", taskId)
+                    put("actionHash", actionHash)
+                    put("decision", "approved")
+                    put("approvedAt", proof.signedAt)
+                    put("method", "biometric_strong")
+                    put("approvalProof", buildJsonObject {
+                        put("keyId", proof.keyId)
+                        put("signature", proof.signature)
+                        put("signedAt", proof.signedAt)
+                    })
+                }
+                session.sendApprovalResponse(response)
+                remotePendingApproval = null
+                remoteTaskStatus = "Biometric proof sent. The PC will verify the action binding before execution."
+            } catch (error: Exception) {
+                remoteTaskStatus = "Approval was not sent: ${error.message ?: "biometric verification failed"}"
+            }
+        }
+    }
+
+    private fun denyRemoteAction() {
+        val approval = remotePendingApproval ?: return
+        val session = remoteSession ?: return
+        val approvalId = approval["approvalId"]?.jsonPrimitive?.content ?: return
+        val taskId = approval["taskId"]?.jsonPrimitive?.content ?: return
+        val actionHash = approval["actionHash"]?.jsonPrimitive?.content ?: return
+        lifecycleScope.launch {
+            try {
+                session.sendApprovalResponse(buildJsonObject {
+                    put("approvalId", approvalId)
+                    put("taskId", taskId)
+                    put("actionHash", actionHash)
+                    put("decision", "denied")
+                    put("approvedAt", System.currentTimeMillis())
+                    put("method", "user_denied")
+                })
+                remotePendingApproval = null
+                remoteTaskStatus = "Action denied. The PC task engine received the denial."
+            } catch (error: Exception) {
+                remoteTaskStatus = "Could not send denial: ${error.message ?: "unknown error"}"
+            }
+        }
     }
 
     private fun requestSpeechInput() {
@@ -449,6 +714,20 @@ private fun DeviceScreen(
     onDeviceSpeechAvailable: Boolean,
     meetings: List<CalendarMeeting>,
     calendarMessage: String?,
+    remoteQrJson: String,
+    remoteStatus: String,
+    remoteBusy: Boolean,
+    remoteOpenUrl: String,
+    remoteTaskStatus: String,
+    remotePendingApproval: JsonObject?,
+    onRemoteQrChange: (String) -> Unit,
+    onPairRemote: (String) -> Unit,
+    onScanRemoteQr: () -> Unit,
+    onReconnectRemote: () -> Unit,
+    onRemoteUrlChange: (String) -> Unit,
+    onOpenRemoteUrl: () -> Unit,
+    onApproveRemote: () -> Unit,
+    onDenyRemote: () -> Unit,
     onRefresh: () -> Unit,
     onImportModel: () -> Unit,
     onLoadModel: () -> Unit,
@@ -467,7 +746,7 @@ private fun DeviceScreen(
             Text("VANESSA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text("Your local AI agent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Private on-device reasoning and Android tools. Network pairing is intentionally unavailable in this build.",
+                "Private on-device reasoning and Android tools, with an authenticated remote Windows PC connection.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -562,6 +841,71 @@ private fun DeviceScreen(
                 if (assistantMetrics.isNotBlank()) {
                     Text(assistantMetrics, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("REMOTE WINDOWS PC", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Pair with the PC over its Tailscale WSS address. Paste the one-time pairing QR payload copied from Vanessa Desktop.")
+                OutlinedTextField(
+                    value = remoteQrJson,
+                    onValueChange = onRemoteQrChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Pairing QR payload") },
+                    placeholder = { Text("Paste the copied pairing payload") },
+                    minLines = 2,
+                    maxLines = 5,
+                    enabled = !remoteBusy,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onScanRemoteQr, enabled = !remoteBusy, modifier = Modifier.weight(1f)) {
+                        Text("Scan QR")
+                    }
+                    Button(onClick = onReconnectRemote, enabled = !remoteBusy, modifier = Modifier.weight(1f)) {
+                        Text("Reconnect")
+                    }
+                }
+                Button(
+                    onClick = { onPairRemote(remoteQrJson) },
+                    enabled = !remoteBusy && remoteQrJson.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (remoteBusy) CircularProgressIndicator()
+                    else Text("Pair / connect to PC")
+                }
+                Text(remoteStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = remoteOpenUrl,
+                    onValueChange = onRemoteUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("URL to open on PC") },
+                    singleLine = true,
+                )
+                Button(
+                    onClick = onOpenRemoteUrl,
+                    enabled = remoteStatus.contains("connected", ignoreCase = true) && remoteOpenUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Open URL on Windows PC") }
+                if (remoteTaskStatus.isNotBlank()) Text(remoteTaskStatus, style = MaterialTheme.typography.bodySmall)
+                remotePendingApproval?.let { approval ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("PC ACTION REQUIRES APPROVAL", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                            Text(approval["consequence"]?.jsonPrimitive?.content ?: "The PC requests approval for a remote action.")
+                            Text("Task: " + (approval["taskId"]?.jsonPrimitive?.content ?: "unknown"), style = MaterialTheme.typography.labelSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = onApproveRemote, enabled = !remoteBusy) { Text("Approve with biometric") }
+                                TextButton(onClick = onDenyRemote, enabled = !remoteBusy) { Text("Deny") }
+                            }
+                        }
+                    }
+                }
+                Text(
+                    "Remote commands run on the PC under its local capabilities and policy. The Android identity key authenticates the device; destructive approvals require a separate strong-biometric key.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 

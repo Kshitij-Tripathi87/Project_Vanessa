@@ -39,6 +39,7 @@ export type RemoteV2TaskNotification = {
     error?: string;
   };
   deviceId?: string;
+  ephemeralResult?: unknown;
 };
 
 type ConnectionPhase = "pre_session" | "pairing_challenge" | "awaiting_local_approval" | "authenticated" | "closed";
@@ -194,12 +195,16 @@ export class RemoteV2Gateway {
     if (parsed.protocol !== "wss:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
       throw new Error("Remote pairing requires a clean wss:// URL served by Tailscale Serve.");
     }
+    if (parsed.pathname === "" || parsed.pathname === "/") parsed.pathname = this.path;
+    if (parsed.pathname !== this.path) {
+      throw new Error("Remote pairing URL path must match the configured v2 gateway path.");
+    }
     const window = this.options.pairings.createPairingWindow(this.now());
     const payload = {
       type: "vanessa_remote_v2",
       version: 2,
       protocolVersion: 2,
-      wsUrl: parsed.toString().replace(/\/$/, ""),
+      wsUrl: parsed.toString(),
       pcId: this.options.identity.keyId,
       pcKeyId: this.options.identity.keyId,
       pcPublicKey: this.options.identity.publicKeySpki,
@@ -213,6 +218,19 @@ export class RemoteV2Gateway {
 
   listPendingPairings() {
     return this.options.pairings.getPendingApprovals();
+  }
+
+  listTrustedDevices() {
+    return this.options.pairings.listTrustedDevices().map((device) => ({
+      deviceId: device.deviceId,
+      keyId: device.keyId,
+      deviceHint: device.deviceHint,
+      platform: device.platform,
+      appVersion: device.appVersion,
+      grantedScopes: [...device.grantedScopes],
+      pairedAt: device.pairedAt,
+      revoked: device.revoked,
+    }));
   }
 
   async approvePairing(pairingId: string, scopes: string[]) {
@@ -275,7 +293,8 @@ export class RemoteV2Gateway {
         safeSummary: task.state === "done"
           ? "Task completed and passed PC-side verification."
           : (task.error || "The PC task did not complete.").slice(0, 500),
-        ...(task.state === "done" && task.result !== undefined ? { result: task.result } : {}),
+        ...(task.state === "done" && (task.result ?? event.ephemeralResult) !== undefined
+          ? { result: task.result ?? event.ephemeralResult } : {}),
         eventSeq,
         completedAt: this.now(),
       };
@@ -450,7 +469,9 @@ export class RemoteV2Gateway {
     }
 
     if (envelope.type === "pairing.complete") {
-      if (state.phase !== "pairing_challenge" || !state.pairingId || envelope.keyId !== state.clientKeyId) {
+      const completion = safeParseRemotePayload("pairing.complete", envelope.payload);
+      if (state.phase !== "pairing_challenge" || !state.pairingId || !completion.success ||
+          completion.data.pairingId !== state.pairingId || envelope.keyId !== state.clientKeyId) {
         await this.sendError(state, "PAIRING_STATE_INVALID", "No active pairing challenge exists.");
         this.closeState(state, 1008, "Invalid pairing completion.");
         return;
@@ -480,7 +501,8 @@ export class RemoteV2Gateway {
         return;
       }
       const payload = parsed.data;
-      if (payload.serverNonce !== state.serverNonce || payload.clientNonce.length < 16) {
+      if (payload.serverNonce !== state.serverNonce || payload.clientNonce.length < 16 ||
+          envelope.sequence !== 0 || Math.abs(now - envelope.sentAt) > this.challengeTtlMs) {
         await this.sendError(state, "INVALID_SIGNATURE", "The handshake nonce did not match.");
         this.closeState(state, 1008, "Handshake nonce mismatch.");
         return;
@@ -540,6 +562,7 @@ export class RemoteV2Gateway {
     state.clientPublicKeySpki = device.publicKeySpki;
     state.grantedScopes = [...device.grantedScopes];
     state.sessionExpiresAt = sessionExpiresAt;
+    state.serverSequence = 0;
     state.guard = new RemoteSessionGuard({
       sessionId,
       keyId: device.keyId,

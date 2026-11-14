@@ -450,3 +450,23 @@ input {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+
+/* Remote v2 pairing surface */
+.remote-pairing-panel { max-height: 360px; overflow-y: auto; margin-top: 8px; padding: 8px; border: 1px solid rgba(107, 224, 255, 0.18); border-radius: 9px; background: rgba(0, 0, 0, 0.22); }
+.remote-pairing-panel .menu-title { margin-top: 9px; }
+.remote-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 10px 6px; }
+.remote-qr-wrap img { width: 180px; height: 180px; padding: 5px; border-radius: 8px; background: #fff; }
+.remote-qr-wrap span, .remote-empty, .remote-help { color: var(--text-dim); font-size: 9px; line-height: 1.4; }
+.remote-scope-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; color: var(--text-muted); font-size: 9px; }
+.remote-scope-row input { accent-color: #57d7f4; }
+.remote-scope-row em { margin-left: auto; color: #fbbf24; font-style: normal; font-size: 8px; }
+.remote-pending-card { display: grid; gap: 4px; margin: 7px 0; padding: 8px; border: 1px solid var(--border-subtle); border-radius: 8px; background: rgba(255, 255, 255, 0.035); }
+.remote-pending-card strong { color: var(--text-main); font-size: 10px; }
+.remote-pending-card > span { color: var(--text-dim); font-size: 9px; }
+.remote-pending-actions { display: flex; gap: 6px; margin-top: 3px; }
+.remote-pending-actions button { flex: 1; min-width: 0; padding: 6px 4px; border: 1px solid rgba(82, 228, 255, 0.26); border-radius: 6px; color: #bff6ff; background: rgba(0, 208, 255, 0.08); font-size: 9px; }
+.remote-pending-actions button:last-child { color: #fecdd3; border-color: rgba(251, 113, 133, 0.26); background: rgba(244, 63, 94, 0.08); }
+.remote-pending-actions button:disabled { opacity: 0.5; cursor: wait; }
+.remote-error { margin: 7px 0; color: #fda4af; font-size: 9px; overflow-wrap: anywhere; }
+.remote-help { margin-top: 8px; }

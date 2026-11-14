@@ -27,6 +27,29 @@ declare global {
     errors: string[];
   }
 
+  interface RemoteV2PendingPairing {
+    pairingId: string;
+    keyId: string;
+    deviceHint: string;
+    platform: string;
+    appVersion: string;
+    requestedAt: number;
+    expiresAt: number;
+  }
+
+  interface RemoteV2PairingWindow {
+    window: { pairingId: string; code: string; createdAt: number; expiresAt: number };
+    payload: string;
+  }
+
+  interface RemoteV2Status {
+    enabled: boolean;
+    loopbackOnly: boolean;
+    path: string;
+    tailscaleServeRequired: boolean;
+    publicUrlConfigured: boolean;
+  }
+
   interface Window {
     vanessa: {
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
@@ -34,6 +57,11 @@ declare global {
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       cancelTask: (requestId?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
       getMobileAudit?: (limit?: number) => Promise<Array<{ seq: number; at: number; taskId: string; requestId: string; tool: string; args: string; tier: number; state: string; resultSummary?: string; durationMs?: number }>>;
+      remoteV2Status?: () => Promise<RemoteV2Status | { success: false; error: string }>;
+      createRemoteV2Pairing?: () => Promise<RemoteV2PairingWindow | { success: false; error: string }>;
+      getRemoteV2PendingPairings?: () => Promise<RemoteV2PendingPairing[] | { success: false; error: string }>;
+      approveRemoteV2Pairing?: (pairingId: string, scopes: string[]) => Promise<unknown>;
+      rejectRemoteV2Pairing?: (pairingId: string) => Promise<unknown>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;
       onTriggerPTT?: (callback: () => void) => () => void;
       onTriggerCancel?: (callback: () => void) => () => void;

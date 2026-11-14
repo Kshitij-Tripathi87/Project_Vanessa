@@ -56,7 +56,7 @@ export type TrustedRemoteDevice = {
   keyId: string;
   /** Base64url SPKI DER. Public material only; the phone's private key stays in Android Keystore. */
   publicKeySpki: string;
-  /** Separate P-256 approval key; private half is hardware-backed on Android. */
+  /** Separate P-256 public key whose private half requires strong user authentication. */
   approvalPublicKeySpki?: string;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
@@ -485,8 +485,8 @@ export class RemotePairingRegistry {
       if (typeof value.approvalPublicKeySpki !== "string") {
         throw new Error("Trusted-device store contains an invalid approval public key.");
       }
-      const approvalKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
-      if (!isSupportedIdentityKey(approvalKey)) {
+      const approvalPublicKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
+      if (!isSupportedIdentityKey(approvalPublicKey)) {
         throw new Error("Trusted-device store contains a non-P-256 approval public key.");
       }
       approvalPublicKeySpki = value.approvalPublicKeySpki;

@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
+import QRCode from "qrcode";
 
 type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -99,6 +100,90 @@ export function CompactAssistant({
 }: CompactAssistantProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteV2Status | null>(null);
+  const [remotePairingJson, setRemotePairingJson] = useState("");
+  const [remoteQrImage, setRemoteQrImage] = useState("");
+  const [remotePending, setRemotePending] = useState<RemoteV2PendingPairing[]>([]);
+  const [remoteScopes, setRemoteScopes] = useState<string[]>(["system.read", "files.read", "apps.launch", "browser.open"]);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+
+  const refreshRemotePairings = useCallback(async () => {
+    try {
+      const status = await window.vanessa.remoteV2Status?.();
+      if (status && "enabled" in status) setRemoteStatus(status);
+      const pending = await window.vanessa.getRemoteV2PendingPairings?.();
+      if (Array.isArray(pending)) setRemotePending(pending);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Remote pairing status is unavailable.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!moreOpen || !remoteOpen) return;
+    void refreshRemotePairings();
+    const timer = window.setInterval(() => void refreshRemotePairings(), 2000);
+    return () => window.clearInterval(timer);
+  }, [moreOpen, remoteOpen, refreshRemotePairings]);
+
+  const createRemotePairing = useCallback(async () => {
+    setRemoteBusy(true);
+    setRemoteError("");
+    try {
+      const created = await window.vanessa.createRemoteV2Pairing?.();
+      if (!created || !("payload" in created)) {
+        throw new Error(created && "error" in created ? created.error : "Remote pairing is unavailable.");
+      }
+      setRemotePairingJson(created.payload);
+      setRemoteQrImage(await QRCode.toDataURL(created.payload, {
+        errorCorrectionLevel: "M", margin: 2, width: 240,
+      }));
+      await refreshRemotePairings();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Could not create a remote pairing request.");
+    } finally {
+      setRemoteBusy(false);
+    }
+  }, [refreshRemotePairings]);
+
+  const toggleRemoteScope = (scope: string) => {
+    setRemoteScopes((current) => current.includes(scope)
+      ? current.filter((value) => value !== scope)
+      : [...current, scope]);
+  };
+
+  const approveRemotePairing = async (pairingId: string) => {
+    setRemoteBusy(true);
+    setRemoteError("");
+    try {
+      const result = await window.vanessa.approveRemoteV2Pairing?.(pairingId, remoteScopes);
+      if (result && typeof result === "object" && "error" in result) {
+        throw new Error(String((result as { error: unknown }).error));
+      }
+      await refreshRemotePairings();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Could not approve this device.");
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const rejectRemotePairing = async (pairingId: string) => {
+    setRemoteBusy(true);
+    setRemoteError("");
+    try {
+      const result = await window.vanessa.rejectRemoteV2Pairing?.(pairingId);
+      if (result && typeof result === "object" && "error" in result) {
+        throw new Error(String((result as { error: unknown }).error));
+      }
+      await refreshRemotePairings();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Could not reject this device.");
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
   const taskBusy = taskStage !== "idle" && !["completed", "partial", "failed", "cancelled"].includes(taskStage);
   const voiceBusy = ["thinking", "executing", "responding", "speaking"].includes(voiceState);
   const isBusy = taskBusy || voiceBusy;
@@ -210,6 +295,73 @@ export function CompactAssistant({
                 >{label}</button>
               ))}
             </div>
+            <div className="menu-divider" />
+            <button className="menu-action" onClick={() => setRemoteOpen((open) => !open)} aria-expanded={remoteOpen}>
+              {remoteOpen ? "Hide Android pairing" : "Pair Android over Tailscale"}
+            </button>
+            {remoteOpen && (
+              <div className="remote-pairing-panel">
+                <div className="menu-row">
+                  <span>Protocol v2 gateway</span>
+                  <strong>{remoteStatus?.enabled ? "Enabled" : "Disabled"}</strong>
+                </div>
+                <div className="menu-row">
+                  <span>Ingress</span>
+                  <strong>{remoteStatus?.loopbackOnly ? "Loopback only" : "Unavailable"}</strong>
+                </div>
+                <div className="menu-row">
+                  <span>Tailscale WSS URL</span>
+                  <strong>{remoteStatus?.publicUrlConfigured ? "Configured" : "Missing"}</strong>
+                </div>
+                <button className="menu-action" onClick={() => void createRemotePairing()} disabled={remoteBusy || !remoteStatus?.enabled || !remoteStatus?.publicUrlConfigured}>
+                  {remoteBusy ? "Working…" : "Generate one-time pairing QR"}
+                </button>
+                {remoteQrImage && (
+                  <div className="remote-qr-wrap">
+                    <img src={remoteQrImage} alt="One-time Vanessa Android pairing QR code" />
+                    <span>Scan with Android. Code expires automatically.</span>
+                  </div>
+                )}
+                {remotePairingJson && (
+                  <button className="menu-action" onClick={() => void navigator.clipboard.writeText(remotePairingJson)}>
+                    Copy pairing payload
+                  </button>
+                )}
+                <div className="menu-title">Permissions for the next device</div>
+                {[
+                  ["system.read", "Read system status"],
+                  ["files.read", "Read allowed files"],
+                  ["apps.launch", "Launch applications"],
+                  ["browser.open", "Open browser URLs"],
+                  ["files.open", "Open allowed files"],
+                  ["media.control", "Media controls"],
+                  ["system.control", "System controls"],
+                  ["files.delete", "Delete files (high risk)"],
+                  ["system.lock", "Lock the PC"],
+                  ["screen.capture", "Capture screen"],
+                ].map(([scope, label]) => (
+                  <label className="remote-scope-row" key={scope}>
+                    <input type="checkbox" checked={remoteScopes.includes(scope)} onChange={() => toggleRemoteScope(scope)} />
+                    <span>{label}</span>
+                    {scope === "files.delete" && <em>High risk</em>}
+                  </label>
+                ))}
+                <div className="menu-title">Phones awaiting local approval</div>
+                {remotePending.length === 0 ? <p className="remote-empty">No pending phone requests.</p> : remotePending.map((device) => (
+                  <div className="remote-pending-card" key={device.pairingId}>
+                    <strong>{device.deviceHint}</strong>
+                    <span>{device.platform} · {device.appVersion}</span>
+                    <span>Fingerprint: {device.keyId.slice(0, 12)}…</span>
+                    <div className="remote-pending-actions">
+                      <button onClick={() => void approveRemotePairing(device.pairingId)} disabled={remoteBusy || remoteScopes.length === 0}>Approve selected scopes</button>
+                      <button onClick={() => void rejectRemotePairing(device.pairingId)} disabled={remoteBusy}>Deny</button>
+                    </div>
+                  </div>
+                ))}
+                {remoteError && <p className="remote-error">{remoteError}</p>}
+                <p className="remote-help">Both devices must be signed in to the same Tailscale tailnet. Do not expose this listener with Funnel or public port forwarding.</p>
+              </div>
+            )}
             <div className="menu-divider" />
             <button className="menu-action" onClick={() => setDetailsOpen((open) => !open)}>Task details</button>
           </div>
