@@ -549,19 +549,50 @@ export class RemoteV2Gateway {
           // enrolled Android Keystore biometric proof is wired and verified.
           await this.options.tasks.confirmTask(peer.keyId, payload);
           return;
-        case "sync.resume":
+        case "sync.resume": {
+          const requestedIds = Array.isArray(payload.activeTaskIds)
+            ? payload.activeTaskIds.filter((value): value is string => typeof value === "string").slice(0, 50)
+            : [];
+          const recovered = this.options.tasks.getTaskRecovery(peer.keyId, requestedIds);
           await this.send(peer, "sync.snapshot", {
             lastEventSeq: peer.eventSeq,
-            historyGap: true,
-            tasks: [],
+            // The current engine persists task state, but not the full event stream.
+            historyGap: Number(payload.lastEventSeq) > 0,
+            tasks: recovered.map((item) => item.snapshot),
             events: [],
           }, peer.sessionId);
+          for (const item of recovered) {
+            if (item.confirmationRequired) {
+              await this.send(peer, "task.confirmation_required", {
+                ...item.confirmationRequired,
+                eventSeq: ++peer.eventSeq,
+              }, peer.sessionId);
+              continue;
+            }
+            const state = item.snapshot.state;
+            if (!["succeeded", "failed", "cancelled", "timed_out"].includes(state)) continue;
+            const succeeded = state === "succeeded";
+            const compact = compactResult(item.task.tool, item.task.result);
+            await this.send(peer, "task.result", {
+              taskId: item.task.taskId,
+              status: succeeded ? "succeeded" : state === "cancelled" ? "cancelled" : state === "timed_out" ? "timed_out" : "failed",
+              verification: {
+                status: succeeded ? "verified" : "failed",
+                summary: succeeded ? "The PC-side verifier accepted the operation result." : "The task ended without a verified successful result.",
+              },
+              safeSummary: item.snapshot.safeSummary,
+              ...(compact ? { result: compact } : {}),
+              eventSeq: ++peer.eventSeq,
+              completedAt: item.snapshot.completedAt ?? item.snapshot.updatedAt,
+            }, peer.sessionId);
+          }
           await this.send(peer, "sync.complete", {
             lastEventSeq: peer.eventSeq,
             resumedAt: this.now(),
             sessionExpiresAt: peer.sessionExpiresAt ?? this.now(),
           }, peer.sessionId);
           return;
+        }
         case "ping":
           await this.send(peer, "pong", { sentAt: Number(payload.sentAt), receivedAt: this.now() }, peer.sessionId);
           return;
