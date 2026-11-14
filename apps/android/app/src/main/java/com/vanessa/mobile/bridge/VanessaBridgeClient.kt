@@ -4,6 +4,9 @@ import android.os.Build
 import android.util.Log
 import com.vanessa.mobile.BuildConfig
 import com.vanessa.mobile.di.StoredPairing
+import com.vanessa.mobile.identity.AndroidBiometricApprovalKeyStore
+import com.vanessa.mobile.identity.AndroidBiometricApprovalManager
+import com.vanessa.mobile.identity.BiometricApprovalProof
 import com.vanessa.mobile.identity.AndroidRemoteIdentityStore
 import com.vanessa.protocol.v2.PRE_SESSION_ID
 import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
@@ -47,6 +50,7 @@ import java.security.KeyFactory
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import java.util.UUID
+import androidx.fragment.app.FragmentActivity
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -87,6 +91,8 @@ class VanessaBridgeClient @Inject constructor() {
     }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val identityStore = AndroidRemoteIdentityStore()
+    private val approvalKeyStore = AndroidBiometricApprovalKeyStore()
+    private val approvalManager = AndroidBiometricApprovalManager(approvalKeyStore)
     private val random = SecureRandom()
     private val connectionMutex = Mutex()
     private var socket: DefaultClientWebSocketSession? = null
@@ -246,11 +252,13 @@ class VanessaBridgeClient @Inject constructor() {
         require(challenge.payload["pairingRequired"]?.toString() == "true")
 
         val clientNonce = randomNonce()
+        val approvalIdentity = approvalKeyStore.loadOrCreate()
         sendEnvelope(session, "pairing.claim", buildJsonObject {
             put("pairingId", pairing.pairingId)
             put("code", pairing.pairingCode)
             put("publicKey", identity.publicKeyBase64Url)
             put("keyId", identity.keyId)
+            put("approvalPublicKey", approvalIdentity.publicKeyBase64Url)
             put("deviceHint", deviceHint())
             put("platform", "android")
             put("appVersion", BuildConfig.VERSION_NAME)
@@ -389,6 +397,69 @@ class VanessaBridgeClient @Inject constructor() {
             identity.publicKey,
         )
         session.send(Frame.Text(RemoteEnvelopeCrypto.encode(signed)))
+    }
+
+    /** Strong-biometric approval. A missing proof never sends an approval message. */
+    suspend fun approveTask(activity: FragmentActivity, approval: JsonObject): Boolean {
+        val approvalId = approval["approvalId"]?.toString()?.trim('"') ?: return false
+        val taskId = approval["taskId"]?.toString()?.trim('"') ?: return false
+        val actionHash = approval["actionHash"]?.toString()?.trim('"') ?: return false
+        val expiresAt = approval["expiresAt"]?.toString()?.toLongOrNull() ?: return false
+        if (expiresAt <= System.currentTimeMillis()) return false
+        val consequence = approval["consequence"]?.toString()?.trim('"') ?: "Approve PC action"
+        val proof = approvalManager.authorize(activity, approvalId, taskId, actionHash, consequence) ?: return false
+        return sendApprovalResponse(
+            approvalId = approvalId,
+            taskId = taskId,
+            actionHash = actionHash,
+            decision = "approved",
+            approvedAt = proof.approvedAt,
+            proof = proof,
+        )
+    }
+
+    /** Denial is safe and does not need a biometric signature. */
+    suspend fun denyTask(approval: JsonObject): Boolean {
+        val approvalId = approval["approvalId"]?.toString()?.trim('"') ?: return false
+        val taskId = approval["taskId"]?.toString()?.trim('"') ?: return false
+        val actionHash = approval["actionHash"]?.toString()?.trim('"') ?: return false
+        return sendApprovalResponse(
+            approvalId = approvalId,
+            taskId = taskId,
+            actionHash = actionHash,
+            decision = "denied",
+            approvedAt = System.currentTimeMillis(),
+            proof = null,
+        )
+    }
+
+    private suspend fun sendApprovalResponse(
+        approvalId: String,
+        taskId: String,
+        actionHash: String,
+        decision: String,
+        approvedAt: Long,
+        proof: BiometricApprovalProof?,
+    ): Boolean {
+        val active = socket ?: return false
+        val identity = identityStore.loadOrCreate()
+        val method = if (decision == "approved") "biometric_strong" else "device_session"
+        val payload = buildJsonObject {
+            put("approvalId", approvalId)
+            put("taskId", taskId)
+            put("actionHash", actionHash)
+            put("decision", decision)
+            put("approvedAt", approvedAt)
+            put("method", method)
+            if (proof != null) {
+                put("approvalProof", buildJsonObject {
+                    put("keyId", proof.keyId)
+                    put("signature", proof.signature)
+                })
+            }
+        }
+        sendEnvelope(active, "task.confirmation_response", payload, readySessionId, outboundSequence++, identity)
+        return true
     }
 
     suspend fun submitTask(
