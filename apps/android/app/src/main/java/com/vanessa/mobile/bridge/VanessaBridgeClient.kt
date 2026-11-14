@@ -608,12 +608,12 @@ class VanessaBridgeClient @Inject constructor(@ApplicationContext private val ap
         is Number -> kotlinx.serialization.json.JsonPrimitive(this)
         is JsonElement -> this
         is Map<*, *> -> buildJsonObject {
-            for ((key, value) in this) {
+            for ((key, value) in this@toRemoteJsonElement) {
                 require(key is String) { "Task argument object keys must be strings." }
                 put(key, value.toRemoteJsonElement())
             }
         }
-        is Iterable<*> -> kotlinx.serialization.json.JsonArray(this.map { it.toRemoteJsonElement() })
+        is Iterable<*> -> kotlinx.serialization.json.JsonArray(this@toRemoteJsonElement.map { it.toRemoteJsonElement() })
         else -> throw IllegalArgumentException("Unsupported task argument type: " + this::class.java.simpleName)
     }
 
