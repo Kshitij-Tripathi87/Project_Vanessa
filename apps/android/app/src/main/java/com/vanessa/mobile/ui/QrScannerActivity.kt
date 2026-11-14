@@ -115,8 +115,11 @@ class QrScannerActivity : ComponentActivity() {
         scanner.process(input)
             .addOnSuccessListener { barcodes ->
                 val value = barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
-                if (value != null && delivered.compareAndSet(false, true))
-                    setResult(RESULT_OK, android.content.Intent().putExtra(EXTRA_SCANNED_PAYLOAD, value))
+                if (value != null && delivered.compareAndSet(false, true)) {
+                    setResult(
+                        RESULT_OK,
+                        android.content.Intent().putExtra(EXTRA_SCANNED_PAYLOAD, value),
+                    )
                     finish()
                 }
             }
