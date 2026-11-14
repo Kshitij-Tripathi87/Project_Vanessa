@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { Check, Copy, KeyRound, Laptop, Plus, RefreshCw, Shield, Smartphone, X } from "lucide-react";
+import { Check, Copy, Plus, RefreshCw, Shield, Smartphone, X } from "lucide-react";
 
 interface MobilePairingModalProps {
   isOpen: boolean;
@@ -60,11 +60,6 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({ isOpen, 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const expiresIn = useMemo(
-    () => pairing ? Math.max(0, Math.ceil((pairing.expiresAt - Date.now()) / 1000)) : 0,
-    [pairing],
-  );
-
   const refresh = useCallback(async () => {
     const [nextStatus, nextPending, nextDevices] = await Promise.all([
       window.vanessa.remoteV2Status(),
