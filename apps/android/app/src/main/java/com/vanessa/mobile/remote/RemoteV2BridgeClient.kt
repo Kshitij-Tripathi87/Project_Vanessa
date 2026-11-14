@@ -3,7 +3,7 @@ package com.vanessa.mobile.remote
 import android.content.Context
 import android.os.Build
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.Frame
@@ -57,7 +57,7 @@ class RemoteV2BridgeClient(context: Context) {
     private val preferences = appContext.getSharedPreferences("vanessa_remote_v2", Context.MODE_PRIVATE)
     private val identityStore = AndroidRemoteIdentityStore()
     private val approvalKeyStore = AndroidRemoteApprovalKeyStore(appContext)
-    private val http = HttpClient(Android) {
+    private val http = HttpClient(CIO) {
         install(WebSockets) {
             pingInterval = 20_000L
             maxFrameSize = 64L * 1024L
