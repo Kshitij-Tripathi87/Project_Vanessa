@@ -187,7 +187,8 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal((pending.payload as Record<string, any>).state, "awaiting_approval");
     // The PC-local manager reads this private capability from its authenticated
     // loopback registry API, not from the phone-visible pairing.pending event.
-    assert.equal(pairings.getPendingApprovals()[0]?.biometricApprovalAvailable, true);
+    // A self-asserted public key is not enough to grant a destructive scope.
+    assert.equal(pairings.getPendingApprovals()[0]?.biometricApprovalAvailable, false);
 
     await gateway.approvePairing(window.pairingId, ["system.read", "files.read", "apps.launch"]);
     const approved = await next("pairing.approved");
@@ -214,6 +215,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.deepEqual(readyPayload.grantedScopes, ["system.read", "files.read", "apps.launch"]);
     assert.equal(readyPayload.clientNonce, authClientNonce);
     assert.equal(pairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyId, biometricApproval.keyId);
+    assert.equal(pairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyHardwareAttested, false);
 
     // Biometric verification material must survive a PC service restart.
     const reloadedPairings = new RemotePairingRegistry({ storePath: join(directory, "trusted-devices.json") });
