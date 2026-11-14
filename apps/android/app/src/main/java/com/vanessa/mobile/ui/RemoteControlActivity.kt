@@ -232,17 +232,11 @@ class RemoteControlActivity : FragmentActivity() {
 
     private fun beginBiometricApproval() {
         val approval = pendingApproval ?: return
-        val identity = approvalKeyStore.loadOrCreate()
-        if (identity == null) {
-            latestEvent = "Approval blocked: no hardware-backed strong-biometric key is available. Re-pair after enrolling strong biometrics."
-            return
-        }
-        // Android Keystore keys configured for per-use authentication cannot
-        // sign merely by calling Signature.initSign() and then prompting.
-        // The Signature must be passed into BiometricPrompt.CryptoObject.
+        // Key availability and initialization are handled by the keystore
+        // wrapper so errors never escape the UI or trigger a weaker fallback.
         approvalKeyStore.authenticateForSignature(
             activity = this,
-            onSuccess = { authenticatedSignature ->
+            onSuccess = { approvalKeyId, authenticatedSignature ->
                 lifecycleScope.launch {
                     try {
                         val approvedAt = System.currentTimeMillis()
@@ -269,7 +263,7 @@ class RemoteControlActivity : FragmentActivity() {
                         val encodedSignature = java.util.Base64.getUrlEncoder().withoutPadding()
                             .encodeToString(authenticatedSignature.sign())
                         val proof = buildJsonObject {
-                            put("keyId", identity.keyId)
+                            put("keyId", approvalKeyId)
                             put("signature", encodedSignature)
                         }
                         bridge.confirmTask(approvalId, taskId, actionHash, true, approvedAt, proof)
