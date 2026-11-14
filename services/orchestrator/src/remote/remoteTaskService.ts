@@ -16,6 +16,7 @@ import {
   createRemoteTargetDescriptor,
   MobileTaskEngine,
   REMOTE_POLICY_VERSION,
+  type MobileTaskRecoveryRecord,
 } from "../core/mobileTaskEngine.js";
 
 export type RemoteApprovalProofContext = {
@@ -257,6 +258,40 @@ export class RemoteTaskService {
       approved: parsed.data.decision === "approved",
       actionHash: parsed.data.actionHash,
       deviceId: device.deviceId,
+    });
+  }
+
+  /** Restore bounded task IDs from the authenticated phone's own durable rows. */
+  getTaskRecovery(keyId: string, taskIds: string[]): Array<{
+    snapshot: MobileTaskRecoveryRecord["snapshot"];
+    task: MobileTaskRecoveryRecord["task"];
+    confirmationRequired?: RemotePayloadFor<"task.confirmation_required">;
+  }> {
+    const device = this.requireTrustedDevice(keyId);
+    const capabilities = new Map(this.engine.getRemoteCapabilities().map((entry) => [entry.name, entry]));
+    return this.engine.getTaskRecoveryForDevice(taskIds, device.deviceId).map((item) => {
+      const capability = capabilities.get(item.task.tool as never);
+      if (!capability || !item.confirmation || !item.task.actionHash) {
+        return { snapshot: item.snapshot, task: item.task };
+      }
+      const approval = {
+        approvalId: approvalIdForTask(item.task.taskId),
+        taskId: item.task.taskId,
+        taskVersion: 1,
+        deviceId: device.deviceId,
+        capability: capability.name,
+        capabilityVersion: capability.version,
+        consequence: capability.description.slice(0, 500),
+        target: createRemoteTargetDescriptor(item.task.tool, item.canonicalArguments),
+        actionHash: item.task.actionHash,
+        policyVersion: REMOTE_POLICY_VERSION,
+        expiresAt: item.confirmation.expiresAt,
+      };
+      return {
+        snapshot: item.snapshot,
+        task: item.task,
+        confirmationRequired: { approval, eventSeq: 0 },
+      };
     });
   }
 
