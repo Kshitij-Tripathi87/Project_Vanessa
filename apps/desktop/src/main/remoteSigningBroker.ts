@@ -92,7 +92,7 @@ export async function createRemoteSigningBroker(
         return;
       }
       const envelope = parsed.data;
-      if (envelope.keyId !== identity.keyId || REMOTE_MESSAGE_DIRECTIONS[envelope.type] !== "server_to_client") {
+      if (envelope.keyId !== identity.keyId || (REMOTE_MESSAGE_DIRECTIONS[envelope.type] !== "server_to_client" && envelope.type !== "pong")) {
         response.writeHead(403).end(JSON.stringify({ error: "SIGNING_SCOPE_DENIED" }));
         return;
       }
