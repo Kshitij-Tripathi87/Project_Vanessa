@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import { applyOrchestratorRuntimeUrls, resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
 
 const managedChildren = new Map<string, ChildProcess>();
 let shuttingDown = false;
@@ -48,7 +49,8 @@ export function loadUserEnvironment(): string {
 
   // These services are intentionally bound to loopback in a desktop install.
   process.env.HOST = "127.0.0.1";
-  process.env.VOICE_AGENT_PORT = "4500";
+  if (!process.env.VOICE_AGENT_PORT?.trim()) process.env.VOICE_AGENT_PORT = "4500";
+  if (!process.env.VANESSA_PORT?.trim()) process.env.VANESSA_PORT = "4319";
   return envPath;
 }
 
@@ -191,7 +193,14 @@ export async function startPackagedServices(): Promise<void> {
   copyMissing(path.join(resourceRuntime, "skills"), path.join(userRuntime, "skills"));
   copyMissing(path.join(resourceRuntime, "config"), path.join(installRoot, "orchestrator", "config"));
 
-  const orchestratorPort = Number(process.env.VANESSA_PORT || 4139);
+  const orchestratorPort = resolveOrchestratorPort(process.env);
+  const voiceAgentPort = resolveVoiceAgentPort(process.env);
+  process.env.VANESSA_PORT = String(orchestratorPort);
+  process.env.VOICE_AGENT_PORT = String(voiceAgentPort);
+  // Keep both voice-agent call sites aligned with the packaged orchestrator
+  // port. Without this, voice sessions silently fall back to 4319 when the
+  // user has selected another valid VANESSA_PORT.
+  applyOrchestratorRuntimeUrls(process.env);
   const orchestratorHome = path.join(installRoot, "orchestrator");
   const voiceHome = path.join(installRoot, "voice-agent");
   await startService({
@@ -206,8 +215,8 @@ export async function startPackagedServices(): Promise<void> {
     name: "voice-agent",
     entryPath: path.join(voiceHome, "dist", "server.js"),
     workingDirectory: voiceHome,
-    port: 4500,
-    healthUrl: "http://127.0.0.1:4500/health",
+    port: voiceAgentPort,
+    healthUrl: "http://127.0.0.1:" + voiceAgentPort + "/health",
     serviceIdentity: "vanessa-voice-agent",
   });
 }

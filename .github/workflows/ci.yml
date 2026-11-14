@@ -83,8 +83,8 @@ jobs:
       - name: Build desktop renderer and Electron main process
         run: pnpm --filter @vanessa/desktop build
 
-      - name: Test desktop docking, preferences, and PC identity vault
-        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts ../../apps/desktop/src/main/remotePcIdentityStore.test.ts
+      - name: Test desktop docking, preferences, identity vault, and runtime config
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts ../../apps/desktop/src/main/remotePcIdentityStore.test.ts ../../apps/desktop/src/main/runtimeConfig.test.ts
 
       - name: Test local wake-word routing and PCM framing
         run: pnpm --filter @vanessa/voice-agent exec tsx --test src/session/wakeWord.test.ts

@@ -63,6 +63,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/remotePcIdentityStore.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/runtimeConfig.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install Inno Setup 6
         shell: pwsh

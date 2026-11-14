@@ -2,12 +2,11 @@ import { ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
 import WebSocket from "ws";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
 import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
+import { resolveOrchestratorHttpUrl, resolveOrchestratorWebSocketUrl } from "./runtimeConfig.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
 
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://127.0.0.1:4319";
-const WS_URL = process.env.ORCHESTRATOR_WS || "ws://127.0.0.1:4319/events";
 
 let wsClient: WebSocket | null = null;
 let lastEventSequence = 0;
@@ -52,7 +51,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
     try {
       const { submitCommandRequest } = await commandClient;
-      return await submitCommandRequest(ORCHESTRATOR_URL, {
+      return await submitCommandRequest(resolveOrchestratorHttpUrl(process.env), {
         ...payload,
         source: "desktop",
         originDeviceId: process.env.VANESSA_DEVICE_ID || "desktop-local",
@@ -67,7 +66,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
-      const res = await fetch(`${ORCHESTRATOR_URL}/api/approve`, {
+      const res = await fetch(`${resolveOrchestratorHttpUrl(process.env)}/api/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -82,7 +81,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
-      const res = await fetch(`${ORCHESTRATOR_URL}/api/reject`, {
+      const res = await fetch(`${resolveOrchestratorHttpUrl(process.env)}/api/reject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId }),
@@ -99,7 +98,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     if (taskId !== undefined) assertTaskId(taskId);
     try {
       const endpoint = taskId ? "/api/cancel/request" : "/api/cancel";
-      const res = await fetch(`${ORCHESTRATOR_URL}${endpoint}`, {
+      const res = await fetch(`${resolveOrchestratorHttpUrl(process.env)}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: taskId ? JSON.stringify({ requestId: taskId }) : undefined,
@@ -114,7 +113,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     const count = typeof limit === "number" && Number.isInteger(limit) ? Math.max(1, Math.min(100, limit)) : 100;
     try {
-      const response = await fetch(`${ORCHESTRATOR_URL}/api/mobile/audit?limit=${count}`, { signal: AbortSignal.timeout(3000) });
+      const response = await fetch(`${resolveOrchestratorHttpUrl(process.env)}/api/mobile/audit?limit=${count}`, { signal: AbortSignal.timeout(3000) });
       if (!response.ok) return [];
       const rows = await response.json();
       return Array.isArray(rows) ? rows : [];
@@ -159,7 +158,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // Connect to WebSocket stream and forward to Renderer
   function initWebSocket() {
     try {
-      const eventsUrl = new URL(WS_URL);
+      const eventsUrl = new URL(resolveOrchestratorWebSocketUrl(process.env));
       eventsUrl.searchParams.set("since", String(lastEventSequence));
       if (lastEventStreamId) eventsUrl.searchParams.set("streamId", lastEventStreamId);
       wsClient = new WebSocket(eventsUrl.toString());
