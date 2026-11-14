@@ -62,6 +62,10 @@ type Connection = {
   eventSequence: number;
   messageTimes: number[];
   authenticated: boolean;
+  /** Serializes async signing/writes so clients always observe monotonic sequence order. */
+  outboundTail: Promise<void>;
+  /** Serializes inbound processing so guard acceptance and task dispatch preserve socket order. */
+  inboundTail: Promise<void>;
 };
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -300,6 +304,8 @@ export class RemoteWebSocketGateway {
       eventSequence: 0,
       messageTimes: [],
       authenticated: false,
+      outboundTail: Promise.resolve(),
+      inboundTail: Promise.resolve(),
     };
     this.connections.set(connection.id, connection);
     ws.on("message", (data, isBinary) => {
@@ -307,7 +313,9 @@ export class RemoteWebSocketGateway {
         ws.close(1003, "Binary frames are not supported");
         return;
       }
-      void this.handleFrame(connection, data);
+      connection.inboundTail = connection.inboundTail
+        .then(() => this.handleFrame(connection, data))
+        .catch(() => undefined);
     });
     ws.on("close", () => this.removeConnection(connection));
     ws.on("error", () => this.removeConnection(connection));
@@ -520,17 +528,37 @@ export class RemoteWebSocketGateway {
     }
   }
 
-  private async sendPreSession(connection: Connection, type: RemoteMessageType, payload: Record<string, unknown>): Promise<void> {
-    const sequence = connection.preSessionSequence++;
-    const envelope = await this.options.signer.sign({ type, payload, sessionId: PRE_SESSION_ID, sequence });
-    this.writeEnvelope(connection, envelope);
+  private queueSignedEnvelope(
+    connection: Connection,
+    type: RemoteMessageType,
+    payload: Record<string, unknown>,
+    sessionId: string,
+    nextSequence: () => number,
+  ): Promise<void> {
+    const operation = connection.outboundTail.then(async () => {
+      if (connection.ws.readyState !== WebSocket.OPEN) return;
+      const sequence = nextSequence();
+      const envelope = await this.options.signer.sign({ type, payload, sessionId, sequence });
+      this.writeEnvelope(connection, envelope);
+    });
+    // Keep the chain usable after a transient signer/network failure while
+    // returning the original error to the caller that issued this message.
+    connection.outboundTail = operation.catch(() => undefined);
+    return operation;
   }
 
-  private async sendSession(connection: Connection, type: RemoteMessageType, payload: Record<string, unknown>): Promise<void> {
-    if (!connection.sessionId) throw new Error("Cannot send a session message before authentication.");
-    const sequence = connection.outboundSequence++;
-    const envelope = await this.options.signer.sign({ type, payload, sessionId: connection.sessionId, sequence });
-    this.writeEnvelope(connection, envelope);
+  private sendPreSession(connection: Connection, type: RemoteMessageType, payload: Record<string, unknown>): Promise<void> {
+    return this.queueSignedEnvelope(
+      connection, type, payload, PRE_SESSION_ID, () => connection.preSessionSequence++,
+    );
+  }
+
+  private sendSession(connection: Connection, type: RemoteMessageType, payload: Record<string, unknown>): Promise<void> {
+    const sessionId = connection.sessionId;
+    if (!sessionId) return Promise.reject(new Error("Cannot send a session message before authentication."));
+    return this.queueSignedEnvelope(
+      connection, type, payload, sessionId, () => connection.outboundSequence++,
+    );
   }
 
   private writeEnvelope(connection: Connection, envelope: RemoteEnvelope): void {
