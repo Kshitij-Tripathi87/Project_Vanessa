@@ -42,6 +42,8 @@ type PendingSocket = {
   serverNonce: string;
   approvedPayload?: RemotePayloadFor<"pairing.approved">;
   pairingFlow: boolean;
+  connectedAt: number;
+  inboundMessageTimes: number[];
 };
 
 type ActiveSocket = {
@@ -65,6 +67,8 @@ export type RemoteV2GatewayOptions = {
   pcName?: string;
   allowTailscaleBind?: boolean;
   sessionTtlMs?: number;
+  publicEndpoint?: string;
+  maxMessagesPerMinute?: number;
 };
 
 /**
@@ -78,6 +82,8 @@ export type RemoteV2GatewayOptions = {
 export class RemoteV2Gateway {
   private readonly now: () => number;
   private readonly sessionTtlMs: number;
+  private readonly publicEndpoint?: string;
+  private readonly maxMessagesPerMinute: number;
   private readonly server: Server;
   private readonly sockets = new Map<WebSocket, PendingSocket | ActiveSocket>();
   private readonly pendingByPairingId = new Map<string, PendingSocket>();
@@ -88,6 +94,18 @@ export class RemoteV2Gateway {
   constructor(private readonly options: RemoteV2GatewayOptions) {
     this.now = options.now ?? Date.now;
     this.sessionTtlMs = options.sessionTtlMs ?? 12 * 60 * 60_000;
+    this.publicEndpoint = options.publicEndpoint;
+    this.maxMessagesPerMinute = options.maxMessagesPerMinute ?? 120;
+    if (!Number.isInteger(this.maxMessagesPerMinute) || this.maxMessagesPerMinute < 10 || this.maxMessagesPerMinute > 10_000) {
+      throw new Error("Remote v2 rate limit must be between 10 and 10000 messages per minute.");
+    }
+    if (this.publicEndpoint) {
+      const endpoint = new URL(this.publicEndpoint);
+      if (endpoint.protocol !== "wss:" || !endpoint.hostname || endpoint.pathname !== "/remote/v2" ||
+          endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+        throw new Error("Remote v2 public endpoint must be a clean wss:// URL ending in /remote/v2.");
+      }
+    }
     if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) {
       throw new Error("Remote v2 gateway port must be between 0 and 65535.");
     }
@@ -159,7 +177,7 @@ export class RemoteV2Gateway {
   } {
     if (this.listeningPort === undefined) throw new Error("Remote v2 gateway is not listening.");
     const created = this.options.pairings.createPairingWindow(this.now());
-    const endpoint = "ws://" + this.options.host + ":" + this.listeningPort + "/remote/v2";
+    const endpoint = this.publicEndpoint ?? ("ws://" + this.options.host + ":" + this.listeningPort + "/remote/v2");
     const value = {
       version: 2,
       endpoint,
@@ -221,6 +239,8 @@ export class RemoteV2Gateway {
       serverNonce: randomBytes(32).toString("base64url"),
       preSessionServerSequence: 0,
       pairingFlow: false,
+      connectedAt: this.now(),
+      inboundMessageTimes: [],
     };
     this.sockets.set(socket, context);
     socket.on("message", (raw, isBinary) => {
@@ -264,6 +284,19 @@ export class RemoteV2Gateway {
     const envelope = parsed.data;
     const state = this.sockets.get(socket);
     if (!state) return;
+    const cutoff = this.now() - 60_000;
+    state.inboundMessageTimes = state.inboundMessageTimes.filter((time) => time > cutoff);
+    if (state.inboundMessageTimes.length >= this.maxMessagesPerMinute) {
+      await this.sendProtocolError(socket, "RATE_LIMITED", "Too many messages were sent on this connection.", "sessionId" in state ? state.sessionId : PRE_SESSION_ID);
+      socket.close(1008, "Rate limited");
+      return;
+    }
+    state.inboundMessageTimes.push(this.now());
+    if (!("sessionId" in state) && this.now() - state.connectedAt > 90_000) {
+      await this.sendProtocolError(socket, "SESSION_EXPIRED", "The handshake timed out.");
+      socket.close(1008, "Handshake timed out");
+      return;
+    }
 
     if ("sessionId" in state) {
       await this.handleAuthenticatedMessage(state, envelope);
@@ -274,6 +307,10 @@ export class RemoteV2Gateway {
       return;
     }
     if (envelope.type === "pairing.claim") {
+      if (envelope.sequence !== 0) {
+        await this.sendProtocolError(socket, "SEQUENCE_OUT_OF_ORDER", "The pairing sequence must begin at zero.");
+        return;
+      }
       if (state.pairingFlow || state.pairingId) {
         await this.sendProtocolError(socket, "PAIRING_ALREADY_CLAIMED", "This connection already has a pairing attempt.");
         return;
@@ -293,6 +330,10 @@ export class RemoteV2Gateway {
       return;
     }
     if (envelope.type === "pairing.complete") {
+      if (envelope.sequence !== 1) {
+        await this.sendProtocolError(socket, "SEQUENCE_OUT_OF_ORDER", "The pairing completion sequence is invalid.");
+        return;
+      }
       if (!state.pairingFlow) {
         await this.sendProtocolError(socket, "PAIRING_STATE_INVALID", "No pairing challenge is active.");
         return;
@@ -302,6 +343,11 @@ export class RemoteV2Gateway {
       return;
     }
     if (envelope.type === "client.authenticate") {
+      const expectedSequence = state.pairingFlow ? 2 : 0;
+      if (envelope.sequence !== expectedSequence) {
+        await this.sendProtocolError(socket, "SEQUENCE_OUT_OF_ORDER", "The authentication sequence is invalid.");
+        return;
+      }
       await this.authenticate(state, envelope);
       return;
     }
@@ -341,7 +387,7 @@ export class RemoteV2Gateway {
       keyId: device.keyId,
       publicKey: device.publicKeySpki,
       direction: "client_to_server",
-      lastAcceptedSequence: state.pairingFlow ? 1 : -1,
+      lastAcceptedSequence: envelope.sequence - 1,
       maxMessageAgeMs: 90_000,
     });
     const verified = guard.verifyAndAccept(envelope, this.now());
