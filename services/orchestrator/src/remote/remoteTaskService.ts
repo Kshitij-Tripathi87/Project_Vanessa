@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, verify as verifySignature } from "node:crypto";
 
 import {
   canonicalize,
+  computeKeyId,
+  isSupportedIdentityKey,
+  normalizeIdentityPublicKey,
   safeParseRemotePayload,
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
@@ -65,6 +68,41 @@ function approvalIdForTask(taskId: string): string {
 
 function mapTaskState(state: string): RemoteTaskState {
   return TIER_TO_STATE[state] ?? "unknown";
+}
+
+/**
+ * Verify a JCS-bound approval with the separate public key enrolled during
+ * pairing. Its private counterpart is non-exportable and requires a fresh
+ * strong-biometric authentication for every signature.
+ */
+export async function verifyRemoteApprovalProof(context: RemoteApprovalProofContext): Promise<boolean> {
+  const proof = context.proof as { keyId?: unknown; signature?: unknown } | undefined;
+  const device = context.device;
+  if (!proof || typeof proof.keyId !== "string" || typeof proof.signature !== "string" ||
+      !device.approvalPublicKeySpki || !device.approvalKeyId ||
+      proof.keyId !== device.approvalKeyId ||
+      Math.abs(Date.now() - context.response.approvedAt) > 60_000) return false;
+  try {
+    const publicKey = normalizeIdentityPublicKey(device.approvalPublicKeySpki);
+    if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== device.approvalKeyId) return false;
+    const binding = {
+      approvalId: context.response.approvalId,
+      taskId: context.response.taskId,
+      actionHash: context.response.actionHash,
+      decision: context.response.decision,
+      approvedAt: context.response.approvedAt,
+      method: context.response.method,
+      deviceId: device.deviceId,
+    };
+    return verifySignature(
+      "sha256",
+      Buffer.from(canonicalize(binding), "utf8"),
+      publicKey,
+      Buffer.from(proof.signature, "base64url"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -206,7 +244,8 @@ export class RemoteTaskService {
       if (!verifier) {
         serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
       }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const proofMaterial = parsed.data.approvalProof ?? proof;
+      const verified = await verifier({ device, response: parsed.data, proof: proofMaterial });
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }

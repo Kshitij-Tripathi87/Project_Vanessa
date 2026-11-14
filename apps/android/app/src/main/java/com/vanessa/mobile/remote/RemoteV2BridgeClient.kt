@@ -12,6 +12,7 @@ import io.ktor.websocket.readText
 import com.vanessa.mobile.BuildConfig
 import com.vanessa.mobile.identity.AndroidRemoteIdentity
 import com.vanessa.mobile.identity.AndroidRemoteIdentityStore
+import com.vanessa.mobile.identity.AndroidRemoteApprovalKeyStore
 import com.vanessa.protocol.v2.PRE_SESSION_ID
 import com.vanessa.protocol.v2.RemoteEnvelopeCheck
 import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
@@ -52,6 +53,7 @@ class RemoteV2BridgeClient(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("vanessa_remote_v2", Context.MODE_PRIVATE)
     private val identityStore = AndroidRemoteIdentityStore()
+    private val approvalKeyStore = AndroidRemoteApprovalKeyStore(appContext)
     private val http = HttpClient(Android) {
         install(WebSockets) {
             pingInterval = 20.seconds
@@ -168,6 +170,26 @@ class RemoteV2BridgeClient(context: Context) {
         sendAuthenticated("manifest.get", buildJsonObject {})
     }
 
+    suspend fun confirmTask(
+        approvalId: String,
+        taskId: String,
+        actionHash: String,
+        approved: Boolean,
+        approvedAt: Long,
+        proof: JsonObject? = null,
+    ) {
+        val payload = buildJsonObject {
+            put("approvalId", approvalId)
+            put("taskId", taskId)
+            put("actionHash", actionHash)
+            put("decision", if (approved) "approved" else "denied")
+            put("approvedAt", approvedAt)
+            put("method", if (approved) "biometric_strong" else "device_session")
+            if (proof != null) put("approvalProof", proof)
+        }
+        sendAuthenticated("task.confirmation_response", payload)
+    }
+
     fun disconnect() {
         stopRequested = true
         activeSession?.let { session ->
@@ -206,11 +228,16 @@ class RemoteV2BridgeClient(context: Context) {
                     publicKey = config.pcPublicKey,
                     lastAcceptedSequence = -1,
                 )
+                val biometricApprovalIdentity = approvalKeyStore.loadOrCreate()
                 val claim = buildJsonObject {
                     put("pairingId", config.pairingId ?: error("Pairing ID is missing from QR."))
                     put("code", config.code ?: error("Pairing code is missing from QR."))
                     put("publicKey", identity.publicKeyBase64Url)
                     put("keyId", identity.keyId)
+                    if (biometricApprovalIdentity != null) {
+                        put("approvalPublicKey", biometricApprovalIdentity.publicKeyBase64Url)
+                        put("approvalKeyId", biometricApprovalIdentity.keyId)
+                    }
                     put("deviceHint", deviceHint())
                     put("platform", "android")
                     put("appVersion", BuildConfig.VERSION_NAME)

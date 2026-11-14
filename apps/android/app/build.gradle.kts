@@ -87,6 +87,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.biometric:biometric:1.1.0")
     // Generated protocol contract (single source of truth for the wire format)
     implementation(project(":core:protocol"))
     implementation(project(":core:agent"))

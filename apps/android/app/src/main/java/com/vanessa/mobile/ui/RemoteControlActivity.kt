@@ -1,6 +1,11 @@
 package com.vanessa.mobile.ui
 
 import android.os.Bundle
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import com.vanessa.mobile.identity.AndroidRemoteApprovalKeyStore
+import com.vanessa.protocol.v2.JcsCanonicalizer
 import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -13,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -34,12 +40,14 @@ import com.vanessa.mobile.remote.RemoteV2BridgeClient
 import com.vanessa.mobile.remote.RemoteV2Event
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /** UI for pairing and remote execution over the authenticated protocol-v2 bridge. */
 class RemoteControlActivity : ComponentActivity() {
     private val bridge by lazy { RemoteV2BridgeClient(applicationContext) }
+    private val approvalKeyStore by lazy { AndroidRemoteApprovalKeyStore(applicationContext) }
     private val qrScanner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             qrPayload = result.data?.getStringExtra(RemotePairingQrScannerActivity.EXTRA_QR_PAYLOAD).orEmpty()
@@ -54,6 +62,7 @@ class RemoteControlActivity : ComponentActivity() {
     private var latestEvent by mutableStateOf("No remote task has run.")
     private var bridgeJob: Job? by mutableStateOf(null)
     private var requestBusy by mutableStateOf(false)
+    private var pendingApproval by mutableStateOf<JsonObject?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -131,6 +140,21 @@ class RemoteControlActivity : ComponentActivity() {
                         }
                         TextButton(onClick = ::disconnect) { Text("Disconnect") }
                     }
+                    pendingApproval?.let { approval ->
+                        AlertDialog(
+                            onDismissRequest = ::denyPendingTask,
+                            title = { Text("Approve action on Windows PC?") },
+                            text = { Text(approvalSummary(approval)) },
+                            confirmButton = {
+                                TextButton(onClick = ::beginBiometricApproval) {
+                                    Text("Approve with biometric")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = ::denyPendingTask) { Text("Deny") }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -186,10 +210,118 @@ class RemoteControlActivity : ComponentActivity() {
                 "task.accepted" -> latestEvent = "PC accepted task ${event.payload["taskId"]?.toString() ?: ""}"
                 "task.progress" -> latestEvent = event.payload["safeSummary"]?.toString() ?: "PC task is running."
                 "task.result" -> latestEvent = "PC result: ${event.payload}"
+                "task.confirmation_required" -> {
+                    pendingApproval = event.payload["approval"] as? JsonObject
+                    latestEvent = "A protected action needs your explicit confirmation."
+                }
                 "task.error", "protocol.error" -> latestEvent = event.payload.toString()
                 "manifest.snapshot" -> latestEvent = "PC manifest loaded: ${event.payload["capabilities"]?.toString() ?: "no capabilities"}"
                 "session.ready" -> connectionStatus = "Connected securely to PC."
                 else -> latestEvent = "${event.type}: ${event.payload}"
+            }
+        }
+    }
+
+    private fun approvalSummary(approval: JsonObject): String {
+        val capability = approval["capability"]?.toString() ?: "PC action"
+        val consequence = approval["consequence"]?.toString() ?: "The PC requested a protected operation."
+        val target = approval["target"]?.toString() ?: "Target not supplied"
+        val expiresAt = approval["expiresAt"]?.toString() ?: "unknown"
+        return "Capability: $capability\n\n$consequence\n\nTarget: $target\n\nExpires at: $expiresAt\n\nThe approval signature is bound to this exact request."
+    }
+
+    private fun beginBiometricApproval() {
+        val approval = pendingApproval ?: return
+        val identity = approvalKeyStore.loadOrCreate()
+        if (identity == null) {
+            latestEvent = "Approval blocked: no hardware-backed strong-biometric key is enrolled for this paired PC. Re-pair after enabling a strong biometric."
+            return
+        }
+        val signature = try {
+            approvalKeyStore.createSignature()
+        } catch (error: Exception) {
+            latestEvent = "Approval key unavailable: ${error.message ?: "strong biometric is required"}"
+            return
+        }
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    lifecycleScope.launch {
+                        try {
+                            val approvedAt = System.currentTimeMillis()
+                            val approvalId = approval["approvalId"]?.toString()?.trim('"')
+                                ?: error("Approval ID is missing.")
+                            val taskId = approval["taskId"]?.toString()?.trim('"')
+                                ?: error("Task ID is missing.")
+                            val actionHash = approval["actionHash"]?.toString()?.trim('"')
+                                ?: error("Action hash is missing.")
+                            val deviceId = approval["deviceId"]?.toString()?.trim('"')
+                                ?: error("Paired device ID is missing.")
+                            val proofBinding = buildJsonObject {
+                                put("approvalId", approvalId)
+                                put("taskId", taskId)
+                                put("actionHash", actionHash)
+                                put("decision", "approved")
+                                put("approvedAt", approvedAt)
+                                put("method", "biometric_strong")
+                                put("deviceId", deviceId)
+                            }
+                            val authenticatedSignature = result.cryptoObject?.signature
+                                ?: error("Android did not return the biometric-authorized signing object.")
+                            authenticatedSignature.update(
+                                JcsCanonicalizer.canonicalize(proofBinding).toByteArray(Charsets.UTF_8)
+                            )
+                            val encodedSignature = java.util.Base64.getUrlEncoder().withoutPadding()
+                                .encodeToString(authenticatedSignature.sign())
+                            val proof = buildJsonObject {
+                                put("keyId", identity.keyId)
+                                put("signature", encodedSignature)
+                            }
+                            bridge.confirmTask(approvalId, taskId, actionHash, true, approvedAt, proof)
+                            pendingApproval = null
+                            latestEvent = "Biometric approval sent. Waiting for the PC verifier."
+                        } catch (error: Exception) {
+                            latestEvent = "Approval failed closed: ${error.message ?: "signature error"}"
+                        }
+                    }
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    latestEvent = "Approval cancelled or failed: $errString"
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    latestEvent = "Biometric was not recognized. No approval was sent."
+                }
+            },
+        )
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Approve protected PC action")
+            .setSubtitle("Verify with a strong biometric")
+            .setDescription("The signature will authorize only the exact capability, target and action hash shown here.")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText("Cancel")
+            .build()
+        prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
+    }
+
+    private fun denyPendingTask() {
+        val approval = pendingApproval ?: return
+        val approvalId = approval["approvalId"]?.toString()?.trim('"') ?: return
+        val taskId = approval["taskId"]?.toString()?.trim('"') ?: return
+        val actionHash = approval["actionHash"]?.toString()?.trim('"') ?: return
+        pendingApproval = null
+        lifecycleScope.launch {
+            try {
+                bridge.confirmTask(approvalId, taskId, actionHash, false, System.currentTimeMillis())
+                latestEvent = "Action denied. No PC operation was executed."
+            } catch (error: Exception) {
+                latestEvent = "Denial could not be delivered: ${error.message ?: "connection lost"}"
             }
         }
     }

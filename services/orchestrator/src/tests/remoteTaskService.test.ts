@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { test } from "node:test";
 import { z } from "zod";
 
 import type { TrustedRemoteDevice, RemotePairingRegistry } from "../remote/remotePairingRegistry.js";
-import { RemoteTaskService } from "../remote/remoteTaskService.js";
+import { RemoteTaskService, verifyRemoteApprovalProof } from "../remote/remoteTaskService.js";
+import { canonicalize, computeKeyId } from "@vanessa/protocol";
 import { MobileTaskEngine } from "../core/mobileTaskEngine.js";
 import type { MobileTool } from "../core/mobileToolRegistry.js";
 
@@ -182,10 +184,19 @@ test("ungranted scopes, unknown identities and revoked devices fail closed", asy
   });
 });
 
-test("destructive approval remains blocked until a biometric-bound proof verifier accepts it", async () => {
-  const device = trustedDevice(["files.delete"]);
+test("destructive approval requires an enrolled action-bound ES256 biometric proof", async () => {
+  const generated = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const approvalPublicKeySpki = (generated.publicKey.export({ type: "spki", format: "der" }) as Buffer).toString("base64url");
+  const approvalKeyId = computeKeyId(generated.publicKey);
+  const device: TrustedRemoteDevice = {
+    ...trustedDevice(["files.delete"]),
+    approvalPublicKeySpki,
+    approvalKeyId,
+  };
   await withEngine([deleteTool()], async (engine) => {
-    const service = new RemoteTaskService(engine, pairings(device));
+    const service = new RemoteTaskService(engine, pairings(device), {
+      verifyApprovalProof: verifyRemoteApprovalProof,
+    });
     const submission = await service.submitTask(PHONE_KEY_ID, {
       requestId,
       idempotencyKey: "phone-delete-request-1",
@@ -199,24 +210,34 @@ test("destructive approval remains blocked until a biometric-bound proof verifie
     assert.equal(approval.target.value, "C:/Users/test/Downloads/report.pdf");
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
-    const response = {
+    const approvedAt = Date.now();
+    const binding = {
       approvalId: approval.approvalId,
       taskId: approval.taskId,
       actionHash: approval.actionHash,
-      decision: "approved" as const,
-      approvedAt: Date.now(),
+      decision: "approved",
+      approvedAt,
       method: "biometric_strong",
+      deviceId: PHONE_DEVICE_ID,
     };
-    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response, { token: "unverified" }), {
-      code: "PERMISSION_DENIED",
-    });
+    const signature = signBytes(
+      "sha256",
+      Buffer.from(canonicalize(binding), "utf8"),
+      generated.privateKey,
+    ).toString("base64url");
+    const response = {
+      ...binding,
+      approvalProof: { keyId: approvalKeyId, signature },
+    };
+    const forged = {
+      ...response,
+      approvalProof: { keyId: approvalKeyId, signature: Buffer.from("forged").toString("base64url") },
+    };
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, { ...binding }), { code: "PERMISSION_DENIED" });
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, forged), { code: "PERMISSION_DENIED" });
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
-    const verifiedService = new RemoteTaskService(engine, pairings(device), {
-      verifyApprovalProof: async ({ proof, device: trusted }) =>
-        trusted.deviceId === PHONE_DEVICE_ID && (proof as any)?.assertion === "verified-test-assertion",
-    });
-    await verifiedService.confirmTask(PHONE_KEY_ID, response, { assertion: "verified-test-assertion" });
+    await service.confirmTask(PHONE_KEY_ID, response);
     await waitFor(() => engine.getTask(approval.taskId)?.state === "done");
   });
 });

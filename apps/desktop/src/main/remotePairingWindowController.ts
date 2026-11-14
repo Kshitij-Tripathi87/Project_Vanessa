@@ -14,6 +14,7 @@ type PairingCreated = {
   code: string;
   createdAt: number;
   expiresAt: number;
+  biometricApprovalAvailable: boolean;
 };
 
 type PendingPairing = {
@@ -24,6 +25,7 @@ type PendingPairing = {
   appVersion: string;
   requestedAt: number;
   expiresAt: number;
+  biometricApprovalAvailable: boolean;
 };
 
 const GRANTED_DEFAULT_SCOPES = [
@@ -213,6 +215,7 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
         "Platform: " + pairing.platform,
         "App version: " + pairing.appVersion,
         "Key ID: " + pairing.keyId,
+        "Strong biometric approval key: " + (pairing.biometricApprovalAvailable ? "enrolled" : "not available"),
         "",
         "Approve grants read status, search approved files, open allow-listed apps and URLs, and open files in approved folders.",
         "Delete, lock, system-control and screen-capture permissions are not granted.",

@@ -5,11 +5,12 @@ import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { isIPv4 } from "node:net";
+import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { safeParseRemoteEnvelope } from "@vanessa/protocol";
 import { RemotePairingRegistry } from "./remote/remotePairingRegistry.js";
-import { RemoteTaskService } from "./remote/remoteTaskService.js";
+import { RemoteTaskService, verifyRemoteApprovalProof } from "./remote/remoteTaskService.js";
 import { RemoteV2Gateway } from "./remote/remoteV2Gateway.js";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
@@ -54,6 +55,33 @@ function isTailscaleIPv4(address: string): boolean {
   if (!isIPv4(address)) return false;
   const octets = address.split(".").map(Number);
   return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+}
+
+function getVerifiedTailscaleIPv4(): string | undefined {
+  const configuredCli = process.env.TAILSCALE_CLI_PATH;
+  const candidates = configuredCli
+    ? [configuredCli]
+    : process.platform === "win32"
+      ? ["tailscale.exe", "C:\\Program Files\\Tailscale\\tailscale.exe"]
+      : ["tailscale"];
+  for (const executable of candidates) {
+    try {
+      const output = execFileSync(executable, ["ip", "-4"], {
+        encoding: "utf8",
+        timeout: 2500,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim().split(/\\s+/)[0];
+      if (!output || !isTailscaleIPv4(output)) continue;
+      const assigned = Object.values(os.networkInterfaces())
+        .flatMap((entries) => entries ?? [])
+        .some((entry) => entry.family === "IPv4" && !entry.internal && entry.address === output);
+      if (assigned) return output;
+    } catch {
+      // An arbitrary 100.64/10 interface is not sufficient proof of Tailscale.
+    }
+  }
+  return undefined;
 }
 
 function authorizeRemoteV2Control(request: any, reply: any): boolean {
@@ -732,14 +760,11 @@ export async function startServer() {
         });
         await remotePairingRegistry.initialize();
 
-        const assignedTailnetAddresses = Object.values(os.networkInterfaces())
-          .flatMap((entries) => entries ?? [])
-          .filter((entry) => entry.family === "IPv4" && !entry.internal && isTailscaleIPv4(entry.address))
-          .map((entry) => entry.address);
+        const attestedTailnetAddress = getVerifiedTailscaleIPv4();
         const requestedHost = process.env.VANESSA_REMOTE_V2_HOST;
         const host = requestedHost
-          ? (assignedTailnetAddresses.includes(requestedHost) ? requestedHost : undefined)
-          : assignedTailnetAddresses[0];
+          ? (requestedHost === attestedTailnetAddress ? requestedHost : undefined)
+          : attestedTailnetAddress;
         if (!host) {
           remoteV2StartupError = "Tailscale is not connected on this PC; the v2 listener remains offline.";
           console.warn("[Vanessa Remote v2] " + remoteV2StartupError);
@@ -748,7 +773,9 @@ export async function startServer() {
           if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65535) {
             throw new Error("VANESSA_REMOTE_V2_PORT must be between 1 and 65535.");
           }
-          const remoteTasks = new RemoteTaskService(mobileTaskEngine, remotePairingRegistry);
+          const remoteTasks = new RemoteTaskService(mobileTaskEngine, remotePairingRegistry, {
+            verifyApprovalProof: verifyRemoteApprovalProof,
+          });
           const signer = async (unsignedEnvelope: any) => {
             const response = await fetch(signerUrl.origin + "/sign", {
               method: "POST",
