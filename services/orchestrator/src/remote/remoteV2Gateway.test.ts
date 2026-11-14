@@ -185,7 +185,9 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     );
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, pending).ok, true);
     assert.equal((pending.payload as Record<string, any>).state, "awaiting_approval");
-    assert.equal((pending.payload as Record<string, any>).biometricApprovalAvailable, true);
+    // The PC-local manager reads this private capability from its authenticated
+    // loopback registry API, not from the phone-visible pairing.pending event.
+    assert.equal(pairings.getPendingApprovals()[0]?.biometricApprovalAvailable, true);
 
     await gateway.approvePairing(window.pairingId, ["system.read", "files.read", "apps.launch"]);
     const approved = await next("pairing.approved");
