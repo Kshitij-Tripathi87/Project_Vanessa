@@ -273,13 +273,16 @@ class VanessaBridgeClient @Inject constructor() {
         require(challenge.payload["pairingRequired"]?.toString() == "true")
 
         val clientNonce = randomNonce()
-        val approvalIdentity = approvalKeyStore.loadOrCreate()
+        // Read-only remote pairing remains available when this handset does
+        // not have a hardware-backed strong-biometric key. In that case the PC
+        // must not grant destructive capabilities to this device.
+        val approvalIdentity = runCatching { approvalKeyStore.loadOrCreate() }.getOrNull()
         sendEnvelope(session, "pairing.claim", buildJsonObject {
             put("pairingId", pairing.pairingId)
             put("code", pairing.pairingCode)
             put("publicKey", identity.publicKeyBase64Url)
             put("keyId", identity.keyId)
-            put("approvalPublicKey", approvalIdentity.publicKeyBase64Url)
+            if (approvalIdentity != null) put("approvalPublicKey", approvalIdentity.publicKeyBase64Url)
             put("deviceHint", deviceHint())
             put("platform", "android")
             put("appVersion", BuildConfig.VERSION_NAME)
