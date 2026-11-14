@@ -258,6 +258,10 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
     device.approvalKeyHardwareAttested = true;
+    device.grantedScopes = [];
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response), { code: "SCOPE_REQUIRED" });
+    assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
+    device.grantedScopes = ["files.delete"];
     await service.confirmTask(PHONE_KEY_ID, response);
     await waitFor(() => engine.getTask(approval.taskId)?.state === "done");
   });
