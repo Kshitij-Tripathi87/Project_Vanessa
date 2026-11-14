@@ -486,7 +486,6 @@ export class RemotePairingRegistry {
         ((value.approvalPublicKeySpki === undefined) !== (value.approvalKeyId === undefined)) ||
         (value.approvalPublicKeySpki !== undefined && typeof value.approvalPublicKeySpki !== "string") ||
         (value.approvalKeyId !== undefined && (typeof value.approvalKeyId !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(value.approvalKeyId))) ||
-        (value.approvalKeyHardwareAttested !== undefined && typeof value.approvalKeyHardwareAttested !== "boolean") ||
         typeof value.deviceHint !== "string" ||
         !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
@@ -520,7 +519,10 @@ export class RemotePairingRegistry {
       ...(typeof value.approvalPublicKeySpki === "string" && typeof value.approvalKeyId === "string"
         ? { approvalPublicKeySpki: value.approvalPublicKeySpki, approvalKeyId: value.approvalKeyId }
         : {}),
-      approvalKeyHardwareAttested: value.approvalKeyHardwareAttested === true,
+      // The persisted device store is not an attestation authority. Until
+      // certificate-chain validation is implemented, restore this as false
+      // even if a modified JSON record claims otherwise.
+      approvalKeyHardwareAttested: false,
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
