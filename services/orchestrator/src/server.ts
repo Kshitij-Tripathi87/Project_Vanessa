@@ -4,7 +4,6 @@ import websocket from "@fastify/websocket";
 import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { isIPv4 } from "node:net";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
@@ -579,13 +578,6 @@ fastify.get("/voice/session", async (_request, reply) => {
 });
 
 
-function isTailscaleIPv4(host: string): boolean {
-  if (!isIPv4(host)) return false;
-  const octets = host.split(".").map(Number);
-  return octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127 &&
-    octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
-}
-
 type TailscaleNodeStatus = { BackendState?: string; Self?: { DNSName?: string } };
 
 async function discoverTailscaleDnsName(): Promise<string | null> {
@@ -768,7 +760,7 @@ export async function startServer() {
     console.log(`[Vanessa Orchestrator] Online at http://127.0.0.1:${PORT}`);
     mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, deviceId, ephemeralResult }) => {
       mobileGateway?.publishTask({ ...task, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
-      remoteV2Gateway?.publishTask({ task, deviceId });
+      remoteV2Gateway?.publishTask({ task, deviceId, ephemeralResult });
       const auditRow = mobileTaskEngine?.recentAudit(100).find((row: any) => row.taskId === task.taskId && row.state === task.state) as any;
       eventBus.emitEvent("audit:log", {
         id: `mobile-${task.taskId}-${task.state}`,
@@ -840,8 +832,6 @@ export async function startServer() {
       const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
       if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");
       const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
-      const octets = host.split(".").map(Number);
-      const tailscaleAddress = isIPv4(host) && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
       if (!loopback) {
         throw new Error("Legacy v1 mobile gateway is loopback-only. Use the authenticated v2 remote gateway for Tailscale access.");
       }
