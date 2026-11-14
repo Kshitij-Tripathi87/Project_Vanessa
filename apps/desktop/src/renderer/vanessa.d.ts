@@ -40,11 +40,11 @@ declare global {
       }>;
       getRemoteV2PendingPairings: () => Promise<Array<{
         pairingId: string; keyId: string; deviceHint: string; platform: string;
-        appVersion: string; requestedAt: number; expiresAt: number;
+        appVersion: string; biometricApprovalAvailable: boolean; requestedAt: number; expiresAt: number;
       }> | { error: string }>;
       getRemoteV2Devices: () => Promise<Array<{
         deviceId: string; deviceHint: string; platform: string; appVersion: string;
-        grantedScopes: string[]; pairedAt: number; revoked: boolean;
+        grantedScopes: string[]; pairedAt: number; revoked: boolean; biometricApprovalAvailable: boolean;
       }> | { error: string }>;
       approveRemoteV2Pairing: (pairingId: string, scopes: string[]) => Promise<{ success?: boolean; error?: string }>;
       rejectRemoteV2Pairing: (pairingId: string) => Promise<{ success?: boolean; error?: string }>;
