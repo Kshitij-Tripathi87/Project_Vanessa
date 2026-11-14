@@ -298,7 +298,16 @@ class VanessaBridgeClient @Inject constructor(@ApplicationContext private val ap
         }
         sendPreSession("pairing.claim", claim, identity, 0)
         val challenge = receiveVerified(pcPublicKey, challengeGuard)
-        if (challenge.type == "protocol.error") throw PairingRejected(challenge.payload.optionalString("message") ?: "The PC rejected the pairing claim.")
+        if (challenge.type == "protocol.error") {
+            throw PairingRejected(challenge.payload.optionalString("message") ?: "The PC rejected the pairing claim.")
+        }
+        if (challenge.type == "pairing.pending") {
+            require(challenge.payload.requiredString("state") == "awaiting_approval") {
+                "PC returned an invalid pending pairing state."
+            }
+            _events.emit(BridgeEvent.PairingPending(pairing.pairingId))
+            return
+        }
         require(challenge.type == "pairing.challenge") { "PC did not issue a pairing proof challenge." }
         val nonce = challenge.payload.requiredString("nonce")
         // The PC stores SHA-256(nonce) and compares SHA-256(submitted nonce)
