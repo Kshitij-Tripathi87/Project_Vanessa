@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { test } from "node:test";
 import { z } from "zod";
 
 import type { TrustedRemoteDevice, RemotePairingRegistry } from "../remote/remotePairingRegistry.js";
-import { RemoteTaskService } from "../remote/remoteTaskService.js";
+import { RemoteTaskService, verifyRemoteApprovalProof } from "../remote/remoteTaskService.js";
+import { canonicalize, computeKeyId } from "@vanessa/protocol";
 import { MobileTaskEngine } from "../core/mobileTaskEngine.js";
 import type { MobileTool } from "../core/mobileToolRegistry.js";
 
@@ -182,10 +184,20 @@ test("ungranted scopes, unknown identities and revoked devices fail closed", asy
   });
 });
 
-test("destructive approval remains blocked until a biometric-bound proof verifier accepts it", async () => {
-  const device = trustedDevice(["files.delete"]);
+test("destructive approval requires an enrolled action-bound ES256 biometric proof", async () => {
+  const generated = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const approvalPublicKeySpki = (generated.publicKey.export({ type: "spki", format: "der" }) as Buffer).toString("base64url");
+  const approvalKeyId = computeKeyId(generated.publicKey);
+  const device: TrustedRemoteDevice = {
+    ...trustedDevice(["files.delete"]),
+    approvalPublicKeySpki,
+    approvalKeyId,
+    approvalKeyHardwareAttested: false,
+  };
   await withEngine([deleteTool()], async (engine) => {
-    const service = new RemoteTaskService(engine, pairings(device));
+    const service = new RemoteTaskService(engine, pairings(device), {
+      verifyApprovalProof: verifyRemoteApprovalProof,
+    });
     const submission = await service.submitTask(PHONE_KEY_ID, {
       requestId,
       idempotencyKey: "phone-delete-request-1",
@@ -199,24 +211,58 @@ test("destructive approval remains blocked until a biometric-bound proof verifie
     assert.equal(approval.target.value, "C:/Users/test/Downloads/report.pdf");
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
+    const approvedAt = Date.now();
+    const binding = {
+      approvalId: approval.approvalId,
+      taskId: approval.taskId,
+      actionHash: approval.actionHash,
+      decision: "approved",
+      approvedAt,
+      method: "biometric_strong",
+      deviceId: PHONE_DEVICE_ID,
+    };
+    const signature = signBytes(
+      "sha256",
+      Buffer.from(canonicalize(binding), "utf8"),
+      generated.privateKey,
+    ).toString("base64url");
+    // deviceId is included in the canonical signature binding, but is
+    // resolved by the PC from the authenticated key and must not be accepted
+    // as a caller-supplied field in the request payload.
     const response = {
       approvalId: approval.approvalId,
       taskId: approval.taskId,
       actionHash: approval.actionHash,
       decision: "approved" as const,
-      approvedAt: Date.now(),
+      approvedAt,
+      method: "biometric_strong",
+      approvalProof: { keyId: approvalKeyId, signature },
+    };
+    const forged = {
+      ...response,
+      approvalProof: { keyId: approvalKeyId, signature: "A".repeat(96) },
+    };
+    const withoutProof = {
+      approvalId: approval.approvalId,
+      taskId: approval.taskId,
+      actionHash: approval.actionHash,
+      decision: "approved" as const,
+      approvedAt,
       method: "biometric_strong",
     };
-    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response, { token: "unverified" }), {
-      code: "PERMISSION_DENIED",
-    });
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, withoutProof), { code: "PERMISSION_DENIED" });
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, forged), { code: "PERMISSION_DENIED" });
+    // A valid signature is still insufficient until the PC has independently
+    // verified the approval key's Android hardware-attestation certificate.
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response), { code: "PERMISSION_DENIED" });
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
-    const verifiedService = new RemoteTaskService(engine, pairings(device), {
-      verifyApprovalProof: async ({ proof, device: trusted }) =>
-        trusted.deviceId === PHONE_DEVICE_ID && (proof as any)?.assertion === "verified-test-assertion",
-    });
-    await verifiedService.confirmTask(PHONE_KEY_ID, response, { assertion: "verified-test-assertion" });
+    device.approvalKeyHardwareAttested = true;
+    device.grantedScopes = [];
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response), { code: "SCOPE_REQUIRED" });
+    assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
+    device.grantedScopes = ["files.delete"];
+    await service.confirmTask(PHONE_KEY_ID, response);
     await waitFor(() => engine.getTask(approval.taskId)?.state === "done");
   });
 });
@@ -241,5 +287,24 @@ test("an authenticated phone may deny its own pending approval without an approv
       method: "device_session",
     });
     assert.equal(engine.getTask(approval.taskId)?.state, "cancelled");
+  });
+});
+
+test("reconnect does not re-issue a pending approval after its capability scope is revoked", async () => {
+  const device = trustedDevice(["files.delete"]);
+  await withEngine([deleteTool()], async (engine) => {
+    const service = new RemoteTaskService(engine, pairings(device));
+    const submitted = await service.submitTask(PHONE_KEY_ID, {
+      requestId,
+      idempotencyKey: "phone-delete-recovery-scope-revoked",
+      capability: "delete_file",
+      canonicalArguments: { path: "C:/Users/test/Downloads/pending.pdf" },
+    });
+    const taskId = submitted.accepted.taskId;
+    assert.ok(service.getTaskRecovery(PHONE_KEY_ID, [taskId])[0]?.confirmationRequired);
+    device.grantedScopes = [];
+    const recovered = service.getTaskRecovery(PHONE_KEY_ID, [taskId]);
+    assert.equal(recovered[0]?.confirmationRequired, undefined);
+    assert.equal(recovered[0]?.snapshot.state, "awaiting_approval");
   });
 });

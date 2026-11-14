@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, verify as verifySignature } from "node:crypto";
 
 import {
   canonicalize,
+  computeKeyId,
+  isSupportedIdentityKey,
+  normalizeIdentityPublicKey,
   safeParseRemotePayload,
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
@@ -13,6 +16,7 @@ import {
   createRemoteTargetDescriptor,
   MobileTaskEngine,
   REMOTE_POLICY_VERSION,
+  type MobileTaskRecoveryRecord,
 } from "../core/mobileTaskEngine.js";
 
 export type RemoteApprovalProofContext = {
@@ -65,6 +69,42 @@ function approvalIdForTask(taskId: string): string {
 
 function mapTaskState(state: string): RemoteTaskState {
   return TIER_TO_STATE[state] ?? "unknown";
+}
+
+/**
+ * Verify a JCS-bound approval with the separate public key enrolled during
+ * pairing. Its private counterpart is non-exportable and requires a fresh
+ * strong-biometric authentication for every signature.
+ */
+export async function verifyRemoteApprovalProof(context: RemoteApprovalProofContext): Promise<boolean> {
+  const proof = context.proof as { keyId?: unknown; signature?: unknown } | undefined;
+  const device = context.device;
+  if (!proof || typeof proof.keyId !== "string" || typeof proof.signature !== "string" ||
+      !device.approvalPublicKeySpki || !device.approvalKeyId ||
+      device.approvalKeyHardwareAttested !== true ||
+      proof.keyId !== device.approvalKeyId ||
+      Math.abs(Date.now() - context.response.approvedAt) > 60_000) return false;
+  try {
+    const publicKey = normalizeIdentityPublicKey(device.approvalPublicKeySpki);
+    if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== device.approvalKeyId) return false;
+    const binding = {
+      approvalId: context.response.approvalId,
+      taskId: context.response.taskId,
+      actionHash: context.response.actionHash,
+      decision: context.response.decision,
+      approvedAt: context.response.approvedAt,
+      method: context.response.method,
+      deviceId: device.deviceId,
+    };
+    return verifySignature(
+      "sha256",
+      Buffer.from(canonicalize(binding), "utf8"),
+      publicKey,
+      Buffer.from(proof.signature, "base64url"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -199,6 +239,10 @@ export class RemoteTaskService {
     }
 
     if (parsed.data.decision === "approved") {
+      const capability = this.engine.getRemoteCapabilities().find((entry) => entry.name === task.tool);
+      if (!capability || !capability.scopes.every((scope) => device.grantedScopes.includes(scope))) {
+        serviceError("SCOPE_REQUIRED", "This device no longer has the required scope to approve the pending PC action.");
+      }
       if (parsed.data.method !== "biometric_strong") {
         serviceError("PERMISSION_DENIED", "A strong biometric approval method is required for remote destructive actions.");
       }
@@ -206,7 +250,8 @@ export class RemoteTaskService {
       if (!verifier) {
         serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
       }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const proofMaterial = parsed.data.approvalProof ?? proof;
+      const verified = await verifier({ device, response: parsed.data, proof: proofMaterial });
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }
@@ -218,6 +263,47 @@ export class RemoteTaskService {
       actionHash: parsed.data.actionHash,
       deviceId: device.deviceId,
     });
+  }
+
+  /** Restore bounded task IDs from the authenticated phone's own durable rows. */
+  getTaskRecovery(keyId: string, taskIds: string[]): Array<{
+    snapshot: MobileTaskRecoveryRecord["snapshot"];
+    task: MobileTaskRecoveryRecord["task"];
+    confirmationRequired?: RemotePayloadFor<"task.confirmation_required">;
+  }> {
+    const device = this.requireTrustedDevice(keyId);
+    const capabilities = new Map(this.engine.getRemoteCapabilities().map((entry) => [entry.name, entry]));
+    return this.engine.getTaskRecoveryForDevice(taskIds, device.deviceId).map((item) => {
+      const capability = capabilities.get(item.task.tool as never);
+      if (!capability || !item.confirmation || !item.task.actionHash ||
+          !capability.scopes.every((scope) => device.grantedScopes.includes(scope))) {
+        return { snapshot: item.snapshot, task: item.task };
+      }
+      const approval = {
+        approvalId: approvalIdForTask(item.task.taskId),
+        taskId: item.task.taskId,
+        taskVersion: 1,
+        deviceId: device.deviceId,
+        capability: capability.name,
+        capabilityVersion: capability.version,
+        consequence: capability.description.slice(0, 500),
+        target: createRemoteTargetDescriptor(item.task.tool, item.canonicalArguments),
+        actionHash: item.task.actionHash,
+        policyVersion: REMOTE_POLICY_VERSION,
+        expiresAt: item.confirmation.expiresAt,
+      };
+      return {
+        snapshot: item.snapshot,
+        task: item.task,
+        confirmationRequired: { approval, eventSeq: 0 },
+      };
+    });
+  }
+
+  /** Fetch durable task state only for the device that owns the task row. */
+  getTaskSnapshot(keyId: string, taskId: string) {
+    const device = this.requireTrustedDevice(keyId);
+    return this.engine.getTaskForDevice(taskId, device.deviceId);
   }
 
   private requireTrustedDevice(keyId: string): TrustedRemoteDevice {

@@ -49,6 +49,7 @@ export type PendingRemotePairing = {
   appVersion: string;
   requestedAt: number;
   expiresAt: number;
+  biometricApprovalAvailable: boolean;
 };
 
 export type TrustedRemoteDevice = {
@@ -56,6 +57,11 @@ export type TrustedRemoteDevice = {
   keyId: string;
   /** Base64url SPKI DER. Public material only; the phone's private key stays in Android Keystore. */
   publicKeySpki: string;
+  /** Optional public key paired with a per-use strong-biometric Android Keystore key. */
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
+  /** Set only after PC-side Android hardware-key attestation verification. */
+  approvalKeyHardwareAttested?: boolean;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
@@ -76,6 +82,8 @@ type PairingEntry = {
   phoneGuard?: RemoteSessionGuard;
   keyId?: string;
   publicKeySpki?: string;
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
   deviceHint?: string;
   platform?: PendingRemotePairing["platform"];
   appVersion?: string;
@@ -269,6 +277,24 @@ export class RemotePairingRegistry {
     entry.phoneGuard = guard;
     entry.keyId = derivedKeyId;
     entry.publicKeySpki = payload.publicKey;
+    if ((payload.approvalPublicKey === undefined) !== (payload.approvalKeyId === undefined)) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval key must include both its public key and key ID.");
+    }
+    if (payload.approvalPublicKey && payload.approvalKeyId) {
+      try {
+        const approvalKey = normalizeIdentityPublicKey(payload.approvalPublicKey);
+        if (!isSupportedIdentityKey(approvalKey) || computeKeyId(approvalKey) !== payload.approvalKeyId) {
+          throw new Error("Approval key does not match its ID.");
+        }
+      } catch {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval key is invalid.");
+      }
+      entry.approvalPublicKeySpki = payload.approvalPublicKey;
+      entry.approvalKeyId = payload.approvalKeyId;
+    } else {
+      entry.approvalPublicKeySpki = undefined;
+      entry.approvalKeyId = undefined;
+    }
     entry.deviceHint = payload.deviceHint;
     entry.platform = payload.platform;
     entry.appVersion = payload.appVersion;
@@ -354,6 +380,12 @@ export class RemotePairingRegistry {
       deviceId: randomUUID(),
       keyId: entry.keyId,
       publicKeySpki: entry.publicKeySpki,
+      ...(entry.approvalPublicKeySpki && entry.approvalKeyId
+        ? { approvalPublicKeySpki: entry.approvalPublicKeySpki, approvalKeyId: entry.approvalKeyId }
+        : {}),
+      // A public key in a signed pairing claim is self-asserted. It does not
+      // prove Android Keystore hardware backing or per-use authentication.
+      approvalKeyHardwareAttested: false,
       deviceHint: entry.deviceHint,
       platform: entry.platform,
       appVersion: entry.appVersion,
@@ -407,6 +439,8 @@ export class RemotePairingRegistry {
         appVersion: entry.appVersion!,
         requestedAt: entry.requestedAt!,
         expiresAt: entry.challengeExpiresAt!,
+        // Fail closed until the PC validates an Android key-attestation chain.
+        biometricApprovalAvailable: false,
       }))
       .sort((a, b) => a.requestedAt - b.requestedAt);
   }
@@ -449,6 +483,9 @@ export class RemotePairingRegistry {
         typeof value.keyId !== "string" ||
         !/^[A-Za-z0-9_-]{16,128}$/.test(value.keyId) ||
         typeof value.publicKeySpki !== "string" ||
+        ((value.approvalPublicKeySpki === undefined) !== (value.approvalKeyId === undefined)) ||
+        (value.approvalPublicKeySpki !== undefined && typeof value.approvalPublicKeySpki !== "string") ||
+        (value.approvalKeyId !== undefined && (typeof value.approvalKeyId !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(value.approvalKeyId))) ||
         typeof value.deviceHint !== "string" ||
         !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
@@ -464,6 +501,12 @@ export class RemotePairingRegistry {
     if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== value.keyId) {
       throw new Error("Trusted-device store contains an invalid P-256 identity.");
     }
+    if (value.approvalPublicKeySpki && value.approvalKeyId) {
+      const approvalKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
+      if (!isSupportedIdentityKey(approvalKey) || computeKeyId(approvalKey) !== value.approvalKeyId) {
+        throw new Error("Trusted-device store contains an invalid biometric approval key.");
+      }
+    }
     if (value.grantedScopes.length > 32 ||
         new Set(value.grantedScopes).size !== value.grantedScopes.length ||
         value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
@@ -473,10 +516,20 @@ export class RemotePairingRegistry {
       deviceId: value.deviceId,
       keyId: value.keyId,
       publicKeySpki: value.publicKeySpki,
+      ...(typeof value.approvalPublicKeySpki === "string" && typeof value.approvalKeyId === "string"
+        ? { approvalPublicKeySpki: value.approvalPublicKeySpki, approvalKeyId: value.approvalKeyId }
+        : {}),
+      // The persisted device store is not an attestation authority. Until
+      // certificate-chain validation is implemented, restore this as false
+      // even if a modified JSON record claims otherwise.
+      approvalKeyHardwareAttested: false,
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
-      grantedScopes: [...value.grantedScopes] as string[],
+      // v1 trusted-device stores may contain a previously granted delete scope.
+      // Drop it on restore: no device is considered attested until the PC
+      // validates an Android key-attestation certificate chain.
+      grantedScopes: (value.grantedScopes as string[]).filter((scope) => scope !== "files.delete"),
       pairedAt: value.pairedAt,
       revoked: value.revoked,
     };

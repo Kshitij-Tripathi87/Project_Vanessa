@@ -72,6 +72,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
@@ -87,6 +88,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.biometric:biometric:1.1.0")
     // Generated protocol contract (single source of truth for the wire format)
     implementation(project(":core:protocol"))
     implementation(project(":core:agent"))
@@ -123,7 +125,8 @@ dependencies {
 
     // Ktor (WebSocket client)
     implementation("io.ktor:ktor-client-core:2.3.8")
-    implementation("io.ktor:ktor-client-android:2.3.8")
+    // Android engine is HTTP-only; CIO is required for the v2 WebSocket transport.
+    implementation("io.ktor:ktor-client-cio:2.3.8")
     implementation("io.ktor:ktor-client-websockets:2.3.8")
     implementation("io.ktor:ktor-client-logging:2.3.8")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.8")
