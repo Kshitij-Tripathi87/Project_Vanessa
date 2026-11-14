@@ -233,7 +233,7 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
       noLink: true,
     });
     if (decision.response === 0 || (pairing.biometricApprovalAvailable && decision.response === 1)) {
-      const scopes = [...GRANTED_DEFAULT_SCOPES];
+      const scopes: string[] = [...GRANTED_DEFAULT_SCOPES];
       if (pairing.biometricApprovalAvailable && decision.response === 1) scopes.push("files.delete");
       await this.localRequest(
         port,
