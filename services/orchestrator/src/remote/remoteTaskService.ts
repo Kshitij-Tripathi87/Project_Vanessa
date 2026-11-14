@@ -133,6 +133,39 @@ export class RemoteTaskService {
     };
   }
 
+  resumeSnapshot(keyId: string, value: unknown): RemotePayloadFor<"sync.snapshot"> {
+    const parsed = safeParseRemotePayload("sync.resume", value);
+    if (!parsed.success) serviceError("INVALID_PAYLOAD", "Session resume payload is invalid.");
+    const device = this.requireTrustedDevice(keyId);
+    const tasks = this.engine.listDeviceTasks(device.deviceId, 50).map((task) => ({
+      taskId: task.taskId,
+      requestId: task.requestId,
+      capability: task.tool,
+      state: mapTaskState(task.state),
+      tier: `T${task.tier}` as RemotePayloadFor<"task.snapshot">["task"]["tier"],
+      taskVersion: 1,
+      acceptedAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      safeSummary: task.error
+        ? task.error.slice(0, 500)
+        : task.state === "done"
+          ? "Task completed; the PC recorded its result."
+          : task.state === "failed"
+            ? "Task failed on the PC."
+            : task.state === "awaiting_confirm"
+              ? "Task is waiting for approval."
+              : `Task is currently ${task.state}.`,
+    }));
+    return {
+      lastEventSeq: parsed.data.lastEventSeq,
+      historyGap: true,
+      tasks,
+      // Event deltas are not yet retained separately. Snapshots are durable and
+      // explicit about the history gap instead of pretending no events were missed.
+      events: [],
+    };
+  }
+
   async submitTask(keyId: string, value: unknown): Promise<RemoteTaskSubmission> {
     const parsed = safeParseRemotePayload("task.submit", value);
     if (!parsed.success) serviceError("INVALID_PAYLOAD", "Task submission payload is invalid.");
