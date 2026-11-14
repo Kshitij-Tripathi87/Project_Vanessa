@@ -220,9 +220,9 @@ export class RemotePairingRegistry {
 
     const entry = this.pairings.get(payload.pairingId);
     if (!entry) throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
-    if (entry.expiresAt <= nowMs) {
+    if (entry.expiresAt <= nowMs || entry.state === "expired") {
       entry.state = "expired";
-      throw new PairingRegistryError("PAIRING_EXPIRED", "Pairing code has expired.");
+      throw new PairingRegistryError("PAIRING_EXPIRED", "Pairing code has expired or its attempt limit was reached.");
     }
     if (entry.state !== "ready") {
       throw new PairingRegistryError("PAIRING_ALREADY_CLAIMED", "Pairing code has already been claimed.");
@@ -295,12 +295,18 @@ export class RemotePairingRegistry {
     const payload = parsed.data;
 
     const entry = this.pairings.get(payload.pairingId);
-    if (!entry || entry.state !== "challenge_issued" || !entry.phoneGuard || !entry.challengeNonce || !entry.challengeExpiresAt) {
+    if (!entry) {
       throw new PairingRegistryError("PAIRING_STATE_INVALID", "Pairing challenge is not active.");
     }
-    if (entry.challengeExpiresAt <= nowMs) {
+    // Expiry is checked before the lifecycle-state guard because expirePending()
+    // may already have transitioned an expired challenge to "expired".
+    if (entry.state === "expired" || entry.expiresAt <= nowMs ||
+        (entry.challengeExpiresAt !== undefined && entry.challengeExpiresAt <= nowMs)) {
       entry.state = "expired";
       throw new PairingRegistryError("PAIRING_EXPIRED", "Pairing challenge has expired.");
+    }
+    if (entry.state !== "challenge_issued" || !entry.phoneGuard || !entry.challengeNonce || !entry.challengeExpiresAt) {
+      throw new PairingRegistryError("PAIRING_STATE_INVALID", "Pairing challenge is not active.");
     }
     if (!constantTimeCodeMatch(payload.challengeNonce, createHash("sha256").update(entry.challengeNonce).digest("hex"))) {
       throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Pairing challenge response does not match.");
