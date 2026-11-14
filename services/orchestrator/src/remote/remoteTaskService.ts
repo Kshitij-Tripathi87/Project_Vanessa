@@ -80,6 +80,7 @@ export async function verifyRemoteApprovalProof(context: RemoteApprovalProofCont
   const device = context.device;
   if (!proof || typeof proof.keyId !== "string" || typeof proof.signature !== "string" ||
       !device.approvalPublicKeySpki || !device.approvalKeyId ||
+      device.approvalKeyHardwareAttested !== true ||
       proof.keyId !== device.approvalKeyId ||
       Math.abs(Date.now() - context.response.approvedAt) > 60_000) return false;
   try {
