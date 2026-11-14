@@ -4,6 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { WebSocket } from "ws";
 import {
+  PRE_SESSION_ID,
   computeKeyId,
   decodeRemoteEnvelope,
   signRemoteEnvelope,
@@ -108,7 +109,7 @@ test("gateway waits for a loopback listener and sends a verifiable signed challe
     const envelope = decodeRemoteEnvelope(raw);
     assert.equal(envelope.type, "server.challenge");
     assert.equal(envelope.keyId, keyId);
-    assert.equal(envelope.sessionId, "pre-session");
+    assert.equal(envelope.sessionId, PRE_SESSION_ID);
     assert.equal(verifyRemoteEnvelopeSignature(pair.publicKey, envelope).ok, true);
   } finally {
     if (socket && socket.readyState === WebSocket.OPEN) {
