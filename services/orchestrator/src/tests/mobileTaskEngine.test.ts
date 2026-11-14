@@ -50,6 +50,10 @@ test("task execution verifies results and idempotency returns the original task"
     const duplicate = await engine.submit({ requestId: "request-2", idempotencyKey: "device:req-1", tool: "read_test", args: { value: "alice@example.com" } });
     assert.equal(duplicate.taskId, first.taskId);
     assert.equal(duplicate.duplicate, true);
+    await assert.rejects(
+      engine.submit({ requestId: "request-3", idempotencyKey: "device:req-1", tool: "read_test", args: { value: "different@example.com" } }),
+      { code: "IDEMPOTENCY_CONFLICT" },
+    );
     await waitFor(() => engine.getTask(first.taskId)?.state === "done");
     assert.equal(runs, 1);
     assert.deepEqual(engine.getTask(first.taskId)?.result, { value: "[REDACTED_EMAIL]" });
