@@ -192,6 +192,7 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
     ...trustedDevice(["files.delete"]),
     approvalPublicKeySpki,
     approvalKeyId,
+    approvalKeyHardwareAttested: false,
   };
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device), {
@@ -251,8 +252,12 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
     };
     await assert.rejects(service.confirmTask(PHONE_KEY_ID, withoutProof), { code: "PERMISSION_DENIED" });
     await assert.rejects(service.confirmTask(PHONE_KEY_ID, forged), { code: "PERMISSION_DENIED" });
+    // A valid signature is still insufficient until the PC has independently
+    // verified the approval key's Android hardware-attestation certificate.
+    await assert.rejects(service.confirmTask(PHONE_KEY_ID, response), { code: "PERMISSION_DENIED" });
     assert.equal(engine.getTask(approval.taskId)?.state, "awaiting_confirm");
 
+    device.approvalKeyHardwareAttested = true;
     await service.confirmTask(PHONE_KEY_ID, response);
     await waitFor(() => engine.getTask(approval.taskId)?.state === "done");
   });
