@@ -32,9 +32,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.net.URI
 import java.security.KeyFactory
@@ -378,6 +381,11 @@ class RemoteV2BridgeClient(context: Context) {
             activeSessionId = sessionId
             nextSequence = 1
             sendAuthenticated("manifest.get", buildJsonObject {})
+            sendAuthenticated("sync.resume", buildJsonObject {
+                put("lastEventSeq", preferences.getLong(KEY_LAST_EVENT_SEQ, 0L))
+                put("activeTaskIds", JsonArray(loadActiveTaskIds().map { JsonPrimitive(it) }))
+                put("clientNonce", base64Url(randomBytes(24)))
+            })
             onState("Connected securely to ${config.pcName}.")
             onEvent(RemoteV2Event("session.ready", ready.payload))
 
@@ -395,6 +403,7 @@ class RemoteV2BridgeClient(context: Context) {
                     if (result !is RemoteEnvelopeCheck.Accepted) {
                         throw SecurityException("PC message rejected by the session guard: $result")
                     }
+                    updateRecoveryState(envelope)
                     if (envelope.type == "session.close" || envelope.type == "session.expiring") {
                         throw IllegalStateException("PC session closed or expired.")
                     }
@@ -414,6 +423,59 @@ class RemoteV2BridgeClient(context: Context) {
                 heartbeat.cancel()
                 activeSession = null
                 activeSessionId = null
+            }
+        }
+    }
+
+    private fun loadActiveTaskIds(): List<String> {
+        val raw = preferences.getString(KEY_ACTIVE_TASK_IDS, "[]") ?: "[]"
+        return runCatching {
+            (json.parseToJsonElement(raw) as? JsonArray)
+                ?.mapNotNull { element -> runCatching { element.jsonPrimitive.content }.getOrNull() }
+                ?.filter { it.matches(Regex("^[0-9a-fA-F-]{36}$")) }
+                ?.distinct()
+                ?.take(50)
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun saveActiveTaskIds(ids: Collection<String>) {
+        val safe = ids.filter { it.matches(Regex("^[0-9a-fA-F-]{36}$")) }.distinct().take(50)
+        preferences.edit().putString(KEY_ACTIVE_TASK_IDS, JsonArray(safe.map { JsonPrimitive(it) }).toString()).apply()
+    }
+
+    private fun updateRecoveryState(envelope: RemoteEnvelopeV2) {
+        val payload = envelope.payload
+        val eventSeq = payload["eventSeq"]?.jsonPrimitive?.longOrNull
+        if (eventSeq != null) {
+            preferences.edit().putLong(KEY_LAST_EVENT_SEQ, maxOf(preferences.getLong(KEY_LAST_EVENT_SEQ, 0L), eventSeq)).apply()
+        }
+        when (envelope.type) {
+            "task.accepted", "task.confirmation_required" -> {
+                val id = if (envelope.type == "task.accepted") payload["taskId"] else
+                    (payload["approval"] as? JsonObject)?.get("taskId")
+                val taskId = id?.jsonPrimitive?.content ?: return
+                saveActiveTaskIds(loadActiveTaskIds() + taskId)
+            }
+            "task.result", "task.error" -> {
+                val taskId = payload["taskId"]?.jsonPrimitive?.content ?: return
+                saveActiveTaskIds(loadActiveTaskIds().filterNot { it == taskId })
+            }
+            "sync.snapshot" -> {
+                val tasks = payload["tasks"] as? JsonArray ?: JsonArray(emptyList())
+                val active = tasks.mapNotNull { element ->
+                    val item = element as? JsonObject ?: return@mapNotNull null
+                    val state = item["state"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    if (state in setOf("succeeded", "failed", "cancelled", "timed_out")) return@mapNotNull null
+                    item["taskId"]?.jsonPrimitive?.content
+                }
+                saveActiveTaskIds(active)
+                val last = payload["lastEventSeq"]?.jsonPrimitive?.longOrNull
+                if (last != null) preferences.edit().putLong(KEY_LAST_EVENT_SEQ, maxOf(preferences.getLong(KEY_LAST_EVENT_SEQ, 0L), last)).apply()
+            }
+            "sync.complete" -> {
+                val last = payload["lastEventSeq"]?.jsonPrimitive?.longOrNull
+                if (last != null) preferences.edit().putLong(KEY_LAST_EVENT_SEQ, maxOf(preferences.getLong(KEY_LAST_EVENT_SEQ, 0L), last)).apply()
             }
         }
     }
@@ -576,6 +638,8 @@ class RemoteV2BridgeClient(context: Context) {
 
     companion object {
         private const val KEY_PAIRED_PC_KEY_ID = "paired_pc_key_id"
+        private const val KEY_ACTIVE_TASK_IDS = "active_remote_task_ids"
+        private const val KEY_LAST_EVENT_SEQ = "last_remote_event_seq"
     }
 }
 
