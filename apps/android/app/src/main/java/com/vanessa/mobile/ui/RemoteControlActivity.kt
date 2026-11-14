@@ -1,6 +1,8 @@
 package com.vanessa.mobile.ui
 
 import android.os.Bundle
+import android.content.Intent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +40,15 @@ import kotlinx.serialization.json.put
 /** UI for pairing and remote execution over the authenticated protocol-v2 bridge. */
 class RemoteControlActivity : ComponentActivity() {
     private val bridge by lazy { RemoteV2BridgeClient(applicationContext) }
+    private val qrScanner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            qrPayload = result.data?.getStringExtra(RemotePairingQrScannerActivity.EXTRA_QR_PAYLOAD).orEmpty()
+            if (qrPayload.isNotBlank()) connectWithQr()
+        } else {
+            val reason = result.data?.getStringExtra(RemotePairingQrScannerActivity.EXTRA_ERROR)
+            if (!reason.isNullOrBlank()) connectionStatus = reason
+        }
+    }
     private var qrPayload by mutableStateOf("")
     private var connectionStatus by mutableStateOf("Not connected")
     private var latestEvent by mutableStateOf("No remote task has run.")
@@ -77,6 +88,11 @@ class RemoteControlActivity : ComponentActivity() {
                             enabled = bridgeJob?.isActive != true,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { qrScanner.launch(Intent(this@RemoteControlActivity, RemotePairingQrScannerActivity::class.java)) },
+                                enabled = bridgeJob?.isActive != true,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Scan QR") }
                             Button(
                                 onClick = ::connectWithQr,
                                 enabled = qrPayload.isNotBlank() && bridgeJob?.isActive != true,

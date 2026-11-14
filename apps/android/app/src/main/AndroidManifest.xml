@@ -8,6 +8,7 @@
     <!-- Normal permissions: no runtime prompt. Needed for the signed PC WebSocket over Tailscale. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Declare the platform on-device speech service without broad package visibility. -->
     <queries>
@@ -25,6 +26,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Vanessa"
         tools:targetApi="31">
+
+        <activity
+            android:name=".ui.RemotePairingQrScannerActivity"
+            android:exported="false"
+            android:label="Scan Vanessa QR"
+            android:theme="@style/Theme.Vanessa" />
 
         <activity
             android:name=".ui.RemoteControlActivity"
