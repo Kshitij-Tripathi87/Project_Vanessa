@@ -47,6 +47,7 @@ export type PendingRemotePairing = {
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
+  biometricApprovalAvailable: boolean;
   requestedAt: number;
   expiresAt: number;
 };
@@ -362,6 +363,12 @@ export class RemotePairingRegistry {
         grantedScopes.some((scope) => !validScope(scope))) {
       throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Granted scopes are invalid.");
     }
+    if (grantedScopes.includes("files.delete") && !entry.approvalPublicKeySpki) {
+      throw new PairingRegistryError(
+        "PAIRING_PROOF_INVALID",
+        "This phone did not register a hardware-backed biometric approval key; file deletion cannot be granted.",
+      );
+    }
     if (this.trustedDevices.has(entry.keyId)) {
       const existing = this.trustedDevices.get(entry.keyId)!;
       if (!existing.revoked) throw new PairingRegistryError("PAIRING_ALREADY_CLAIMED", "This phone is already paired.");
@@ -423,6 +430,7 @@ export class RemotePairingRegistry {
         deviceHint: entry.deviceHint!,
         platform: entry.platform!,
         appVersion: entry.appVersion!,
+        biometricApprovalAvailable: !!entry.approvalPublicKeySpki,
         requestedAt: entry.requestedAt!,
         expiresAt: entry.challengeExpiresAt!,
       }))
