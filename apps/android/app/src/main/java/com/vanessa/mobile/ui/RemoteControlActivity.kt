@@ -31,12 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.fragment.app.FragmentActivity
-import com.vanessa.mobile.R
 import com.vanessa.mobile.bridge.ConnectionState
 import com.vanessa.mobile.viewmodel.PairingViewModel
-import com.vanessa.mobile.pairing.PairingStatus
-import com.google.android.material.color.MaterialColors
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -64,10 +62,10 @@ class RemoteControlActivity : FragmentActivity() {
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    primary = MaterialTheme.colorScheme.primary,
-                    secondary = MaterialTheme.colorScheme.secondary,
-                    background = MaterialTheme.colorScheme.background,
-                    surface = MaterialTheme.colorScheme.surface,
+                    primary = Color(0xFF66D9E8),
+                    secondary = Color(0xFF8B9CFF),
+                    background = Color(0xFF0B1018),
+                    surface = Color(0xFF151D2A),
                 )
             ) {
                 val state by pairingViewModel.state.collectAsState()
@@ -184,7 +182,7 @@ private fun RemoteControlScreen(
                     maxLines = 4,
                 )
                 Text(
-                    "Try system_status with {} or open_app with {"app":"notepad"}. The PC still validates capability, arguments, permissions and verification.",
+                    "Try system_status with {} or open_app with {\\"app\\":\\"notepad\\"}. The PC still validates capability, arguments, permissions and verification.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
