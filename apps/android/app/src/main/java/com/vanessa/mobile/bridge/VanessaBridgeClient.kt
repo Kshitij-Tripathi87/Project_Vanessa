@@ -1,9 +1,14 @@
 package com.vanessa.mobile.bridge
 
+import android.content.Context
 import android.os.Build
+import androidx.biometric.BiometricManager
+import androidx.fragment.app.FragmentActivity
 import android.util.Log
 import com.vanessa.mobile.di.StoredPairing
 import com.vanessa.mobile.identity.AndroidRemoteIdentityStore
+import com.vanessa.mobile.identity.AndroidRemoteApprovalKeyStore
+import com.vanessa.mobile.identity.RemoteApprovalBinding
 import com.vanessa.protocol.v2.PRE_SESSION_ID
 import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
 import com.vanessa.protocol.v2.RemoteEnvelopeSeedV2
@@ -20,10 +25,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.send
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -41,17 +43,15 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.net.URLEncoder
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import java.util.UUID
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -97,12 +97,13 @@ private class PairingRejected(message: String) : Exception(message)
  * timestamp and replay checks.
  */
 @Singleton
-class VanessaBridgeClient @Inject constructor() {
+class VanessaBridgeClient @Inject constructor(@ApplicationContext private val appContext: Context) {
     private val tag = "VanessaRemoteV2"
     private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
     private val identityStore = AndroidRemoteIdentityStore()
+    private val approvalKeyStore = AndroidRemoteApprovalKeyStore()
     private val http = HttpClient(Android) {
-        install(WebSockets) { pingInterval = 25_000 }
+        install(WebSockets)
     }
     private val sendMutex = Mutex()
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -116,7 +117,6 @@ class VanessaBridgeClient @Inject constructor() {
     @Volatile private var outgoingSequence = 0
     @Volatile private var manualDisconnect = false
     private var pingJob: Job? = null
-    private val connectionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val requestIds = mutableMapOf<String, String>()
 
     /**
@@ -127,7 +127,7 @@ class VanessaBridgeClient @Inject constructor() {
         if (_connectionState.value is ConnectionState.Connected) return
         activePairing = pairing
         manualDisconnect = false
-        var preferPairingClaim = pairing.deviceId == null
+        var preferPairingClaim = false
         var attempts = 0
 
         while (!manualDisconnect && currentCoroutineContext().isActive) {
@@ -161,6 +161,7 @@ class VanessaBridgeClient @Inject constructor() {
             } finally {
                 activeSocket = null
                 activeSessionId = null
+                sessionGuard = null
                 pingJob?.cancel()
                 pingJob = null
             }
@@ -276,6 +277,12 @@ class VanessaBridgeClient @Inject constructor() {
         challengeGuard: RemoteEnvelopeSessionGuard,
     ) {
         val clientNonce = randomBase64Url(32)
+        val biometricAvailable = BiometricManager.from(appContext)
+            .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+        val approvalIdentity = if (biometricAvailable) {
+            runCatching { approvalKeyStore.loadOrCreate() }.getOrNull()
+        } else null
         val claim = buildJsonObject {
             put("pairingId", pairing.pairingId)
             put("code", pairing.pairingCode)
@@ -285,6 +292,10 @@ class VanessaBridgeClient @Inject constructor() {
             put("platform", "android")
             put("appVersion", "0.1.0")
             put("clientNonce", clientNonce)
+            if (approvalIdentity != null) {
+                put("approvalPublicKey", approvalIdentity.publicKeyBase64Url)
+                put("approvalKeyId", approvalIdentity.keyId)
+            }
         }
         sendPreSession("pairing.claim", claim, identity, 0)
         val challenge = receiveVerified(pcPublicKey, challengeGuard)
@@ -512,6 +523,40 @@ class VanessaBridgeClient @Inject constructor() {
             put("taskId", taskId)
             put("requestId", requestId)
             put("reason", "Cancelled from the Android client.")
+        })
+    }
+
+    /** Strong-biometric approval signs a separate action-bound proof before sending the v2 response. */
+    suspend fun approveTaskWithBiometric(
+        activity: FragmentActivity,
+        taskId: String,
+        approvalId: String,
+        actionHash: String,
+        consequence: String,
+    ) {
+        val approvedAt = System.currentTimeMillis()
+        val binding = RemoteApprovalBinding(
+            approvalId = approvalId,
+            taskId = taskId,
+            actionHash = actionHash,
+            approvedAt = approvedAt,
+        )
+        val (approvalIdentity, signature) = approvalKeyStore.signWithStrongBiometricSuspend(
+            activity = activity,
+            binding = binding,
+            promptSubtitle = consequence,
+        )
+        sendSessionMessage("task.confirmation_response", buildJsonObject {
+            put("approvalId", approvalId)
+            put("taskId", taskId)
+            put("actionHash", actionHash)
+            put("decision", "approved")
+            put("approvedAt", approvedAt)
+            put("method", "biometric_strong")
+            put("biometricProof", buildJsonObject {
+                put("approvalKeyId", approvalIdentity.keyId)
+                put("signature", signature)
+            })
         })
     }
 
