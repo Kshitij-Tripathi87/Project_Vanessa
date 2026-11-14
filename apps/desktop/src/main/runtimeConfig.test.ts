@@ -15,9 +15,16 @@ test("packaged runtime defaults match the orchestrator and voice-agent servers",
   assert.equal(resolveOrchestratorWebSocketUrl({}), "ws://127.0.0.1:4319/events");
 });
 
-test("runtime ports honor explicit valid per-user settings", () => {
+test("orchestrator port honors explicit valid per-user settings", () => {
   assert.equal(resolveOrchestratorPort({ VANESSA_PORT: "4421" }), 4421);
-  assert.equal(resolveVoiceAgentPort({ VOICE_AGENT_PORT: "4521" }), 4521);
+});
+
+test("voice port rejects unsupported overrides that the renderer cannot reach", () => {
+  assert.equal(resolveVoiceAgentPort({}), 4500);
+  assert.throws(
+    () => resolveVoiceAgentPort({ VOICE_AGENT_PORT: "4521" }),
+    /VOICE_AGENT_PORT must be 4500/,
+  );
 });
 
 test("invalid runtime ports fail before spawning child processes", () => {
