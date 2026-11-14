@@ -21,7 +21,13 @@ export function resolveOrchestratorPort(env: RuntimeEnvironment = process.env): 
 
 /** The voice agent reads VOICE_AGENT_PORT and defaults to 4500. */
 export function resolveVoiceAgentPort(env: RuntimeEnvironment = process.env): number {
-  return parsePort(env.VOICE_AGENT_PORT, 4500, "VOICE_AGENT_PORT");
+  const port = parsePort(env.VOICE_AGENT_PORT, 4500, "VOICE_AGENT_PORT");
+  // The current Electron renderer connects to the voice service on port 4500.
+  // Reject mismatches instead of shipping an installed app with a dead voice UI.
+  if (port !== 4500) {
+    throw new Error("VOICE_AGENT_PORT must be 4500 because the desktop renderer currently uses the fixed voice endpoint.");
+  }
+  return port;
 }
 
 /** Main-process HTTP clients resolve this lazily, after the per-user .env is loaded. */
