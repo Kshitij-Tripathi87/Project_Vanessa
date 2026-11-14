@@ -3,11 +3,11 @@ package com.vanessa.mobile.identity
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.vanessa.protocol.v2.JcsCanonicalizer
+import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -38,30 +38,16 @@ class AndroidRemoteApprovalKeyStore(
     /** Generate/read a distinct biometric-only key. Unsupported devices fail closed. */
     @Synchronized
     fun loadOrCreate(): AndroidApprovalIdentity {
-        val manager = BiometricManager.from(applicationContextHolder ?: throw IllegalStateException(
-            "Call AndroidRemoteApprovalKeyStore.initialize(context) before requesting biometric identity."
-        ))
-        if (manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS) {
-            throw IllegalStateException("Strong biometric authentication is not enrolled or supported.")
-        }
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val existing = store.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         val entry = existing ?: generateEntry()
         val publicKey = entry.certificate.publicKey as? ECPublicKey
             ?: throw IllegalStateException("Biometric approval identity is not an EC key.")
-        require(RemoteApprovalCrypto.isP256(publicKey)) { "Biometric approval identity must use P-256." }
+        require(RemoteEnvelopeCrypto.isP256(publicKey)) { "Biometric approval identity must use P-256."}
         return AndroidApprovalIdentity(
-            keyId = RemoteApprovalCrypto.keyId(publicKey.encoded),
+            keyId = RemoteEnvelopeCrypto.keyId(publicKey.encoded),
             publicKeyBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey.encoded),
         )
-    }
-
-    fun signWithStrongBiometric(
-        activity: FragmentActivity,
-        binding: RemoteApprovalBinding,
-        promptSubtitle: String,
-    ): String {
-        throw IllegalStateException("Use signWithStrongBiometricSuspend from a coroutine.")
     }
 
     suspend fun signWithStrongBiometricSuspend(
@@ -166,24 +152,6 @@ class AndroidRemoteApprovalKeyStore(
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val DEFAULT_ALIAS = "com.vanessa.remote.approval.biometric.es256.v2"
-        @Volatile private var applicationContextHolder: android.content.Context? = null
-
-        fun initialize(context: android.content.Context) {
-            applicationContextHolder = context.applicationContext
-        }
     }
 }
 
-/** Kept separate from RemoteEnvelopeCrypto to make the key's role explicit. */
-private object RemoteApprovalCrypto {
-    fun isP256(publicKey: ECPublicKey): Boolean =
-        runCatching {
-            val params = publicKey.params
-            params.order.bitLength() == 256 && params.cofactor == 1
-        }.getOrDefault(false)
-
-    fun keyId(spki: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(spki)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest.copyOfRange(0, 16))
-    }
-}
