@@ -56,6 +56,8 @@ type ActiveSocket = {
   eventSequence: number;
   expiresAt: number;
   inboundMessageTimes: number[];
+  unackedRequestIds: Set<string>;
+  deferredTaskEvents: Map<string, Array<{ task: RemoteGatewayTask; ephemeralResult?: unknown }>>;
 };
 
 export type RemoteV2GatewayOptions = {
@@ -244,7 +246,13 @@ export class RemoteV2Gateway {
         session.socket.close(1008, "Session expired");
         continue;
       }
-      void this.publishTaskToSession(session, event.task, event.ephemeralResult);
+      if (session.unackedRequestIds.has(event.task.requestId)) {
+        const deferred = session.deferredTaskEvents.get(event.task.requestId) ?? [];
+        deferred.push({ task: event.task, ...(event.ephemeralResult !== undefined ? { ephemeralResult: event.ephemeralResult } : {}) });
+        session.deferredTaskEvents.set(event.task.requestId, deferred);
+      } else {
+        void this.publishTaskToSession(session, event.task, event.ephemeralResult);
+      }
     }
   }
 
@@ -430,6 +438,8 @@ export class RemoteV2Gateway {
       eventSequence: 0,
       expiresAt,
       inboundMessageTimes: [],
+      unackedRequestIds: new Set<string>(),
+      deferredTaskEvents: new Map(),
     };
     this.sockets.set(state.socket, active);
     const sessions = this.activeByDeviceId.get(device.deviceId) ?? new Set<ActiveSocket>();
@@ -475,11 +485,35 @@ export class RemoteV2Gateway {
         return;
       }
       case "task.submit": {
-        const submitted = await this.options.tasks.submitTask(state.keyId, envelope.payload);
-        await this.sendSigned(state.socket, "task.accepted", state.sessionId, submitted.accepted, state.serverSequence++);
-        if (submitted.confirmationRequired) {
-          await this.sendSigned(state.socket, "task.confirmation_required", state.sessionId, submitted.confirmationRequired, state.serverSequence++);
+        const requestId = (envelope.payload as { requestId: string }).requestId;
+        state.unackedRequestIds.add(requestId);
+        try {
+          const submitted = await this.options.tasks.submitTask(state.keyId, envelope.payload);
+          await this.sendSigned(state.socket, "task.accepted", state.sessionId, submitted.accepted, state.serverSequence++);
+          if (submitted.confirmationRequired) {
+            await this.sendSigned(state.socket, "task.confirmation_required", state.sessionId, submitted.confirmationRequired, state.serverSequence++);
+          }
+        } finally {
+          // A very fast tool can notify the task engine before submitTask()
+          // returns. Hold its progress/result until the phone has received the
+          // durable acceptance and any required approval envelope.
+          state.unackedRequestIds.delete(requestId);
+          const deferred = state.deferredTaskEvents.get(requestId) ?? [];
+          state.deferredTaskEvents.delete(requestId);
+          for (const event of deferred) {
+            await this.publishTaskToSession(state, event.task, event.ephemeralResult);
+          }
         }
+        return;
+      }
+      case "sync.resume": {
+        const snapshot = this.options.tasks.resumeSnapshot(state.keyId, envelope.payload);
+        await this.sendSigned(state.socket, "sync.snapshot", state.sessionId, snapshot, state.serverSequence++);
+        await this.sendSigned(state.socket, "sync.complete", state.sessionId, {
+          lastEventSeq: snapshot.lastEventSeq,
+          resumedAt: this.now(),
+          sessionExpiresAt: state.expiresAt,
+        }, state.serverSequence++);
         return;
       }
       case "task.cancel": {
