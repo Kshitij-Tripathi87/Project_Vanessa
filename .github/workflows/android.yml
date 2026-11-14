@@ -73,20 +73,19 @@ jobs:
             -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp"
 
       - name: Verify biometric approval uses the Keystore CryptoObject
-        working-directory: ../..
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           store = Path("apps/android/app/src/main/java/com/vanessa/mobile/identity/AndroidRemoteApprovalKeyStore.kt").read_text()
           activity = Path("apps/android/app/src/main/java/com/vanessa/mobile/ui/RemoteControlActivity.kt").read_text()
           assert "BiometricPrompt.CryptoObject(signature)" in store
-          assert "result.cryptoObject?.signature" in store
+          callback_start = store.index("override fun onAuthenticationSucceeded")
+          returned_signature = store.index("result.cryptoObject?.signature", callback_start)
+          assert returned_signature > callback_start
           assert "result.cryptoObject?.signature" not in activity
           assert "authenticatedSignature.update(" in activity
           assert "authenticatedSignature.sign()" in activity
-          assert re.search(r"onAuthenticationSucceeded[\s\S]*?result\.cryptoObject\?\.signature", store)
           print("Biometric approval is cryptographically bound to the Android Keystore CryptoObject.")
           PY
 
