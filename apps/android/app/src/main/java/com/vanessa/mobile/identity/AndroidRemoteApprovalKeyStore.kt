@@ -66,7 +66,10 @@ class AndroidRemoteApprovalKeyStore(
         onSuccess: (Signature) -> Unit,
         onFailure: (String) -> Unit,
     ) {
-        val identity = loadOrCreate()
+        val identity = try { loadOrCreate() } catch (error: Exception) {
+            onFailure(error.message ?: "Unable to load the biometric approval key.")
+            return
+        }
         if (identity == null) {
             onFailure("A hardware-backed strong-biometric approval key is unavailable.")
             return
