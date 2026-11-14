@@ -1,11 +1,16 @@
 import { app, BrowserWindow, globalShortcut, screen } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
+import { RemotePcIdentityStore } from "./remotePcIdentityStore.js";
+import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
+import { createRemoteSigningBroker, type RemoteSigningBrokerHandle } from "./remoteSigningBroker.js";
 
 let mainWindow: BrowserWindow | null = null;
+let remoteSigningBroker: RemoteSigningBrokerHandle | undefined;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -85,6 +90,25 @@ app.whenReady().then(async () => {
   if (app.isPackaged && process.platform === "win32") {
     try {
       loadUserEnvironment();
+      // Local orchestration routes are not callable by arbitrary loopback clients.
+      // This capability is generated per launch, inherited only by the child, and
+      // never exposed to the renderer or QR payload.
+      process.env.VANESSA_REMOTE_CONTROL_TOKEN = randomBytes(32).toString("base64url");
+      try {
+        const identityPath = path.join(app.getPath("userData"), "remote", "pc-identity-v2.json");
+        remoteSigningBroker = await createRemoteSigningBroker(
+          new RemotePcIdentityStore(identityPath, new ElectronPcIdentityEncryption()),
+        );
+        process.env.VANESSA_REMOTE_SIGNER_URL = remoteSigningBroker.url;
+        process.env.VANESSA_REMOTE_SIGNER_TOKEN = remoteSigningBroker.token;
+      } catch (identityError) {
+        // Remote control stays unavailable when OS-backed identity protection
+        // cannot be established. Local desktop services still start normally.
+        delete process.env.VANESSA_REMOTE_SIGNER_URL;
+        delete process.env.VANESSA_REMOTE_SIGNER_TOKEN;
+        console.warn("[Vanessa Remote v2] PC signing identity unavailable; remote pairing remains disabled.",
+          identityError instanceof Error ? identityError.message : String(identityError));
+      }
       await startPackagedServices();
     } catch (error) {
       console.error("[Vanessa Runtime] Packaged backend startup failed:", error);
@@ -107,5 +131,7 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   stopPackagedServices();
+  delete process.env.VANESSA_REMOTE_CONTROL_TOKEN;
+  if (remoteSigningBroker) void remoteSigningBroker.close().catch((error) => console.warn("[Vanessa Remote v2] Signer shutdown failed:", error));
   globalShortcut.unregisterAll();
 });

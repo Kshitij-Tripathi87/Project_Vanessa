@@ -197,6 +197,28 @@ export class MobileTaskEngine {
     return { taskId: row.task_id, requestId: row.request_id, tool: row.tool, state: row.state, ...(row.result_json ? { result: JSON.parse(row.result_json) } : {}), ...(row.error ? { error: row.error } : {}), ...(row.action_hash ? { actionHash: row.action_hash } : {}) };
   }
 
+  /** Recent tasks for one paired phone, read from the durable SQLite ledger. */
+  listDeviceTasks(deviceId: string, limit = 50): Array<{
+    taskId: string; requestId: string; tool: string; state: MobileTaskState;
+    tier: number; createdAt: number; updatedAt: number; error?: string;
+  }> {
+    const count = Math.max(1, Math.min(50, Math.floor(limit)));
+    const rows = this.db.prepare(
+      "SELECT task_id, request_id, tool, state, tier, created_at, updated_at, error " +
+      "FROM mobile_tasks WHERE device_id=? ORDER BY updated_at DESC LIMIT ?",
+    ).all(deviceId, count) as Array<any>;
+    return rows.map((row) => ({
+      taskId: row.task_id,
+      requestId: row.request_id,
+      tool: row.tool,
+      state: row.state as MobileTaskState,
+      tier: row.tier,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ...(typeof row.error === "string" ? { error: row.error } : {}),
+    }));
+  }
+
   recentAudit(limit = 100) {
     const count = Math.max(1, Math.min(100, Math.floor(limit)));
     return this.db.prepare("SELECT seq,at,device_id AS deviceId,task_id AS taskId,request_id AS requestId,tool,args_json AS args,tier,state,result_summary AS resultSummary,duration_ms AS durationMs FROM mobile_audit ORDER BY seq DESC LIMIT ?").all(count);

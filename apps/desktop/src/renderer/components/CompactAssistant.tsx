@@ -41,6 +41,7 @@ interface CompactAssistantProps {
   onExecute: () => void;
   onApprove: (taskId: string) => void;
   onReject: (taskId: string) => void;
+  onOpenMobilePairing: () => void;
 }
 
 const stageLabels: Record<TaskStage, string> = {
@@ -96,6 +97,7 @@ export function CompactAssistant({
   onExecute,
   onApprove,
   onReject,
+  onOpenMobilePairing,
 }: CompactAssistantProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -161,6 +163,7 @@ export function CompactAssistant({
         {moreOpen && (
           <div className="more-menu no-drag">
             <div className="menu-title">Connection</div>
+            <button className="menu-action" onClick={() => { setMoreOpen(false); onOpenMobilePairing(); }}>Manage paired devices</button>
             <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : voiceConnectionState === "disabled" ? "Text-only mode" : "Offline"}</span></div>
             <div className="menu-row"><span>Speech recognition</span><span>{providerLabel(providerStatus?.asr)}</span></div>
             <div className="menu-row"><span>Speech output</span><span>{providerLabel(providerStatus?.tts)}</span></div>

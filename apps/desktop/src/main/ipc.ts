@@ -36,6 +36,24 @@ function assertTrustedRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWin
   }
 }
 
+async function remoteV2LocalRequest(path: string, method = "GET", body?: unknown): Promise<any> {
+  const token = process.env.VANESSA_REMOTE_CONTROL_TOKEN;
+  if (!token) throw new Error("The trusted desktop control capability is unavailable. Restart Vanessa.");
+  const response = await fetch(resolveOrchestratorHttpUrl(process.env) + path, {
+    method,
+    headers: {
+      Authorization: "Bearer " + token,
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(5000),
+  });
+  let payload: any = {};
+  try { payload = await response.json(); } catch { /* report status below */ }
+  if (!response.ok) throw new Error(payload.message || payload.error || "Remote device service request failed.");
+  return payload;
+}
+
 function assertTaskId(taskId: unknown): asserts taskId is string {
   if (typeof taskId !== "string" || !/^[a-zA-Z0-9:_-]{1,160}$/.test(taskId)) {
     throw new Error("Invalid task ID.");
@@ -43,6 +61,50 @@ function assertTaskId(taskId: unknown): asserts taskId is string {
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
+  // Authenticated v2 pairing and device administration.
+  ipcMain.handle("vanessa:remote-v2:create-pairing-window", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2LocalRequest("/api/remote/v2/pairing-window", "POST", {}); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2:get-pending-pairings", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2LocalRequest("/api/remote/v2/pairings/pending"); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2:get-devices", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2LocalRequest("/api/remote/v2/devices"); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2:approve-pairing", async (event, pairingId: unknown, scopes: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(pairingId) ||
+        !Array.isArray(scopes) || scopes.length > 32 ||
+        scopes.some((scope) => typeof scope !== "string" || !/^[a-z][a-z0-9_.]{0,63}$/.test(scope))) {
+      return { error: "The pairing ID or granted scopes are invalid." };
+    }
+    try { return await remoteV2LocalRequest("/api/remote/v2/pairings/approve", "POST", { pairingId, scopes }); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2:reject-pairing", async (event, pairingId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof pairingId !== "string" || !/^pair_[a-f0-9]{24}$/.test(pairingId)) return { error: "Invalid pairing ID." };
+    try { return await remoteV2LocalRequest("/api/remote/v2/pairings/reject", "POST", { pairingId }); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2:revoke-device", async (event, deviceId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    if (typeof deviceId !== "string" || !/^[0-9a-f-]{36}$/.test(deviceId)) return { error: "Invalid device ID." };
+    try { return await remoteV2LocalRequest("/api/remote/v2/devices/revoke", "POST", { deviceId }); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  });
+
   // 1. Execute Command
   ipcMain.handle("vanessa:execute-command", async (event, payload: ExecuteCommandPayload) => {
     assertTrustedRenderer(event, mainWindow);

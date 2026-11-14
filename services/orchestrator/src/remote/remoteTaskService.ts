@@ -1,7 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, verify as cryptoVerify } from "node:crypto";
 
 import {
   canonicalize,
+  computeKeyId,
+  normalizeIdentityPublicKey,
   safeParseRemotePayload,
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
@@ -32,6 +34,34 @@ export type RemoteTaskServiceOptions = {
   now?: () => number;
   verifyApprovalProof?: RemoteApprovalProofVerifier;
 };
+
+function verifyBiometricApprovalProof(context: RemoteApprovalProofContext): boolean {
+  const device = context.device;
+  const proof = context.proof as { keyId?: unknown; signature?: unknown } | undefined;
+  if (!device.approvalPublicKeySpki || typeof proof?.keyId !== "string" ||
+      typeof proof.signature !== "string") return false;
+  try {
+    const publicKey = normalizeIdentityPublicKey(device.approvalPublicKeySpki);
+    if (computeKeyId(publicKey) !== proof.keyId) return false;
+    const signedMaterial = {
+      approvalId: context.response.approvalId,
+      taskId: context.response.taskId,
+      actionHash: context.response.actionHash,
+      decision: context.response.decision,
+      approvedAt: context.response.approvedAt,
+      method: context.response.method,
+      keyId: proof.keyId,
+    };
+    return cryptoVerify(
+      "sha256",
+      Buffer.from(canonicalize(signedMaterial), "utf8"),
+      publicKey,
+      Buffer.from(proof.signature, "base64url"),
+    );
+  } catch {
+    return false;
+  }
+}
 
 export type RemoteTaskSubmission = {
   accepted: RemotePayloadFor<"task.accepted">;
@@ -100,6 +130,39 @@ export class RemoteTaskService {
       generatedAt: this.now(),
       capabilities,
       policyVersion: REMOTE_POLICY_VERSION,
+    };
+  }
+
+  resumeSnapshot(keyId: string, value: unknown): RemotePayloadFor<"sync.snapshot"> {
+    const parsed = safeParseRemotePayload("sync.resume", value);
+    if (!parsed.success) serviceError("INVALID_PAYLOAD", "Session resume payload is invalid.");
+    const device = this.requireTrustedDevice(keyId);
+    const tasks = this.engine.listDeviceTasks(device.deviceId, 50).map((task) => ({
+      taskId: task.taskId,
+      requestId: task.requestId,
+      capability: task.tool,
+      state: mapTaskState(task.state),
+      tier: `T${task.tier}` as RemotePayloadFor<"task.snapshot">["task"]["tier"],
+      taskVersion: 1,
+      acceptedAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      safeSummary: task.error
+        ? task.error.slice(0, 500)
+        : task.state === "done"
+          ? "Task completed; the PC recorded its result."
+          : task.state === "failed"
+            ? "Task failed on the PC."
+            : task.state === "awaiting_confirm"
+              ? "Task is waiting for approval."
+              : `Task is currently ${task.state}.`,
+    }));
+    return {
+      lastEventSeq: parsed.data.lastEventSeq,
+      historyGap: true,
+      tasks,
+      // Event deltas are not yet retained separately. Snapshots are durable and
+      // explicit about the history gap instead of pretending no events were missed.
+      events: [],
     };
   }
 
@@ -202,11 +265,12 @@ export class RemoteTaskService {
       if (parsed.data.method !== "biometric_strong") {
         serviceError("PERMISSION_DENIED", "A strong biometric approval method is required for remote destructive actions.");
       }
-      const verifier = this.options.verifyApprovalProof;
-      if (!verifier) {
-        serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
-      }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const verifier = this.options.verifyApprovalProof ?? verifyBiometricApprovalProof;
+      const verified = await verifier({
+        device,
+        response: parsed.data,
+        proof: proof ?? parsed.data.approvalProof,
+      });
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }

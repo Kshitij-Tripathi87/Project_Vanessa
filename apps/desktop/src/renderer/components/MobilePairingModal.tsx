@@ -1,337 +1,352 @@
-import React, { useEffect, useState } from "react";
-import { Smartphone, Shield, Check, X, Copy, ExternalLink, ToggleLeft, ToggleRight, Laptop, KeyRound } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import QRCode from "qrcode";
+import { Check, Copy, KeyRound, Laptop, RefreshCw, ShieldCheck, Smartphone, Trash2, X } from "lucide-react";
+
+type PairingWindow = {
+  pairingId: string;
+  expiresAt: number;
+  endpoint: string;
+  qrPayload: string;
+  qrDataUrl: string;
+};
+
+type PendingPairing = {
+  pairingId: string;
+  keyId: string;
+  deviceHint: string;
+  platform: string;
+  appVersion: string;
+  biometricApprovalAvailable: boolean;
+  requestedAt: number;
+  expiresAt: number;
+};
+
+type TrustedDevice = {
+  deviceId: string;
+  deviceHint: string;
+  platform: string;
+  appVersion: string;
+  grantedScopes: string[];
+  pairedAt: number;
+  revoked: boolean;
+  biometricApprovalAvailable: boolean;
+};
+
+type ScopeOption = { id: string; label: string; description: string; defaultGrant?: boolean };
+
+const SCOPES: ScopeOption[] = [
+  { id: "system.read", label: "Read PC status", description: "Battery, CPU and system information", defaultGrant: true },
+  { id: "files.read", label: "Find files", description: "Search file names and metadata", defaultGrant: true },
+  { id: "apps.launch", label: "Launch applications", description: "Open an installed desktop application", defaultGrant: true },
+  { id: "browser.open", label: "Open web pages", description: "Navigate the PC browser to a URL", defaultGrant: true },
+  { id: "files.open", label: "Open files", description: "Open a selected file with its registered application", defaultGrant: true },
+  { id: "screen.capture", label: "Capture screen", description: "Request a PC screenshot", defaultGrant: false },
+  { id: "system.control", label: "Change system settings", description: "Change approved Windows settings", defaultGrant: false },
+  { id: "media.control", label: "Control media", description: "Play, pause and change media state", defaultGrant: false },
+  { id: "system.lock", label: "Lock the PC", description: "Lock the current Windows session", defaultGrant: false },
+  { id: "files.delete", label: "Delete files", description: "Move an exact selected file to Recycle Bin; requires biometric approval", defaultGrant: false },
+];
+
+const DEFAULT_SCOPES = SCOPES.filter((scope) => scope.defaultGrant).map((scope) => scope.id);
 
 interface MobilePairingModalProps {
   isOpen: boolean;
   onClose: () => void;
   deviceName?: string;
-  pairingCode?: string;
-  remoteUrl?: string;
 }
 
 export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
   isOpen,
   onClose,
-  deviceName = "Kshitij-Laptop",
-  pairingCode = "",
-  remoteUrl = "http://127.0.0.1:4319/remote",
+  deviceName = "This PC",
 }) => {
-  const [remoteEnabled, setRemoteEnabled] = useState(true);
+  const [pairingWindow, setPairingWindow] = useState<PairingWindow | null>(null);
+  const [pending, setPending] = useState<PendingPairing[]>([]);
+  const [devices, setDevices] = useState<TrustedDevice[]>([]);
+  const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [activePairingCode, setActivePairingCode] = useState(pairingCode);
-  const [activeRemoteUrl, setActiveRemoteUrl] = useState(remoteUrl);
-  const [pairingError, setPairingError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [pendingResult, devicesResult] = await Promise.all([
+      window.vanessa.getRemoteV2PendingPairings(),
+      window.vanessa.getRemoteV2Devices(),
+    ]);
+    if (!Array.isArray(pendingResult)) {
+      setError(pendingResult.error || "The v2 pairing service is not available.");
+      return;
+    }
+    if (!Array.isArray(devicesResult)) {
+      setError(devicesResult.error || "The trusted-device registry is not available.");
+      return;
+    }
+    setPending(pendingResult);
+    setDevices(devicesResult);
+    setError(null);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    fetch("http://127.0.0.1:4319/api/remote/pairing")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load the active pairing code.");
-        return response.json();
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setActivePairingCode(data.pairingCode || "Unavailable");
-        setActiveRemoteUrl(data.url || remoteUrl);
-        setRemoteEnabled(Boolean(data.enabled));
-        setPairingError(null);
-      })
-      .catch((error) => {
-        if (!cancelled) setPairingError(error.message || "Pairing service is unavailable.");
-      });
-    return () => { cancelled = true; };
-  }, [isOpen, remoteUrl]);
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 2500);
+    return () => window.clearInterval(timer);
+  }, [isOpen, refresh]);
 
   if (!isOpen) return null;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(activeRemoteUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleToggle = async () => {
-    const nextState = !remoteEnabled;
+  const createPairingQr = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      const response = await fetch("http://127.0.0.1:4319/api/remote/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: nextState }),
+      const result = await window.vanessa.createRemoteV2PairingWindow();
+      if (!result.qrPayload || !result.endpoint || !result.expiresAt || !result.pairingId) {
+        throw new Error(result.error || "The v2 pairing listener is disabled or Tailscale Serve is not configured.");
+      }
+      const qrDataUrl = await QRCode.toDataURL(result.qrPayload, {
+        width: 280,
+        margin: 2,
+        errorCorrectionLevel: "M",
+        color: { dark: "#101722", light: "#ffffff" },
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not change remote access.");
-      setRemoteEnabled(Boolean(data.enabled));
-      setActivePairingCode(data.pairingCode || "Unavailable");
-      setPairingError(null);
-    } catch {
-      setPairingError("Remote access setting could not be updated.");
+      setPairingWindow({
+        pairingId: result.pairingId,
+        expiresAt: result.expiresAt,
+        endpoint: result.endpoint,
+        qrPayload: result.qrPayload,
+        qrDataUrl,
+      });
+      setNotice("One-time QR created. It expires at " + new Date(result.expiresAt).toLocaleTimeString() + ".");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the pairing QR.");
+      setPairingWindow(null);
+    } finally {
+      setBusy(false);
     }
   };
 
+  const copyEndpoint = async () => {
+    if (!pairingWindow) return;
+    await navigator.clipboard.writeText(pairingWindow.endpoint);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  const selectedFor = (pairingId: string) => selectedScopes[pairingId] ?? DEFAULT_SCOPES;
+
+  const toggleScope = (pairingId: string, scopeId: string, checked: boolean) => {
+    const current = selectedFor(pairingId);
+    setSelectedScopes((previous) => ({
+      ...previous,
+      [pairingId]: checked
+        ? Array.from(new Set([...current, scopeId]))
+        : current.filter((scope) => scope !== scopeId),
+    }));
+  };
+
+  const approve = async (pairingId: string) => {
+    const scopes = selectedFor(pairingId);
+    if (scopes.length === 0) {
+      setError("Grant at least one capability scope, or reject this pairing.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const result = await window.vanessa.approveRemoteV2Pairing(pairingId, scopes);
+    if (result.success) {
+      setNotice("Device approved with " + scopes.length + " capability scopes.");
+      setSelectedScopes((previous) => {
+        const next = { ...previous };
+        delete next[pairingId];
+        return next;
+      });
+      await refresh();
+    } else {
+      setError(result.error || "The device could not be approved.");
+    }
+    setBusy(false);
+  };
+
+  const reject = async (pairingId: string) => {
+    setBusy(true);
+    const result = await window.vanessa.rejectRemoteV2Pairing(pairingId);
+    if (result.success) {
+      setNotice("Pairing request rejected.");
+      await refresh();
+    } else {
+      setError(result.error || "The pairing request could not be rejected.");
+    }
+    setBusy(false);
+  };
+
+  const revoke = async (deviceId: string) => {
+    setBusy(true);
+    const result = await window.vanessa.revokeRemoteV2Device(deviceId);
+    if (result.success) {
+      setNotice("Device revoked. Its active remote sessions have been closed.");
+      await refresh();
+    } else {
+      setError(result.error || "The device could not be revoked.");
+    }
+    setBusy(false);
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: "rgba(10, 16, 26, 0.92)",
+    border: "1px solid rgba(140, 160, 190, 0.18)",
+    borderRadius: 12,
+    padding: 14,
+  };
+  const actionStyle: React.CSSProperties = {
+    border: "1px solid rgba(140, 160, 190, 0.24)",
+    borderRadius: 8,
+    padding: "8px 11px",
+    color: "#e8eef8",
+    background: "rgba(255,255,255,0.06)",
+    cursor: "pointer",
+    fontSize: 12,
+  };
+
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.82)",
-        backdropFilter: "blur(16px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1100,
-        padding: "20px",
-      }}
-    >
-      <div
-        className="glass-panel"
-        style={{
-          width: "100%",
-          maxWidth: "520px",
-          background: "linear-gradient(145deg, #131926 0%, #090c14 100%)",
-          border: "1px solid rgba(0, 242, 254, 0.35)",
-          boxShadow: "0 0 60px rgba(0, 242, 254, 0.2)",
-          padding: "26px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "18px",
-          borderRadius: "18px",
-        }}
-      >
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div
-              style={{
-                width: "42px",
-                height: "42px",
-                borderRadius: "12px",
-                background: "rgba(0, 242, 254, 0.15)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--cyan-glow)",
-              }}
-            >
-              <Smartphone size={24} />
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1200,
+      background: "rgba(0,0,0,0.78)", backdropFilter: "blur(12px)",
+      display: "flex", justifyContent: "center", alignItems: "center", padding: 18,
+    }}>
+      <section style={{
+        width: "min(920px, 100%)", maxHeight: "92vh", overflowY: "auto",
+        background: "#0b111b", color: "#e8eef8", border: "1px solid rgba(130,160,195,0.24)",
+        borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 16,
+        boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+      }}>
+        <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center", background: "rgba(86,177,255,0.12)" }}>
+              <Smartphone size={20} color="#75c2ff" />
             </div>
             <div>
-              <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#fff" }}>
-                Device Pairing & Remote Relay
-              </h2>
-              <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                “Vanessa lives on your PC, but you can command it from your phone.”
-              </p>
+              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Paired devices</h2>
+              <p style={{ fontSize: 11, color: "#93a4ba", margin: "4px 0 0" }}>{deviceName} · protocol v2 · ES256</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            <X size={20} />
-          </button>
-        </div>
+          <button onClick={onClose} aria-label="Close device pairing" style={{ ...actionStyle, padding: 7, background: "transparent" }}><X size={17} /></button>
+        </header>
 
-        {/* Remote Access Toggle */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "12px 16px",
-            background: "rgba(0, 0, 0, 0.35)",
-            borderRadius: "10px",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff" }}>
-              Remote Access: {remoteEnabled ? <span style={{ color: "#34d399" }}>ACTIVE</span> : <span style={{ color: "#f43f5e" }}>OFF</span>}
-            </div>
-            <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-              {remoteEnabled ? "Relay accepting outbound WSS commands" : "Laptop completely ignores remote requests"}
-            </div>
-          </div>
-          <button
-            onClick={handleToggle}
-            style={{
-              background: "transparent",
-              border: "none",
-              cursor: "pointer",
-              color: remoteEnabled ? "#34d399" : "#64748b",
-            }}
-          >
-            {remoteEnabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-          </button>
-        </div>
+        {error && <div role="alert" style={{ ...cardStyle, color: "#ffb6b6", borderColor: "rgba(255,100,100,.35)" }}>{error}</div>}
+        {notice && <div role="status" style={{ ...cardStyle, color: "#9de6c6", borderColor: "rgba(70,200,150,.25)" }}>{notice}</div>}
 
-        {/* In-App Authenticator-Style Device Pairing Card */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "12px",
-            padding: "18px",
-            background: "rgba(0, 0, 0, 0.4)",
-            borderRadius: "14px",
-            border: "1px solid rgba(0, 242, 254, 0.25)",
-          }}
-        >
-          <div style={{ fontSize: "12px", color: "var(--cyan-glow)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Laptop Vanessa Credentials
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            {/* Device Name */}
-            <div
-              style={{
-                padding: "12px 14px",
-                background: "rgba(255, 255, 255, 0.04)",
-                border: "1px solid rgba(255, 255, 255, 0.1)",
-                borderRadius: "10px",
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "var(--text-muted)" }}>
-                <Laptop size={13} />
-                <span>Device Name:</span>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(250px, 320px)", gap: 14 }}>
+          <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 650 }}>Pair a new Android device</div>
+                <p style={{ margin: "5px 0 0", color: "#93a4ba", fontSize: 11, lineHeight: 1.5 }}>
+                  Scan this one-time QR from the phone while both devices are connected to your tailnet.
+                </p>
               </div>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: "#ffffff", fontFamily: "var(--font-mono)" }}>
-                {deviceName}
-              </div>
-            </div>
-
-            {/* 6-Digit Pairing Code */}
-            <div
-              style={{
-                padding: "12px 14px",
-                background: "rgba(0, 242, 254, 0.08)",
-                border: "1px solid var(--cyan-glow)",
-                borderRadius: "10px",
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "var(--cyan-glow)" }}>
-                <KeyRound size={13} />
-                <span>Pairing Code (6-digit):</span>
-              </div>
-              <div style={{ fontSize: "20px", fontWeight: 800, letterSpacing: "3px", color: "#ffffff", fontFamily: "var(--font-mono)" }}>
-                {activePairingCode || "Loading…"}
-              </div>
-            </div>
-          </div>
-
-          {/* Simple Step-by-Step Flow */}
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "rgba(0, 0, 0, 0.3)",
-              borderRadius: "8px",
-              fontSize: "12px",
-              color: "var(--text-muted)",
-              lineHeight: 1.6,
-            }}
-          >
-            <div>📱 <strong>On your phone:</strong></div>
-            <div>1. Enter device name: <strong style={{ color: "#fff" }}>{deviceName}</strong></div>
-            <div>2. Enter pairing code: <strong style={{ color: "var(--cyan-glow)" }}>{activePairingCode || "Loading…"}</strong></div>
-            {pairingError && <div style={{ color: "#fda4af" }}>{pairingError}</div>}
-            <div style={{ color: "#34d399", fontWeight: 600 }}>→ Connected via secure outbound WebSocket relay</div>
-          </div>
-        </div>
-
-        {/* Web Companion Link */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-            Mobile Companion URL:
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "10px 14px",
-              background: "rgba(0, 0, 0, 0.3)",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "8px",
-            }}
-          >
-            <span style={{ fontSize: "12px", color: "#38bdf8", fontFamily: "var(--font-mono)" }}>
-              {activeRemoteUrl}
-            </span>
-            <div style={{ display: "flex", gap: "6px" }}>
-              <button
-                onClick={handleCopy}
-                style={{
-                  padding: "5px 10px",
-                  borderRadius: "6px",
-                  background: "rgba(255, 255, 255, 0.08)",
-                  border: "none",
-                  color: "#fff",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                {copied ? <Check size={12} color="#34d399" /> : <Copy size={12} />}
-                <span>{copied ? "Copied" : "Copy"}</span>
+              <button disabled={busy} onClick={() => void createPairingQr()} style={actionStyle}>
+                <RefreshCw size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
+                Generate QR
               </button>
-              <a
-                href={activeRemoteUrl}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  padding: "5px 10px",
-                  borderRadius: "6px",
-                  background: "rgba(0, 242, 254, 0.15)",
-                  border: "1px solid rgba(0, 242, 254, 0.3)",
-                  color: "var(--cyan-glow)",
-                  fontSize: "11px",
-                  textDecoration: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <span>Open</span>
-                <ExternalLink size={12} />
-              </a>
             </div>
+
+            {pairingWindow ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+                <div style={{ background: "white", borderRadius: 10, padding: 8, width: 208, height: 208, display: "grid", placeItems: "center" }}>
+                  <img src={pairingWindow.qrDataUrl} alt="Vanessa protocol v2 pairing QR" style={{ width: 192, height: 192 }} />
+                </div>
+                <div style={{ minWidth: 210, flex: 1, display: "flex", flexDirection: "column", gap: 9 }}>
+                  <div style={{ fontSize: 11, color: "#93a4ba" }}>Secure endpoint</div>
+                  <div style={{ fontSize: 12, overflowWrap: "anywhere" }}>{pairingWindow.endpoint}</div>
+                  <button onClick={() => void copyEndpoint()} style={{ ...actionStyle, alignSelf: "flex-start" }}>
+                    <Copy size={12} style={{ marginRight: 6, verticalAlign: "middle" }} />{copied ? "Copied" : "Copy endpoint"}
+                  </button>
+                  <div style={{ fontSize: 11, color: "#93a4ba" }}>QR expires: {new Date(pairingWindow.expiresAt).toLocaleString()}</div>
+                  <div style={{ fontSize: 11, color: "#93a4ba" }}>The code and PC public-key pin are encoded in the QR. The PC private key is not.</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ border: "1px dashed rgba(140,160,190,.25)", borderRadius: 10, padding: 22, textAlign: "center", color: "#93a4ba", fontSize: 12 }}>
+                Configure Tailscale Serve, then generate a short-lived pairing QR.
+              </div>
+            )}
+          </div>
+
+          <div style={{ ...cardStyle }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 9 }}>
+              <ShieldCheck size={16} color="#8cc9ff" />
+              <strong style={{ fontSize: 13 }}>Security boundaries</strong>
+            </div>
+            <ul style={{ paddingLeft: 17, margin: 0, color: "#a8b6c9", fontSize: 11, lineHeight: 1.65 }}>
+              <li>WSS through Tailscale Serve; listener stays on PC loopback.</li>
+              <li>New devices require local approval here.</li>
+              <li>Scopes are assigned by the PC, not the phone.</li>
+              <li>Destructive actions require a separate biometric-bound signature.</li>
+              <li>Revocation closes the phone's active sockets.</li>
+            </ul>
           </div>
         </div>
 
-        {/* Security Rules Banner */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            fontSize: "11px",
-            color: "var(--text-muted)",
-            background: "rgba(52, 211, 153, 0.06)",
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "1px solid rgba(52, 211, 153, 0.15)",
-            lineHeight: 1.4,
-          }}
-        >
-          <Shield size={16} color="#34d399" style={{ flexShrink: 0 }} />
-          <span>
-            <strong>Zero Internet Inbound Exposure:</strong> Both laptop & phone connect outbound via WSS. Relay never sees decrypted local files. Risky actions require approval.
-          </span>
+        <div style={{ ...cardStyle }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <strong style={{ fontSize: 13 }}>Waiting for PC approval</strong>
+            <span style={{ color: "#93a4ba", fontSize: 11 }}>{pending.length} pending</span>
+          </div>
+          {pending.length === 0 ? (
+            <p style={{ color: "#7f91a8", fontSize: 11, margin: 0 }}>No phone is waiting for approval. Scan the QR above from Android.</p>
+          ) : pending.map((item) => (
+            <div key={item.pairingId} style={{ borderTop: "1px solid rgba(140,160,190,.14)", padding: "12px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 650 }}><Smartphone size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />{item.deviceHint}</div>
+                  <div style={{ fontSize: 10, color: "#93a4ba", marginTop: 4 }}>{item.platform} · app {item.appVersion} · expires {new Date(item.expiresAt).toLocaleTimeString()}</div>
+                </div>
+                <div style={{ fontSize: 10, color: "#93a4ba" }}>Key ID: {item.keyId.slice(0, 9)}…</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8 }}>
+                {SCOPES.map((scope) => (
+                  <label key={scope.id} style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11, color: "#d5dfec", opacity: scope.id === "files.delete" && !item.biometricApprovalAvailable ? 0.45 : 1 }}>
+                    <input type="checkbox" checked={selectedFor(item.pairingId).includes(scope.id)}
+                      disabled={scope.id === "files.delete" && !item.biometricApprovalAvailable}
+                      onChange={(event) => toggleScope(item.pairingId, scope.id, event.target.checked)} />
+                    <span><strong>{scope.label}</strong><br /><span style={{ color: "#8799b0" }}>{scope.description}</span></span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={busy} onClick={() => void approve(item.pairingId)} style={{ ...actionStyle, background: "rgba(54,150,115,.16)", borderColor: "rgba(54,190,140,.35)" }}>
+                  <Check size={12} style={{ marginRight: 5, verticalAlign: "middle" }} />Approve selected scopes
+                </button>
+                <button disabled={busy} onClick={() => void reject(item.pairingId)} style={actionStyle}>Reject</button>
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
+
+        <div style={{ ...cardStyle }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <strong style={{ fontSize: 13 }}>Trusted devices</strong>
+            <span style={{ color: "#93a4ba", fontSize: 11 }}>{devices.filter((device) => !device.revoked).length} active</span>
+          </div>
+          {devices.length === 0 ? (
+            <p style={{ color: "#7f91a8", fontSize: 11, margin: 0 }}>No phone has been paired with this PC yet.</p>
+          ) : devices.map((device) => (
+            <div key={device.deviceId} style={{ borderTop: "1px solid rgba(140,160,190,.14)", padding: "10px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600 }}><Laptop size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />{device.deviceHint}</div>
+                <div style={{ fontSize: 10, color: "#93a4ba", marginTop: 4 }}>
+                  {device.platform} · paired {new Date(device.pairedAt).toLocaleDateString()} · {device.grantedScopes.length} scopes · {device.biometricApprovalAvailable ? "biometric approval ready" : "read-only approval profile"} · {device.revoked ? "revoked" : "active"}
+                </div>
+              </div>
+              {!device.revoked && <button disabled={busy} onClick={() => void revoke(device.deviceId)} style={{ ...actionStyle, color: "#ffb6b6" }}>
+                <Trash2 size={12} style={{ marginRight: 5, verticalAlign: "middle" }} />Revoke
+              </button>}
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 };

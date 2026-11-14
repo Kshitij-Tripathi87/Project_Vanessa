@@ -2,6 +2,7 @@ package com.vanessa.mobile.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vanessa.mobile.bridge.BridgeEvent
 import com.vanessa.mobile.bridge.ConnectionState
 import com.vanessa.mobile.bridge.VanessaBridgeClient
 import com.vanessa.mobile.di.PairingRepository
@@ -19,14 +20,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Drives the pairing screen.
- *
- * The QR payload carries a single-use pairing code, never the HMAC secret. The
- * phone redeems the code at the PC's `POST /pair` route, stores the device id
- * and secret it receives, and connects with that device id so the gateway can
- * verify this phone's signatures.
- */
+/** Drives the mobile pairing and remote connection lifecycle. */
 @HiltViewModel
 class PairingViewModel @Inject constructor(
     private val pairingRepository: PairingRepository,
@@ -40,86 +34,96 @@ class PairingViewModel @Inject constructor(
         val message: String? = null,
     )
 
-    private val _state = MutableStateFlow(UiState())
-    val state: StateFlow<UiState> = _state.asStateFlow()
+    private val stateFlow = MutableStateFlow(UiState())
+    val state: StateFlow<UiState> = stateFlow.asStateFlow()
+    private var pendingPairing: StoredPairing? = null
+    private var restoredConnectionAttempted = false
 
     init {
         pairingRepository.pairing
             .onEach { pairing ->
-                _state.value = _state.value.copy(
+                stateFlow.value = stateFlow.value.copy(
                     pairing = pairing,
                     status = PairingState.statusFor(pairing, System.currentTimeMillis()),
                 )
+                if (!restoredConnectionAttempted && !pairing?.deviceId.isNullOrBlank()) {
+                    restoredConnectionAttempted = true
+                    viewModelScope.launch { bridgeClient.connect(pairing!!) }
+                }
             }
             .launchIn(viewModelScope)
 
         bridgeClient.connectionState
-            .onEach { connection -> _state.value = _state.value.copy(connection = connection) }
+            .onEach { connection -> stateFlow.value = stateFlow.value.copy(connection = connection) }
+            .launchIn(viewModelScope)
+
+        bridgeClient.events
+            .onEach { event ->
+                when (event) {
+                    is BridgeEvent.PairingPending -> {
+                        stateFlow.value = stateFlow.value.copy(
+                            status = PairingStatus.AwaitingApproval,
+                            message = "Phone identity verified. Approve this device on the PC to finish pairing.",
+                        )
+                    }
+                    is BridgeEvent.SessionReady -> {
+                        val source = pendingPairing ?: stateFlow.value.pairing
+                        if (source != null) {
+                            val trusted = source.copy(
+                                deviceId = event.deviceId,
+                                pairingId = "",
+                                pairingCode = "",
+                            )
+                            pendingPairing = null
+                            pairingRepository.savePairing(trusted)
+                            stateFlow.value = stateFlow.value.copy(
+                                pairing = trusted,
+                                status = PairingStatus.Paired,
+                                message = "Secure connection established with the paired PC.",
+                            )
+                        }
+                    }
+                    else -> Unit
+                }
+            }
             .launchIn(viewModelScope)
     }
 
     fun onPairingPayloadScanned(raw: String) {
         when (val result = PairingPayloadParser.parse(raw)) {
-            is PairingPayloadResult.Invalid ->
-                _state.value = _state.value.copy(status = PairingStatus.Error, message = result.reason)
-
-            is PairingPayloadResult.Valid -> viewModelScope.launch {
+            is PairingPayloadResult.Invalid -> {
+                stateFlow.value = stateFlow.value.copy(status = PairingStatus.Error, message = result.reason)
+            }
+            is PairingPayloadResult.Valid -> {
                 val scanned = result.pairing
-                pairingRepository.savePairing(scanned)
-                _state.value = _state.value.copy(
+                pendingPairing = scanned
+                stateFlow.value = stateFlow.value.copy(
+                    pairing = scanned,
                     status = PairingStatus.CodeScanned,
-                    message = "Redeeming pairing code with ${scanned.pcIp}:${scanned.port}…",
+                    message = "Connecting to " + scanned.endpoint + " and proving this phone's identity…",
                 )
-
-                val grant = bridgeClient.redeemPairing(
-                    pcIp = scanned.pcIp,
-                    port = scanned.port,
-                    pairingCode = scanned.pairingCode,
-                    deviceName = android.os.Build.MODEL,
-                )
-
-                if (grant == null) {
-                    _state.value = _state.value.copy(
-                        status = PairingStatus.Error,
-                        message = "The PC rejected this pairing code. It may have expired or " +
-                            "already been used — generate a new code on the PC and scan again.",
-                    )
-                    return@launch
-                }
-
-                val paired = scanned.copy(deviceId = grant.deviceId, secret = grant.secret)
-                pairingRepository.savePairing(paired)
-                _state.value = _state.value.copy(
-                    status = PairingStatus.Paired,
-                    message = "Paired with ${grant.pcName ?: scanned.pcIp}.",
-                )
-
-                bridgeClient.connect(
-                    pcIP = paired.pcIp,
-                    port = paired.port,
-                    deviceId = grant.deviceId,
-                    secret = grant.secret,
-                )
+                viewModelScope.launch { bridgeClient.connect(scanned) }
             }
         }
     }
 
-    /** Reconnect using the stored pairing, if this phone is already paired. */
+    /** Reconnect using the pinned PC identity and Android Keystore device key. */
     fun connect() {
-        val pairing = _state.value.pairing ?: return
-        val deviceId = pairing.deviceId ?: return
-        val secret = pairing.secret ?: return
-
-        viewModelScope.launch {
-            bridgeClient.connect(pairing.pcIp, pairing.port, deviceId, secret)
-        }
+        val pairing = stateFlow.value.pairing ?: return
+        if (pairing.deviceId.isNullOrBlank()) return
+        viewModelScope.launch { bridgeClient.connect(pairing) }
     }
 
     fun forgetDevice() {
         viewModelScope.launch {
             bridgeClient.disconnect()
+            pendingPairing = null
             pairingRepository.clear()
-            _state.value = _state.value.copy(status = PairingStatus.Idle, message = null)
+            stateFlow.value = stateFlow.value.copy(
+                pairing = null,
+                status = PairingStatus.Idle,
+                message = "This phone's local PC pairing has been forgotten.",
+            )
         }
     }
 }
