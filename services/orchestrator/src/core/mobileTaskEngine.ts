@@ -1,5 +1,13 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import {
+  canonicalize,
+  computeActionHash,
+  type ApprovalBinding,
+  type RemoteCapability,
+  type RemotePermissionTier,
+  type TargetDescriptor,
+} from "@vanessa/protocol";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mobileToolRegistry, type MobileTool } from "./mobileToolRegistry.js";
@@ -14,6 +22,39 @@ function redactStructured(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactStructured);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redactStructured(entry)]));
   return value;
+}
+
+/** Explicit PC-side capability scopes. Unknown tools are never exposed remotely. */
+const REMOTE_CAPABILITY_SCOPES: Readonly<Record<string, readonly string[]>> = {
+  system_status: ["system.read"],
+  find_file: ["files.read"],
+  open_app: ["apps.launch"],
+  open_url: ["browser.open"],
+  open_file: ["files.open"],
+  set_volume: ["system.control"],
+  delete_file: ["files.delete"],
+  media_control: ["media.control"],
+  lock_pc: ["system.lock"],
+  take_screenshot: ["screen.capture"],
+};
+
+export const REMOTE_POLICY_VERSION = "mobile-policy-v1";
+
+function remoteTier(tier: MobileTool["tier"]): RemotePermissionTier {
+  return `T${tier}` as RemotePermissionTier;
+}
+
+export function createRemoteTargetDescriptor(tool: string, args: Record<string, unknown>): TargetDescriptor {
+  if (tool === "delete_file" || tool === "open_file") {
+    return { kind: "file", value: String(args.path ?? tool) };
+  }
+  if (tool === "open_url") return { kind: "url", value: String(args.url ?? "unknown URL") };
+  if (tool === "open_app") return { kind: "app", value: String(args.app ?? "unknown app") };
+  if (tool === "set_volume") return { kind: "setting", value: "Windows output volume" };
+  if (tool === "media_control") return { kind: "media", value: String(args.control ?? "media control") };
+  if (tool === "take_screenshot") return { kind: "system", value: "PC desktop screenshot" };
+  if (tool === "lock_pc") return { kind: "system", value: "Windows session lock" };
+  return { kind: "system", value: tool };
 }
 
 export class MobileTaskEngine {
@@ -57,22 +98,52 @@ export class MobileTaskEngine {
 
   getManifest() { return { version: "1.0.0", tools: this.tools.map(({ name, description, manifestSchema, tier }) => ({ name, description, argsSchema: manifestSchema, tier })) }; }
 
+  /** Return only explicitly-reviewed capabilities with server-owned scopes and policy tiers. */
+  getRemoteCapabilities(): RemoteCapability[] {
+    return this.tools.flatMap((tool) => {
+      const scopes = REMOTE_CAPABILITY_SCOPES[tool.name];
+      if (!scopes) return [];
+      return [{
+        name: tool.name,
+        version: 1,
+        description: tool.description.slice(0, 300),
+        tier: remoteTier(tool.tier),
+        scopes: [...scopes],
+        idempotent: tool.idempotent,
+        timeoutMs: tool.timeoutMs,
+        argumentsSchema: tool.manifestSchema,
+      }];
+    });
+  }
+
   async submit(input: { requestId: string; idempotencyKey: string; tool: string; args: Record<string, unknown>; deviceId?: string }): Promise<{ taskId: string; state: MobileTaskState; actionHash?: string; expiresAt?: number; summary?: string; duplicate: boolean }> {
     const deviceId = input.deviceId ?? "unknown";
     const found = this.db.prepare("SELECT task_id, state, action_hash, confirm_expires_at, tool, args_json FROM mobile_tasks WHERE device_id=? AND idempotency_key=?").get(deviceId, input.idempotencyKey) as any;
-    if (found) {
-      const existingTool = this.tools.find((item) => item.name === found.tool);
-      const existingArgs = JSON.parse(found.args_json);
-      return { taskId: found.task_id, state: found.state, ...(found.action_hash ? { actionHash: found.action_hash } : {}), ...(found.confirm_expires_at ? { expiresAt: found.confirm_expires_at } : {}), ...(existingTool?.confirmSummary ? { summary: existingTool.confirmSummary(existingArgs) } : {}), duplicate: true };
+
+    // An idempotency key identifies one immutable operation, not merely one
+    // response slot. Reusing it for a different capability or argument set
+    // must fail closed instead of returning the old task as if it represented
+    // the new request. Arguments are parsed first so schema defaults/coercions
+    // are included, then compared using the protocol's JCS canonicalization.
+    if (found && found.tool !== input.tool) {
+      throw Object.assign(new Error("Idempotency key was already used for a different capability."), { code: "IDEMPOTENCY_CONFLICT" });
     }
     const tool = this.tools.find((item) => item.name === input.tool);
     if (!tool) throw Object.assign(new Error("Tool is not available on this PC."), { code: "INVALID_ARGUMENTS" });
     const parsed = tool.argsSchema.safeParse(input.args);
     if (!parsed.success) throw Object.assign(new Error("Tool arguments are invalid."), { code: "INVALID_ARGUMENTS" });
+    if (found) {
+      const existingTool = this.tools.find((item) => item.name === found.tool);
+      const existingArgs = JSON.parse(found.args_json);
+      if (canonicalize(existingArgs) !== canonicalize(parsed.data)) {
+        throw Object.assign(new Error("Idempotency key was already used for different arguments."), { code: "IDEMPOTENCY_CONFLICT" });
+      }
+      return { taskId: found.task_id, state: found.state, ...(found.action_hash ? { actionHash: found.action_hash } : {}), ...(found.confirm_expires_at ? { expiresAt: found.confirm_expires_at } : {}), ...(existingTool?.confirmSummary ? { summary: existingTool.confirmSummary(existingArgs) } : {}), duplicate: true };
+    }
     const taskId = randomUUID();
     const initialState: MobileTaskState = tool.tier === 2 ? "awaiting_confirm" : "queued";
-    const actionHash = tool.tier === 2 ? this.actionHash(taskId, tool.name, parsed.data) : undefined;
     const expiresAt = tool.tier === 2 ? this.now() + 120_000 : undefined;
+    const actionHash = tool.tier === 2 ? this.actionHash(taskId, tool.name, parsed.data, expiresAt!) : undefined;
     const safeArgs = JSON.stringify(parsed.data);
     const transitions = [{ state: initialState, at: this.now() }];
     this.db.prepare(`INSERT INTO mobile_tasks(task_id,request_id,idempotency_key,device_id,tool,args_json,tier,state,action_hash,confirm_expires_at,created_at,updated_at,transitions_json)
@@ -132,8 +203,19 @@ export class MobileTaskEngine {
 
   close(): void { this.db.close(); }
 
-  private actionHash(taskId: string, tool: string, args: unknown): string {
-    return createHash("sha256").update(JSON.stringify({ taskId, tool, args })).digest("hex");
+  private actionHash(taskId: string, tool: string, args: unknown, expiresAt: number): string {
+    const canonicalArguments = args as Record<string, unknown>;
+    const binding: ApprovalBinding = {
+      taskId,
+      taskVersion: 1,
+      capability: tool,
+      capabilityVersion: 1,
+      canonicalArguments,
+      target: createRemoteTargetDescriptor(tool, canonicalArguments),
+      policyVersion: REMOTE_POLICY_VERSION,
+      expiresAt,
+    };
+    return computeActionHash(binding);
   }
 
   private async execute(taskId: string, tool: MobileTool, args: unknown, deviceId?: string): Promise<void> {
