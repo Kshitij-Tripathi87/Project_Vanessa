@@ -210,6 +210,18 @@ export class RemoteV2Gateway {
     await this.sendSigned(pending.socket, "pairing.approved", PRE_SESSION_ID, approved, pending.preSessionServerSequence++);
   }
 
+  revokeDevice(deviceId: string): void {
+    const sessions = this.activeByDeviceId.get(deviceId);
+    if (!sessions) return;
+    for (const session of sessions) {
+      void this.sendSigned(session.socket, "session.close", session.sessionId, {
+        reason: "revoked",
+      }, session.serverSequence++);
+      session.socket.close(1008, "Device revoked on PC");
+    }
+    this.activeByDeviceId.delete(deviceId);
+  }
+
   rejectPairing(pairingId: string): void {
     const pending = this.pendingByPairingId.get(pairingId);
     const rejected = this.options.pairings.reject(pairingId);
