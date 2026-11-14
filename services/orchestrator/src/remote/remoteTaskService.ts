@@ -6,7 +6,6 @@ import {
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
   type RemoteTaskState,
-  type RemotePayloadFor,
 } from "@vanessa/protocol";
 
 import type { TrustedRemoteDevice, RemotePairingRegistry } from "./remotePairingRegistry.js";
@@ -127,12 +126,12 @@ export class RemoteTaskService {
     });
 
     const accepted: RemotePayloadFor<"task.accepted"> = {
-      requestId: payload.requestId,
+      requestId: submitted.requestId,
       taskId: submitted.taskId,
       state: "accepted",
       taskVersion: 1,
       eventSeq: 0,
-      acceptedAt: this.now(),
+      acceptedAt: submitted.acceptedAt,
     };
 
     if (capability.tier !== "T2" || !submitted.actionHash || !submitted.expiresAt) {
@@ -200,6 +199,9 @@ export class RemoteTaskService {
     }
 
     if (parsed.data.decision === "approved") {
+      if (parsed.data.method !== "biometric_strong") {
+        serviceError("PERMISSION_DENIED", "A strong biometric approval method is required for remote destructive actions.");
+      }
       const verifier = this.options.verifyApprovalProof;
       if (!verifier) {
         serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
