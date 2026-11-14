@@ -44,6 +44,9 @@ let mobileTaskEngine: MobileTaskEngine | undefined;
 let remotePairings: RemotePairingRegistry | undefined;
 let remoteV2Gateway: RemoteWebSocketGateway | undefined;
 let remoteV2Host: string | undefined;
+let remoteV2Port: number | undefined;
+let remoteV2Scheme: "ws" | "wss" | undefined;
+let remoteV2ServeOwned = false;
 
 await fastify.register(cors, {
   // Only the local desktop development renderer needs browser access. The
@@ -582,14 +585,38 @@ function isTailscaleIPv4(host: string): boolean {
     octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
 }
 
-async function discoverTailscaleIPv4(): Promise<string | null> {
+type TailscaleNodeStatus = { BackendState?: string; Self?: { DNSName?: string } };
+
+async function discoverTailscaleDnsName(): Promise<string | null> {
   try {
-    const result = await execFileAsync("tailscale", ["ip", "-4"], { timeout: 3000, windowsHide: true });
-    const candidate = result.stdout.trim().split(/\\s+/)[0] ?? "";
-    return isTailscaleIPv4(candidate) ? candidate : null;
+    const result = await execFileAsync("tailscale", ["status", "--json"], { timeout: 4000, windowsHide: true });
+    const status = JSON.parse(result.stdout) as TailscaleNodeStatus;
+    const dnsName = status.Self?.DNSName?.replace(/\\.$/, "").toLowerCase() ?? "";
+    if (status.BackendState !== "Running" || !/^[a-z0-9.-]+\\.ts\\.net$/.test(dnsName)) return null;
+    return dnsName;
   } catch {
     return null;
   }
+}
+
+async function startTailscaleServe(localPort: number): Promise<{ host: string; port: number }> {
+  const status = await execFileAsync("tailscale", ["serve", "status"], { timeout: 4000, windowsHide: true })
+    .then((result) => result.stdout)
+    .catch(() => "");
+  if (status.includes(":43443") && !status.includes("127.0.0.1:" + localPort)) {
+    throw new Error("Tailscale Serve port 43443 is already assigned to another service; refusing to replace it.");
+  }
+  await execFileAsync("tailscale", [
+    "serve", "--bg", "--https=43443", "http://127.0.0.1:" + localPort,
+  ], { timeout: 10000, windowsHide: true });
+  const host = await discoverTailscaleDnsName();
+  if (!host) throw new Error("Tailscale Serve started, but the PC MagicDNS TLS name could not be verified.");
+  return { host, port: 43443 };
+}
+
+async function stopTailscaleServe(): Promise<void> {
+  await execFileAsync("tailscale", ["serve", "--https=43443", "off"], { timeout: 5000, windowsHide: true })
+    .catch(() => undefined);
 }
 
 function authorizeRemoteAdmin(request: any, reply: any): boolean {
@@ -616,8 +643,11 @@ fastify.get("/api/remote-v2/status", async (request, reply) => {
     protocol: 2,
     transport: "websocket",
     host: remoteV2Host ?? null,
-    ...(remoteV2Gateway ? remoteV2Gateway.getStatus() : {}),
-    tailscale: Boolean(remoteV2Host && isTailscaleIPv4(remoteV2Host)),
+    port: remoteV2Port ?? null,
+    scheme: remoteV2Scheme ?? null,
+    path: "/remote-v2",
+    ...(remoteV2Gateway ? { connections: remoteV2Gateway.getStatus().connections } : {}),
+    tailscale: remoteV2Scheme === "wss",
   };
 });
 
@@ -636,7 +666,9 @@ fastify.post("/api/remote-v2/pairing-window", async (request, reply) => {
     type: "vanessa_remote_v2",
     version: 2,
     pcIp: remoteV2Host,
-    port: remoteV2Gateway.getActualPort(),
+    port: remoteV2Port,
+    scheme: remoteV2Scheme,
+    path: "/remote-v2",
     pairingId: window.pairingId,
     pairingCode: window.code,
     expiresAt: window.expiresAt,
@@ -726,30 +758,36 @@ export async function startServer() {
         console.warn("[Vanessa Remote v2] Disabled: Electron identity signer/admin channel is not configured.");
       } else {
         const configuredHost = process.env.VANESSA_REMOTE_V2_HOST?.trim();
-        const host = configuredHost || await discoverTailscaleIPv4();
-        const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
-        if (!host || (!loopback && !isTailscaleIPv4(host)) ||
-            (loopback && process.env.VANESSA_REMOTE_V2_ALLOW_LOOPBACK !== "true")) {
-          console.warn("[Vanessa Remote v2] Not listening: an active Tailscale IPv4 address is required. Remote access remains off.");
+        const localTestMode = configuredHost === "127.0.0.1" &&
+          process.env.VANESSA_REMOTE_V2_ALLOW_LOOPBACK === "true";
+        const localPort = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
+        if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) throw new Error("Invalid v2 remote port.");
+        const dataDir = process.env.VANESSA_REMOTE_DATA_DIR || path.resolve(process.cwd(), "data", "remote-v2");
+        fs.mkdirSync(dataDir, { recursive: true });
+        remotePairings = new RemotePairingRegistry({ storePath: path.join(dataDir, "trusted-devices.json") });
+        await remotePairings.initialize();
+        const signer = new HttpRemoteEnvelopeSigner(signerUrl, signerToken);
+        // Confirm the PC signing identity before opening either listener.
+        const identity = await signer.getIdentity();
+        if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
+        const remoteTasks = new RemoteTaskService(mobileTaskEngine!, remotePairings);
+        remoteV2Gateway = new RemoteWebSocketGateway({
+          host: "127.0.0.1", port: localPort, signer, pairings: remotePairings, tasks: remoteTasks,
+        });
+        await remoteV2Gateway.start();
+        if (localTestMode) {
+          remoteV2Host = "127.0.0.1";
+          remoteV2Port = localPort;
+          remoteV2Scheme = "ws";
         } else {
-          const port = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
-          if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid v2 remote port.");
-          const dataDir = process.env.VANESSA_REMOTE_DATA_DIR || path.resolve(process.cwd(), "data", "remote-v2");
-          fs.mkdirSync(dataDir, { recursive: true });
-          remotePairings = new RemotePairingRegistry({ storePath: path.join(dataDir, "trusted-devices.json") });
-          await remotePairings.initialize();
-          const signer = new HttpRemoteEnvelopeSigner(signerUrl, signerToken);
-          // Confirm the PC signing identity before opening the network listener.
-          const identity = await signer.getIdentity();
-          if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
-          const remoteTasks = new RemoteTaskService(mobileTaskEngine, remotePairings);
-          remoteV2Gateway = new RemoteWebSocketGateway({
-            host, port, signer, pairings: remotePairings, tasks: remoteTasks,
-          });
-          await remoteV2Gateway.start();
-          remoteV2Host = host;
-          console.log("[Vanessa Remote v2] Authenticated listener online at ws://" + host + ":" + remoteV2Gateway.getActualPort() + "/remote-v2");
+          const published = await startTailscaleServe(remoteV2Gateway.getActualPort());
+          remoteV2Host = published.host;
+          remoteV2Port = published.port;
+          remoteV2Scheme = "wss";
+          remoteV2ServeOwned = true;
         }
+        console.log("[Vanessa Remote v2] Authenticated listener online at " +
+          remoteV2Scheme + "://" + remoteV2Host + ":" + remoteV2Port + "/remote-v2");
       }
     }
 
@@ -783,6 +821,8 @@ export async function startServer() {
     fastify.addHook("onClose", async () => {
       await remoteV2Gateway?.stop();
       remoteV2Gateway = undefined;
+      if (remoteV2ServeOwned) { await stopTailscaleServe(); remoteV2ServeOwned = false; }
+      remoteV2Host = undefined; remoteV2Port = undefined; remoteV2Scheme = undefined;
       mobileTaskEngine?.close();
       mobileTaskEngine = undefined;
     });
