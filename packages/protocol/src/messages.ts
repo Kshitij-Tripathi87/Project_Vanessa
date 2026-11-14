@@ -469,6 +469,8 @@ const PairingClaimPayload = z
     appVersion: z.string().min(1).max(40),
     /** Fresh phone nonce echoed by the PC to bind the proof exchange. */
     clientNonce: Base64UrlSchema.min(16).max(128).optional(),
+    /** Separate P-256 key whose private half requires strong biometric auth. */
+    approvalPublicKey: Base64UrlSchema.min(46).max(400).optional(),
   })
   .strict();
 
@@ -600,6 +602,11 @@ const TaskConfirmationResponsePayload = z
     approvedAt: EpochMsSchema,
     /** Method used to authorize, e.g. `biometric_strong` or `pc_local`. */
     method: z.string().min(3).max(40),
+    /** Detached signature from the device's separate biometric-gated Keystore key. */
+    approvalProof: z.object({
+      keyId: z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/),
+      signature: Base64UrlSchema.min(16).max(200),
+    }).strict().optional(),
   })
   .strict();
 
