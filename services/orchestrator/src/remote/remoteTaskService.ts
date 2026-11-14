@@ -277,7 +277,7 @@ export class RemoteTaskService {
     const results: RemotePayloadFor<"task.result">[] = [];
     for (const row of taskRows) {
       if (!["done", "failed", "cancelled", "timed_out"].includes(row.state) ||
-          row.lastEventSeq <= requestedCursor) continue;
+          row.lastEventSeq <= cursor) continue;
       const status = row.state === "done" ? "succeeded"
         : row.state === "cancelled" ? "cancelled"
           : row.state === "timed_out" ? "timed_out" : "failed";

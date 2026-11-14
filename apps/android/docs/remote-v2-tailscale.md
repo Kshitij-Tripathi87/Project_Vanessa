@@ -41,7 +41,7 @@ To remove the Serve route, run:
 2. Keep Tailscale connected. The phone can use Wi-Fi or mobile data; both routes still go through the tailnet.
 3. Open Vanessa Desktop and choose Pair Android over Tailscale from its menu.
 4. Generate a one-time pairing QR. It expires; generate another if the code expires.
-5. On Android, select Scan QR and scan the desktop QR image. Paste the copied payload into the text field as a fallback, then select Pair / connect to PC.
+5. On Android, copy the pairing payload from the desktop panel into the Remote Windows PC field and select Pair / connect to PC. The Android QR-camera scanner is not part of this release slice yet.
 6. Confirm that the phone appears in the Windows panel and approve only the scopes needed. The approval decision must happen on the Windows PC.
 7. Confirm the Android app shows Paired and connected. It stores only the PC public identity and session metadata; private signing keys remain in Android Keystore.
 
@@ -59,7 +59,7 @@ The app's CI build is not a substitute for this real cross-network test. Record 
 
 ## Known limits in this implementation slice
 
-- Android QR scanning uses Google Play services Code Scanner. Devices without a compatible scanner can paste the copied JSON payload as a fallback.
+- Android pairing currently uses the copied QR payload as text; camera scanning is not included in this release slice.
 - Task progress/result is delivered over the active session. Durable event replay after a long offline window still needs implementation.
 - Automatic Tailscale Serve setup depends on the Windows CLI and a signed-in tailnet. If it is unavailable, configure it manually as described above.
 - Physical phone, Windows app, and mobile-data acceptance tests remain a release gate.
