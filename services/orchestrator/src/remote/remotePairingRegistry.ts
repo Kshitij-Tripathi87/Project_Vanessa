@@ -526,7 +526,10 @@ export class RemotePairingRegistry {
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,
-      grantedScopes: [...value.grantedScopes] as string[],
+      // v1 trusted-device stores may contain a previously granted delete scope.
+      // Drop it on restore: no device is considered attested until the PC
+      // validates an Android key-attestation certificate chain.
+      grantedScopes: (value.grantedScopes as string[]).filter((scope) => scope !== "files.delete"),
       pairedAt: value.pairedAt,
       revoked: value.revoked,
     };
