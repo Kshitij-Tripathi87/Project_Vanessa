@@ -48,33 +48,51 @@ export class Narrator {
       return `${prefix}I got a result for ${actions}, but could not verify it. Dependent actions were stopped.`;
     }
 
-    // 3. Single successful task: use specific spoken summary if available
+    // A generic outcome summary is not evidence. The caller uses the verified
+    // success path below when every requested task passed its postconditions.
     const successTasks = tasks.filter((t) => t.status === "success");
-    if (successTasks.length === 1) {
-      const task = successTasks[0];
-      if (task.spokenSummary) {
-        return `${prefix}${this.sanitizeSpokenSentence(task.spokenSummary)}`;
-      }
-    }
-
-    // 4. Multiple successful tasks: merge into concise sentence
-    if (successTasks.length > 1) {
-      const actionSummaries = successTasks
-        .map((t) => t.spokenSummary)
-        .filter(Boolean) as string[];
-
-      if (actionSummaries.length > 0) {
-        return `${prefix}${this.sanitizeSpokenSentence(actionSummaries.join(" "))}`;
-      }
-
-      const actions = successTasks.map((t) => t.action.split(".")[1] || t.action).join(" and ");
-      return `${prefix}Successfully completed ${actions}.`;
+    if (successTasks.length > 0) {
+      return this.narrateVerifiedSuccess(successTasks, language, sentiment);
     }
 
     if (language === "hi" || language === "hinglish") {
-      return `${prefix}Aapka task pura ho gaya hai.`;
+      return `${prefix}Kisi task ke complete hone ka verification evidence nahi mila.`;
     }
-    return `${prefix}All requested tasks have completed successfully.`;
+    return `${prefix}No task has verified completion evidence.`;
+  }
+
+  /**
+   * Speak only facts returned by the deterministic verifier. In particular,
+   * never infer that Wi-Fi is connected, media is playing, a file was uploaded,
+   * or a message was sent from the action name or an agent-authored summary.
+   */
+  narrateVerifiedSuccess(tasks: Task[], language: string = "en", sentiment?: any): string {
+    const prefix = sentiment?.urgency === "critical" ? "Urgent update: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
+    const verifiedTasks = tasks.filter((task) =>
+      task.status === "success" && task.verification?.verified === true
+    );
+
+    if (verifiedTasks.length === 0) {
+      return language === "hi" || language === "hinglish"
+        ? `${prefix}Kisi task ke complete hone ka verification evidence nahi mila.`
+        : `${prefix}No task has verified completion evidence.`;
+    }
+
+    const details = verifiedTasks.map((task) => {
+      const verification = task.verification;
+      const detail = typeof verification?.details === "string" && verification.details.trim()
+        ? verification.details.trim()
+        : verification?.postconditions?.find((entry) => typeof entry === "string" && entry.trim())?.trim();
+      // The fallback is deliberately generic: the verifier passed, but it did
+      // not provide a user-facing detail from which to infer a specific effect.
+      return detail || `${task.action.replace(/[._]/g, " ")} passed verification`;
+    });
+
+    const uniqueDetails = [...new Set(details)].slice(0, 4);
+    const remaining = details.length - uniqueDetails.length;
+    const suffix = remaining > 0 ? `; ${remaining} additional action(s) verified` : "";
+    const summary = `Verified ${verifiedTasks.length} action(s): ${uniqueDetails.join("; ")}${suffix}`;
+    return `${prefix}${this.sanitizeSpokenSentence(summary)}`;
   }
 
   /**
@@ -86,7 +104,10 @@ export class Narrator {
     const clean = redacted
       .replace(/[A-Za-z]:\\[\w\-\\]+/g, "local folder")
       .replace(/https?:\/\/[^\s]+/g, "link")
+      .replace(/\b((?:api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED_SECRET]")
+      .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|nvapi-[A-Za-z0-9_-]{12,}|hf_[A-Za-z0-9]{12,})\b/g, "[REDACTED_SECRET]")
       .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "")
+      .replace(/[\r\n]+/g, " ")
       .trim();
 
     // Ensure it ends cleanly with punctuation

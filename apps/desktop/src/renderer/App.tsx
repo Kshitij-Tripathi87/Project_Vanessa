@@ -170,6 +170,7 @@ export function App() {
       typedCommand={typedInput}
       activePlan={activePlan}
       activeTask={activeTask}
+      tasks={tasks}
       pendingApproval={pendingApproval}
       providerStatus={providerStatus}
       voiceConnectionState={voiceConnectionState}
