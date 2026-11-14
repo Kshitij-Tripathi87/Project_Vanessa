@@ -6,7 +6,7 @@ import {
   type RemotePayloadFor,
   type RemoteProtocolErrorCode,
   type RemoteTaskState,
-  type TaskConfirmationResponsePayload,
+  type RemotePayloadFor,
 } from "@vanessa/protocol";
 
 import type { TrustedRemoteDevice, RemotePairingRegistry } from "./remotePairingRegistry.js";
@@ -18,7 +18,7 @@ import {
 
 export type RemoteApprovalProofContext = {
   device: TrustedRemoteDevice;
-  response: TaskConfirmationResponsePayload;
+  response: RemotePayloadFor<"task.confirmation_response">;
   proof: unknown;
 };
 
