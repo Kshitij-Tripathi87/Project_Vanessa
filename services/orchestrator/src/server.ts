@@ -654,48 +654,6 @@ fastify.post("/api/remote/v2/devices/revoke", async (request, reply) => {
   }
 });
 
-// Legacy unauthenticated v1 control routes are loopback-only and not accepted by the v2 listener.
-fastify.post("/api/remote/v2/pairing-window", async (_request, reply) => {
-  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
-  try {
-    return reply.send(remoteV2Gateway.createPairingWindow());
-  } catch {
-    return reply.status(503).send({ error: "PAIRING_WINDOW_UNAVAILABLE" });
-  }
-});
-
-fastify.get("/api/remote/v2/pairings/pending", async (_request, reply) => {
-  if (!remotePairingRegistry) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
-  return reply.send(remotePairingRegistry.getPendingApprovals());
-});
-
-fastify.post("/api/remote/v2/pairings/approve", async (request, reply) => {
-  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
-  const body = request.body as { pairingId?: string; scopes?: unknown };
-  if (typeof body?.pairingId !== "string" || !Array.isArray(body.scopes) ||
-      body.scopes.some((scope) => typeof scope !== "string")) {
-    return reply.status(400).send({ error: "INVALID_PAIRING_APPROVAL" });
-  }
-  try {
-    await remoteV2Gateway.approvePairing(body.pairingId, body.scopes as string[]);
-    return reply.send({ success: true });
-  } catch (error) {
-    return reply.status(409).send({ error: (error as { code?: string })?.code ?? "PAIRING_APPROVAL_FAILED" });
-  }
-});
-
-fastify.post("/api/remote/v2/pairings/reject", async (request, reply) => {
-  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_DISABLED" });
-  const body = request.body as { pairingId?: string };
-  if (typeof body?.pairingId !== "string") return reply.status(400).send({ error: "INVALID_PAIRING_ID" });
-  try {
-    remoteV2Gateway.rejectPairing(body.pairingId);
-    return reply.send({ success: true });
-  } catch (error) {
-    return reply.status(409).send({ error: (error as { code?: string })?.code ?? "PAIRING_REJECTION_FAILED" });
-  }
-});
-
 // Start server
 export async function startServer() {
   try {
