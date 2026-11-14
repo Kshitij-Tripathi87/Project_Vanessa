@@ -1,6 +1,6 @@
 # Vanessa Android — local-first development build
 
-The Android launcher now provides a **local Qwen3 agent**, native llama.cpp inference, on-device voice adapters, and a small permission-gated phone tool set. It is a functional development build, not yet the complete phone-to-Windows companion release.
+The Android launcher now provides a **local Qwen3 agent**, native llama.cpp inference, on-device voice adapters, permission-gated phone tools, and an authenticated protocol-v2 connection to a paired Windows PC. This is an integrated development build; physical tailnet/device validation and production signing remain release gates.
 
 ## Included capabilities
 
@@ -18,8 +18,11 @@ The Android launcher now provides a **local Qwen3 agent**, native llama.cpp infe
 - On-device STT requires Android API 31+ and a system on-device recognizer. Offline TTS requires an installed offline voice for the selected language.
 - Choose a Qwen3 GGUF compatible with the pinned llama.cpp runtime and the phone's available memory. Import validation checks the GGUF header and file checksum; the native runtime performs the actual model-load compatibility check.
 - The APK contains the native arm64 libraries, not model weights. Model download and selection happen outside the APK and remain under the user's control.
-- The Android manifest explicitly removes `INTERNET` and `ACCESS_NETWORK_STATE`. No phone-to-PC networking is enabled by this build.
-- **Authenticated phone-to-Windows pairing and PC delegation are not yet implemented in this launcher.** The canonical shared protocol is v2/ES256; the existing v1/HMAC bridge is legacy code and must not be exposed as a remote listener. Do not enable the optional unauthenticated mobile gateway for remote access.
+- The Android launcher includes a **protocol-v2/ES256 WSS bridge**. It verifies the PC P-256 public-key pin from the pairing QR, signs with a non-exportable Android Keystore identity key, receives a PC-owned capability manifest, and submits typed tasks. It does not send arbitrary shell commands.
+- The PC must be online in the same Tailscale tailnet. Configure Windows Tailscale Serve using [the remote v2 setup guide](../../docs/remote-v2-setup.md), then scan the v2 QR from **Scan PC pairing QR** in the Android app. The PC owner must approve the new device and choose its scopes.
+- **PC destructive file actions require a separate strong-biometric approval signature.** The Android app creates a dedicated P-256 approval key only when the handset can keep it hardware-backed in Android Keystore and require per-use strong biometric authentication. Without that key, read-only remote pairing remains available but the PC refuses to grant the file-delete capability.
+- The protocol-v1/HMAC bridge is legacy and is not used by this launcher. The unauthenticated legacy mobile gateway remains disabled and loopback-only.
+- CI and source tests are not proof of operation on a real tailnet. Real Windows/Android tests across Wi-Fi/mobile-data transitions, biometric hardware validation and signed release installation remain required.
 - This CI artifact proves build and test success. It does not substitute for testing model load, inference latency, temperature, memory pressure, and offline voice availability on a physical phone. Release signing is also still outstanding.
 
 ## Build
@@ -47,11 +50,19 @@ The Android CI workflow fetches the pinned llama.cpp source, runs these checks, 
 
 ## User flow
 
+### Local agent
 1. Install the debug APK on a supported arm64 phone.
-2. Open **Import model** and select a compatible Qwen3 GGUF. Keep the app open while the file is copied and hashed.
-3. Confirm the checksum/import result, then select **Load model**.
-4. Enter a request or use the speech-input control when on-device recognition is available.
-5. Vanessa may inspect device status or today's calendar. Android requests calendar permission when required; the tool checks it again before reading.
-6. Review the evidence-based response. Use speech output only when an offline TTS voice is ready.
+2. Import a compatible Qwen3 GGUF, verify the checksum, then load the model.
+3. Enter a request or use on-device speech input when supported.
+4. Vanessa may inspect phone status or today's calendar. Android requests calendar permission when required and checks it again at execution.
 
-The local agent is intentionally narrow at this stage. Remote PC capabilities should be added only after the v2 pairing, identity, approval, replay-protection, and per-device authorization path is implemented and tested end to end.
+### Remote Windows PC
+1. Install and sign in to Tailscale on both devices; use the same tailnet.
+2. On Windows, follow [the remote v2 setup guide](../../docs/remote-v2-setup.md) and restart Vanessa.
+3. In Android, tap **Scan PC pairing QR** and scan the QR displayed by the desktop under **Manage paired devices**.
+4. The phone proves possession of its Keystore identity. Approve it on the PC and select the minimum required scopes.
+5. Once connected, use **PC status**, **Open Chrome**, **Find file on PC**, or **Open URL on PC**. The app shows task acceptance, progress and the PC's verified result.
+6. File deletion is only shown when the PC grants that scope. The exact target and consequence are shown before strong-biometric approval. Cancel/deny means no approval is sent.
+7. Use **Forget PC** to remove the stored PC pin and pairing from this handset. Revoke the device from the desktop to close active sessions.
+
+Do not treat CI as physical-network evidence. Run the acceptance checklist in the remote v2 guide on a real Windows PC and Android handset before production release.
