@@ -5,7 +5,12 @@ import * as dotenv from "dotenv";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { isIPv4 } from "node:net";
+import * as os from "node:os";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { safeParseRemoteEnvelope } from "@vanessa/protocol";
+import { RemotePairingRegistry } from "./remote/remotePairingRegistry.js";
+import { RemoteTaskService } from "./remote/remoteTaskService.js";
+import { RemoteV2Gateway } from "./remote/remoteV2Gateway.js";
 import { orchestrator } from "./core/orchestrator.js";
 import { eventBus } from "./core/eventBus.js";
 import { VanessaEvent } from "@vanessa/shared";
@@ -34,6 +39,53 @@ const EVENT_STREAM_ID = randomUUID();
 const fastify = Fastify({ logger: false });
 let mobileGateway: MobileGateway | undefined;
 let mobileTaskEngine: MobileTaskEngine | undefined;
+let remoteV2Gateway: RemoteV2Gateway | undefined;
+let remotePairingRegistry: RemotePairingRegistry | undefined;
+let remoteV2StartupError: string | null = null;
+let remoteV2Host: string | null = null;
+let remoteV2Port: number | null = null;
+
+const REMOTE_V2_LOCAL_SCOPES = new Set([
+  "system.read", "files.read", "apps.launch", "browser.open", "files.open",
+  "system.control", "media.control", "system.lock", "screen.capture",
+]);
+
+function isTailscaleIPv4(address: string): boolean {
+  if (!isIPv4(address)) return false;
+  const octets = address.split(".").map(Number);
+  return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+}
+
+function discoverAssignedTailscaleIPv4(): string | undefined {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal && isTailscaleIPv4(entry.address)) return entry.address;
+    }
+  }
+  return undefined;
+}
+
+function authorizeRemoteV2Control(request: any, reply: any): boolean {
+  const ip = String(request.ip ?? "");
+  const loopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+  if (!loopback) {
+    reply.status(403).send({ error: "LOCAL_CONTROL_ONLY" });
+    return false;
+  }
+  const expectedToken = process.env.VANESSA_PC_SIGNER_TOKEN ?? "";
+  const suppliedToken = request.headers["x-vanessa-control-token"];
+  if (!expectedToken || typeof suppliedToken !== "string") {
+    reply.status(401).send({ error: "UNAUTHORIZED" });
+    return false;
+  }
+  const expected = Buffer.from(expectedToken, "utf8");
+  const supplied = Buffer.from(suppliedToken, "utf8");
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+    reply.status(401).send({ error: "UNAUTHORIZED" });
+    return false;
+  }
+  return true;
+}
 
 await fastify.register(cors, {
   // Only the local desktop development renderer needs browser access. The
@@ -503,6 +555,87 @@ fastify.addHook("preHandler", async (request, reply) => {
   reply.status(401).send({ error: result.reason || "INVALID_TOKEN" });
 });
 
+// Desktop-main-only management surface for v2 pairing, approval and revocation.
+// Fastify itself listens on 127.0.0.1; the additional token check prevents
+// other local processes or renderer content from driving pairing decisions.
+fastify.get("/internal/remote-v2/status", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  return reply.send({
+    enabled: !!remoteV2Gateway,
+    host: remoteV2Host,
+    port: remoteV2Port,
+    pcKeyId: process.env.VANESSA_PC_KEY_ID || null,
+    pcFingerprint: process.env.VANESSA_PC_FINGERPRINT || null,
+    startupError: remoteV2StartupError,
+    pendingPairings: remotePairingRegistry?.getPendingApprovals() ?? [],
+    trustedDevices: (remotePairingRegistry?.listTrustedDevices() ?? []).map((device) => ({
+      deviceId: device.deviceId, keyId: device.keyId, deviceHint: device.deviceHint,
+      platform: device.platform, appVersion: device.appVersion,
+      grantedScopes: device.grantedScopes, pairedAt: device.pairedAt, revoked: device.revoked,
+    })),
+  });
+});
+
+fastify.post("/internal/remote-v2/pairing/create", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  if (!remoteV2Gateway || !remotePairingRegistry || !remoteV2Host || !remoteV2Port) {
+    return reply.status(503).send({ error: remoteV2StartupError || "REMOTE_V2_OFFLINE" });
+  }
+  const pairing = remotePairingRegistry.createPairingWindow();
+  return reply.send({
+    protocolVersion: 2,
+    transport: "websocket",
+    endpoint: "ws://" + remoteV2Host + ":" + remoteV2Port,
+    pcId: "pc_" + (process.env.VANESSA_PC_KEY_ID || "").slice(0, 16),
+    pcName: os.hostname(),
+    pcKeyId: process.env.VANESSA_PC_KEY_ID,
+    pcPublicKeySpki: process.env.VANESSA_PC_PUBLIC_KEY_SPKI,
+    pcFingerprint: process.env.VANESSA_PC_FINGERPRINT,
+    pairingId: pairing.pairingId,
+    code: pairing.code,
+    createdAt: pairing.createdAt,
+    expiresAt: pairing.expiresAt,
+  });
+});
+
+fastify.get("/internal/remote-v2/pairings/pending", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  return reply.send(remotePairingRegistry?.getPendingApprovals() ?? []);
+});
+
+fastify.post("/internal/remote-v2/pairings/:pairingId/approve", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_OFFLINE" });
+  const pairingId = String((request.params as any)?.pairingId || "");
+  const body = request.body as { scopes?: unknown };
+  const scopes = Array.isArray(body?.scopes) ? body.scopes : [];
+  if (scopes.length === 0 || scopes.length > 16 ||
+      scopes.some((scope) => typeof scope !== "string" || !REMOTE_V2_LOCAL_SCOPES.has(scope))) {
+    return reply.status(400).send({ error: "INVALID_SCOPE_SELECTION" });
+  }
+  const approved = await remoteV2Gateway.approvePairing(pairingId, scopes as string[]);
+  return reply.send({ approved: true, pairing: approved });
+});
+
+fastify.post("/internal/remote-v2/pairings/:pairingId/reject", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  if (!remoteV2Gateway) return reply.status(503).send({ error: "REMOTE_V2_OFFLINE" });
+  const pairingId = String((request.params as any)?.pairingId || "");
+  const rejected = await remoteV2Gateway.rejectPairing(pairingId);
+  return reply.send({ rejected: true, pairing: rejected });
+});
+
+fastify.post("/internal/remote-v2/devices/:deviceId/revoke", async (request, reply) => {
+  if (!authorizeRemoteV2Control(request, reply)) return;
+  if (!remotePairingRegistry) return reply.status(503).send({ error: "REMOTE_V2_OFFLINE" });
+  const deviceId = String((request.params as any)?.deviceId || "");
+  const device = remotePairingRegistry.listTrustedDevices().find((candidate) => candidate.deviceId === deviceId);
+  if (!device) return reply.status(404).send({ error: "DEVICE_NOT_FOUND" });
+  const revoked = await remotePairingRegistry.revokeDevice(deviceId);
+  if (revoked) await remoteV2Gateway?.closeDevice(device.keyId);
+  return reply.send({ revoked });
+});
+
 // Serve Mobile Companion Phone PWA
 fastify.get("/remote", async (_request, reply) => {
   const html = getRemotePwaHtml(PORT);
@@ -569,8 +702,9 @@ export async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: "127.0.0.1" });
     console.log(`[Vanessa Orchestrator] Online at http://127.0.0.1:${PORT}`);
-    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, ephemeralResult }) => {
+    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, deviceId, ephemeralResult }) => {
       mobileGateway?.publishTask({ ...task, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
+      remoteV2Gateway?.publishTask({ task, deviceId, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
       const auditRow = mobileTaskEngine?.recentAudit(100).find((row: any) => row.taskId === task.taskId && row.state === task.state) as any;
       eventBus.emitEvent("audit:log", {
         id: `mobile-${task.taskId}-${task.state}`,
@@ -580,6 +714,95 @@ export async function startServer() {
         details: { state: task.state, ...(auditRow ? { args: auditRow.args, ...(auditRow.resultSummary ? { summary: auditRow.resultSummary } : {}) } : {}), ...(task.error ? { error: task.error } : {}) },
       });
     } });
+
+    // The v2 remote listener is enabled only when Electron main has provided an
+    // OS-keystore-backed identity signer. It binds exclusively to an address
+    // assigned to this host in Tailscale's CGNAT range; it never binds to LAN
+    // interfaces, wildcard addresses, or the legacy HMAC gateway.
+    if (process.env.VANESSA_REMOTE_V2_ENABLED === "true") {
+      try {
+        const signerBase = process.env.VANESSA_PC_SIGNER_URL || "";
+        const signerToken = process.env.VANESSA_PC_SIGNER_TOKEN || "";
+        const pcKeyId = process.env.VANESSA_PC_KEY_ID || "";
+        const pcPublicKeySpki = process.env.VANESSA_PC_PUBLIC_KEY_SPKI || "";
+        const pcFingerprint = process.env.VANESSA_PC_FINGERPRINT || "";
+        if (!signerBase || !signerToken || !pcKeyId || !pcPublicKeySpki || !pcFingerprint) {
+          throw new Error("PC OS-keystore signing bridge is not configured.");
+        }
+        const signerUrl = new URL(signerBase);
+        if (signerUrl.protocol !== "http:" || signerUrl.hostname !== "127.0.0.1" || signerUrl.username || signerUrl.password) {
+          throw new Error("PC signer must be an authenticated 127.0.0.1 HTTP endpoint.");
+        }
+        const stateDirectory = process.env.VANESSA_REMOTE_STATE_DIR ||
+          path.join(process.env.APPDATA || os.homedir(), "Vanessa", "remote-v2");
+        fs.mkdirSync(stateDirectory, { recursive: true });
+        remotePairingRegistry = new RemotePairingRegistry({
+          storePath: path.join(stateDirectory, "trusted-devices.json"),
+        });
+        await remotePairingRegistry.initialize();
+
+        const assignedTailnetAddresses = Object.values(os.networkInterfaces())
+          .flatMap((entries) => entries ?? [])
+          .filter((entry) => entry.family === "IPv4" && !entry.internal && isTailscaleIPv4(entry.address))
+          .map((entry) => entry.address);
+        const requestedHost = process.env.VANESSA_REMOTE_V2_HOST;
+        const host = requestedHost
+          ? (assignedTailnetAddresses.includes(requestedHost) ? requestedHost : undefined)
+          : assignedTailnetAddresses[0];
+        if (!host) {
+          remoteV2StartupError = "Tailscale is not connected on this PC; the v2 listener remains offline.";
+          console.warn("[Vanessa Remote v2] " + remoteV2StartupError);
+        } else {
+          const configuredPort = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
+          if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65535) {
+            throw new Error("VANESSA_REMOTE_V2_PORT must be between 1 and 65535.");
+          }
+          const remoteTasks = new RemoteTaskService(mobileTaskEngine, remotePairingRegistry);
+          const signer = async (unsignedEnvelope: any) => {
+            const response = await fetch(signerUrl.origin + "/sign", {
+              method: "POST",
+              headers: {
+                Authorization: "Bearer " + signerToken,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(unsignedEnvelope),
+              signal: AbortSignal.timeout(2500),
+            });
+            if (!response.ok) throw new Error("PC identity signer rejected an envelope.");
+            const parsed = safeParseRemoteEnvelope(await response.json());
+            if (!parsed.success || parsed.data.keyId !== pcKeyId) {
+              throw new Error("PC identity signer returned an invalid signed envelope.");
+            }
+            return parsed.data;
+          };
+          remoteV2Gateway = new RemoteV2Gateway({
+            host,
+            port: configuredPort,
+            pcId: "pc_" + pcKeyId.slice(0, 16),
+            pcName: os.hostname(),
+            pcKeyId,
+            pcPublicKeySpki,
+            sign: signer,
+            pairings: remotePairingRegistry,
+            tasks: remoteTasks,
+            onPairingPending: (pairingId) => {
+              console.info("[Vanessa Remote v2] Local approval required for pairing " + pairingId);
+            },
+          });
+          await remoteV2Gateway.start();
+          const address = remoteV2Gateway.address();
+          remoteV2Host = address.host;
+          remoteV2Port = address.port;
+          remoteV2StartupError = null;
+          console.info("[Vanessa Remote v2] Listening on ws://" + address.host + ":" + address.port + " (Tailscale only).");
+        }
+      } catch (error) {
+        remoteV2Gateway = undefined;
+        remoteV2StartupError = error instanceof Error ? error.message : "Remote v2 startup failed.";
+        console.error("[Vanessa Remote v2] Disabled: " + remoteV2StartupError);
+      }
+    }
+
     if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true") {
       const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
       if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");

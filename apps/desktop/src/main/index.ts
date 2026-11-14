@@ -4,8 +4,12 @@ import fs from "node:fs";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
+import { RemotePcIdentityStore } from "./remotePcIdentityStore.js";
+import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
+import { RemotePcSignerServer } from "./remotePcSignerServer.js";
 
 let mainWindow: BrowserWindow | null = null;
+let remotePcSignerServer: RemotePcSignerServer | null = null;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -83,8 +87,34 @@ app.disableHardwareAcceleration();
 
 app.whenReady().then(async () => {
   if (app.isPackaged && process.platform === "win32") {
+    loadUserEnvironment();
+    // Keep the long-lived PC identity inside Electron main. The orchestrator
+    // child receives only a random loopback signing capability and public key.
     try {
-      loadUserEnvironment();
+      const remoteStateDirectory = path.join(app.getPath("userData"), "remote-v2");
+      const identityStore = new RemotePcIdentityStore(
+        path.join(remoteStateDirectory, "pc-identity.json"),
+        new ElectronPcIdentityEncryption(),
+      );
+      remotePcSignerServer = new RemotePcSignerServer(identityStore);
+      const signer = await remotePcSignerServer.start();
+      process.env.VANESSA_PC_SIGNER_URL = signer.url;
+      process.env.VANESSA_PC_SIGNER_TOKEN = signer.token;
+      process.env.VANESSA_PC_KEY_ID = signer.keyId;
+      process.env.VANESSA_PC_PUBLIC_KEY_SPKI = signer.publicKeySpki;
+      process.env.VANESSA_PC_FINGERPRINT = signer.fingerprint;
+      process.env.VANESSA_REMOTE_STATE_DIR = remoteStateDirectory;
+      process.env.VANESSA_REMOTE_V2_ENABLED = "true";
+      process.env.VANESSA_REMOTE_V2_PORT = process.env.VANESSA_REMOTE_V2_PORT || "4321";
+    } catch (error) {
+      process.env.VANESSA_REMOTE_V2_ENABLED = "false";
+      console.error("[Vanessa Remote v2] OS-backed PC identity is unavailable; pairing is disabled:", error);
+    }
+
+    // Never switch back to the legacy HMAC/secret WebSocket gateway.
+    process.env.VANESSA_MOBILE_GATEWAY_ENABLED = "false";
+    process.env.VANESSA_MOBILE_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE = "false";
+    try {
       await startPackagedServices();
     } catch (error) {
       console.error("[Vanessa Runtime] Packaged backend startup failed:", error);
@@ -107,5 +137,7 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   stopPackagedServices();
+  void remotePcSignerServer?.stop();
+  remotePcSignerServer = null;
   globalShortcut.unregisterAll();
 });
