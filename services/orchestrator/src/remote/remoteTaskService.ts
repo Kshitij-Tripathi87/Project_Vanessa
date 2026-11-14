@@ -89,7 +89,10 @@ export class RemoteTaskService {
     const device = this.requireTrustedDevice(keyId);
     const granted = new Set(device.grantedScopes);
     const capabilities = this.engine.getRemoteCapabilities()
-      .filter((capability) => capability.scopes.every((scope) => granted.has(scope)));
+      .filter((capability) =>
+        capability.scopes.every((scope) => granted.has(scope)) &&
+        (capability.tier !== "T2" || Boolean(device.approvalKeyId && device.approvalPublicKeySpki))
+      );
     const manifestVersion = createHash("sha256")
       .update(canonicalize(capabilities), "utf8")
       .digest("hex")
@@ -206,7 +209,11 @@ export class RemoteTaskService {
       if (!verifier) {
         serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
       }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const verified = await verifier({
+        device,
+        response: parsed.data,
+        proof: proof ?? parsed.data.biometricProof,
+      });
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }
