@@ -85,7 +85,7 @@ class RemoteControlActivity : FragmentActivity() {
                     ) {
                         Text("REMOTE PC", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Text("Authenticated Windows control", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                        Text("Paste the pairing JSON shown in the QR window on your PC. The phone pins the PC's P-256 key before trusting any server message.")
+                        Text("Both this phone and the Windows PC must be connected to the same Tailscale tailnet. Scan the QR shown on the PC and keep Tailscale active on this phone. Vanessa pins the PC's P-256 key before trusting signed server messages.")
                         OutlinedTextField(
                             value = qrPayload,
                             onValueChange = { qrPayload = it },
