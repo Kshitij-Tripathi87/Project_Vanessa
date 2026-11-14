@@ -221,6 +221,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     const reloadedPairings = new RemotePairingRegistry({ storePath: join(directory, "trusted-devices.json") });
     await reloadedPairings.initialize();
     assert.equal(reloadedPairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyId, biometricApproval.keyId);
+    assert.equal(reloadedPairings.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyHardwareAttested, false);
 
     await send(socket, signed(phone, "manifest.get", {}, sessionId, 1));
     const manifest = await next("manifest.snapshot");
