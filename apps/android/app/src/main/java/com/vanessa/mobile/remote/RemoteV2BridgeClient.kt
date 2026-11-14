@@ -284,7 +284,7 @@ class RemoteV2BridgeClient(context: Context) {
                                     put("challengeNonce", nonce)
                                 }
                                 sendEnvelope(
-                                    session = this,
+                                    session = socketSession,
                                     type = "pairing.complete",
                                     payload = completion,
                                     keyId = identity.keyId,
@@ -349,7 +349,7 @@ class RemoteV2BridgeClient(context: Context) {
                 put("appVersion", BuildConfig.VERSION_NAME)
             }
             sendEnvelope(
-                session = this,
+                session = socketSession,
                 type = "client.authenticate",
                 payload = authentication,
                 keyId = identity.keyId,
