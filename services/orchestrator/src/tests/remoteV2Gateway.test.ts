@@ -184,7 +184,7 @@ test("phone pairs, receives local approval, authenticates, submits task and rece
   let socket: WebSocket | undefined;
   try {
     await gateway.start();
-    socket = new WebSocket(\`ws://127.0.0.1:\${port}/remote-v2\`);
+    socket = new WebSocket("ws://127.0.0.1:" + port + "/remote-v2");
     const challengePromise = new Promise<Buffer>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Gateway challenge timed out.")), 5_000);
       socket!.once("message", (data) => {
