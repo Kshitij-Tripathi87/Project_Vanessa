@@ -304,48 +304,8 @@ export class VanessaOrchestrator {
     };
   }
 
-  private generateSuccessSummary(command: string, successTasks: Task[], language: string, sentiment?: any): string {
-    const lower = command.toLowerCase();
-    const prefix = sentiment?.urgency === "critical" ? "Immediate status: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
-
-    if (successTasks.some((task) => task.action === "codex.open")) {
-      return `${prefix}${successTasks.map((task) => task.spokenSummary || `${task.action} returned a result.`).join(" ")}`;
-    }
-
-    if (language === "hi" || language === "hinglish") {
-      if (lower.includes("wifi") || lower.includes("wi-fi")) {
-        return `${prefix}Wi-Fi adapter restart ho gaya hai aur YouTube open kar diya hai.`;
-      }
-      if (lower.includes("bluetooth")) {
-        return `${prefix}Bluetooth on kar diya hai aur tasks run ho gaye hain.`;
-      }
-      return `${prefix}Aapka task complete ho gaya hai.`;
-    }
-
-    if (successTasks.length === 1) {
-      const t = successTasks[0];
-      if (t.result?.content) return `${prefix}${t.result.content}`;
-      if (t.spokenSummary) return `${prefix}${t.spokenSummary}`;
-      if (t.action.includes("wifi")) return `${prefix}Wi-Fi adapter has been restarted and connectivity is verified.`;
-      if (t.action.includes("youtube")) return `${prefix}Opened YouTube and started playback.`;
-      if (t.action.includes("claude")) return `${prefix}Claude Code has been started in your terminal.`;
-      if (t.action.includes("drive")) return `${prefix}Report uploaded to Google Drive. The share link is ready.`;
-      if (t.action.includes("schedule")) return `${prefix}Everyday task schedule has been registered in Vanessa.`;
-      if (t.action.includes("memory")) return `${prefix}Saved to Vanessa persistent memory.`;
-      if (t.action.includes("vanessa") || t.action.includes("jarvis")) return `${prefix}Vanessa completed the system action successfully.`;
-    }
-
-    const agentSummaries = successTasks.map((t) => t.spokenSummary).filter(Boolean);
-    if (agentSummaries.length > 0) {
-      return `${prefix}${agentSummaries.join(" ")}`;
-    }
-
-    if (successTasks.length > 1) {
-      const actions = successTasks.map((t) => t.action.split(".")[1] || t.action);
-      return `${prefix}Done. Successfully completed ${actions.join(" and ")}.`;
-    }
-
-    return `${prefix}No verifiable completion summary is available. Check the task evidence and final statuses before treating this request as complete.`;
+  private generateSuccessSummary(_command: string, successTasks: Task[], language: string, sentiment?: any): string {
+    return narrator.narrateVerifiedSuccess(successTasks, language, sentiment);
   }
 }
 
