@@ -5,6 +5,7 @@ import ai.vanessa.agent.LocalPlanOutcome
 import ai.vanessa.agent.LocalPlanError
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
@@ -39,6 +40,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.vanessa.mobile.R
+import com.vanessa.mobile.bridge.BridgeEvent
+import com.vanessa.mobile.bridge.ConnectionState
+import com.vanessa.mobile.bridge.ToolDefinition
+import com.vanessa.mobile.bridge.VanessaBridgeClient
+import com.vanessa.mobile.di.PairingRepository
+import com.vanessa.mobile.di.StoredPairing
+import com.vanessa.mobile.pairing.PairingPayloadParser
+import com.vanessa.mobile.pairing.PairingPayloadResult
 import com.vanessa.mobile.agent.AndroidLocalToolExecutor
 import com.vanessa.mobile.inference.LlamaCppInference
 import com.vanessa.mobile.model.InstalledModel
@@ -56,12 +65,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.JsonObject
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Local-first assistant. Network and the legacy pairing client remain disabled in this build. */
+/** Local-first Android agent with an authenticated v2 PC companion link. */
+@AndroidEntryPoint
 class MainActivity : FragmentActivity() {
+    @Inject lateinit var remoteBridge: VanessaBridgeClient
+    @Inject lateinit var pairingRepository: PairingRepository
+
+    private var remotePairing by mutableStateOf<StoredPairing?>(null)
+    private var pendingPairing by mutableStateOf<StoredPairing?>(null)
+    private var remoteConnectionStatus by mutableStateOf("Not paired")
+    private var remoteConnected by mutableStateOf(false)
+    private var remoteCapabilities by mutableStateOf<List<ToolDefinition>>(emptyList())
+    private var remoteTaskStatus by mutableStateOf("No PC task submitted.")
+    private var remoteTaskBusy by mutableStateOf(false)
+    private var remoteApproval by mutableStateOf<JsonObject?>(null)
+    private var remoteFileQuery by mutableStateOf("")
+    private var remoteUrlInput by mutableStateOf("")
+    private var remoteDeletePath by mutableStateOf("")
+    private var autoReconnectStarted = false
     private var profile by mutableStateOf<DeviceProfile?>(null)
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
     private val calendarTool by lazy { CalendarSearchTool(applicationContext) }
@@ -118,6 +147,30 @@ class MainActivity : FragmentActivity() {
         else speechInputStatus = "Microphone permission denied. You can type your request instead."
     }
 
+    private val scanPcPairingQr = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        val raw = result.data?.getStringExtra(QrScannerActivity.EXTRA_SCANNED_PAYLOAD)
+        if (raw.isNullOrBlank()) {
+            remoteConnectionStatus = "The QR scanner returned no pairing data."
+            return@registerForActivityResult
+        }
+        when (val parsed = PairingPayloadParser.parse(raw)) {
+            is PairingPayloadResult.Invalid -> remoteConnectionStatus = parsed.reason
+            is PairingPayloadResult.Valid -> {
+                pendingPairing = parsed.pairing
+                remotePairing = parsed.pairing
+                remoteConnectionStatus = "Connecting securely to the PC. Approve this phone on the PC when prompted."
+                lifecycleScope.launch {
+                    try {
+                        remoteBridge.connect(parsed.pairing)
+                    } catch (error: Exception) {
+                        remoteConnectionStatus = error.message ?: "Secure PC connection failed."
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -150,6 +203,27 @@ class MainActivity : FragmentActivity() {
                         onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                         meetings = meetings,
                         calendarMessage = calendarMessage,
+                        remoteConnectionStatus = remoteConnectionStatus,
+                        remoteConnected = remoteConnected,
+                        remoteCapabilities = remoteCapabilities,
+                        remoteTaskStatus = remoteTaskStatus,
+                        remoteTaskBusy = remoteTaskBusy,
+                        remoteApproval = remoteApproval,
+                        remoteFileQuery = remoteFileQuery,
+                        remoteUrlInput = remoteUrlInput,
+                        remoteDeletePath = remoteDeletePath,
+                        onRemoteFileQueryChange = { remoteFileQuery = it },
+                        onRemoteUrlChange = { remoteUrlInput = it },
+                        onRemoteDeletePathChange = { remoteDeletePath = it },
+                        onScanPc = ::scanForPc,
+                        onDisconnectPc = ::forgetPc,
+                        onRemoteStatus = { submitRemoteTool("system_status", emptyMap()) },
+                        onRemoteOpenChrome = { submitRemoteTool("open_app", mapOf("app" to "chrome")) },
+                        onRemoteFindFile = { submitRemoteTool("find_file", mapOf("name" to remoteFileQuery.trim(), "maxResults" to 10)) },
+                        onRemoteOpenUrl = { submitRemoteTool("open_url", mapOf("url" to remoteUrlInput.trim())) },
+                        onRemoteDeleteFile = { submitRemoteTool("delete_file", mapOf("path" to remoteDeletePath.trim())) },
+                        onApproveRemote = ::approveRemoteAction,
+                        onDenyRemote = ::denyRemoteAction,
                         onRefresh = ::refreshProfile,
                         onImportModel = ::chooseModel,
                         onLoadModel = ::loadModel,
@@ -184,6 +258,81 @@ class MainActivity : FragmentActivity() {
             "On-device speech recognition is unavailable. Type your request instead."
         }
 
+        lifecycleScope.launch {
+            remoteBridge.connectionState.collect { state ->
+                when (state) {
+                    ConnectionState.Disconnected -> {
+                        remoteConnected = false
+                        if (remoteConnectionStatus.startsWith("Connected")) remoteConnectionStatus = "Disconnected from the PC."
+                    }
+                    ConnectionState.Connecting -> {
+                        remoteConnected = false
+                        remoteConnectionStatus = "Connecting to the paired PC…"
+                    }
+                    is ConnectionState.Connected -> {
+                        remoteConnected = true
+                        remoteConnectionStatus = "Connected securely to " + state.pcIP
+                    }
+                    is ConnectionState.Error -> {
+                        remoteConnected = false
+                        remoteConnectionStatus = state.message
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            remoteBridge.events.collect { event ->
+                when (event) {
+                    is BridgeEvent.PairingPending -> remoteConnectionStatus =
+                        "Phone identity verified. Approve this device in Vanessa on the PC."
+                    is BridgeEvent.SessionReady -> {
+                        val source = pendingPairing ?: remotePairing
+                        if (source != null) {
+                            val trusted = source.copy(
+                                deviceId = event.deviceId,
+                                pairingId = "",
+                                pairingCode = "",
+                            )
+                            remotePairing = trusted
+                            pendingPairing = null
+                            pairingRepository.savePairing(trusted)
+                        }
+                        remoteConnectionStatus = "Authenticated PC session is ready."
+                    }
+                    is BridgeEvent.ManifestReceived -> {
+                        remoteCapabilities = event.tools
+                        remoteTaskStatus = "PC manifest loaded: " + event.tools.size + " capabilities."
+                    }
+                    is BridgeEvent.TaskAccepted -> remoteTaskStatus =
+                        "PC accepted task " + event.taskId + ". Waiting for execution and verification…"
+                    is BridgeEvent.TaskProgress -> remoteTaskStatus =
+                        event.state + ": " + (event.message ?: "PC task in progress.")
+                    is BridgeEvent.TaskResult -> {
+                        remoteTaskBusy = false
+                        remoteTaskStatus = event.status + ": " + event.summary +
+                            (event.result?.let { "\n" + it } ?: "")
+                    }
+                    is BridgeEvent.TaskError -> {
+                        remoteTaskBusy = false
+                        remoteTaskStatus = event.code + ": " + event.message
+                    }
+                    is BridgeEvent.ConfirmationRequired -> {
+                        remoteApproval = event.approval
+                        remoteTaskStatus = "Approval required. Review the exact PC action before authorizing it."
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            val saved = pairingRepository.pairing.first()
+            remotePairing = saved
+            if (!saved?.deviceId.isNullOrBlank() && !autoReconnectStarted) {
+                autoReconnectStarted = true
+                remoteConnectionStatus = "Reconnecting to the saved PC identity…"
+                remoteBridge.connect(saved!!)
+            }
+        }
+
         refreshProfile()
         refreshModelState()
     }
@@ -199,6 +348,72 @@ class MainActivity : FragmentActivity() {
         offlineTts = null
         onDeviceSpeechInput = null
         super.onDestroy()
+    }
+
+    private fun scanForPc() {
+        scanPcPairingQr.launch(Intent(this, QrScannerActivity::class.java))
+    }
+
+    private fun forgetPc() {
+        lifecycleScope.launch {
+            remoteBridge.disconnect()
+            pairingRepository.clear()
+            pendingPairing = null
+            remotePairing = null
+            remoteCapabilities = emptyList()
+            remoteApproval = null
+            remoteConnected = false
+            remoteConnectionStatus = "This phone has forgotten the paired PC."
+            remoteTaskStatus = "No PC task submitted."
+        }
+    }
+
+    private fun submitRemoteTool(capability: String, arguments: Map<String, Any?>) {
+        if (!remoteConnected) {
+            remoteTaskStatus = "Connect to a paired PC before submitting a task."
+            return
+        }
+        if (remoteCapabilities.none { it.name == capability }) {
+            remoteTaskStatus = "This PC has not granted or advertised the $capability capability."
+            return
+        }
+        remoteTaskBusy = true
+        remoteApproval = null
+        remoteTaskStatus = "Submitting $capability to the PC…"
+        lifecycleScope.launch {
+            try {
+                remoteBridge.submitTask(capability, arguments)
+                remoteTaskStatus = "Request sent. Waiting for PC acknowledgement…"
+            } catch (error: Exception) {
+                remoteTaskBusy = false
+                remoteTaskStatus = error.message ?: "PC task submission failed."
+            }
+        }
+    }
+
+    private fun approveRemoteAction(approval: JsonObject) {
+        lifecycleScope.launch {
+            remoteTaskStatus = "Waiting for strong biometric verification…"
+            val approved = remoteBridge.approveTask(this@MainActivity, approval)
+            if (approved) {
+                remoteApproval = null
+                remoteTaskStatus = "Biometric proof sent. The PC will revalidate the action before execution."
+            } else {
+                remoteTaskStatus = "Biometric approval was cancelled, unavailable, or rejected. No approval was sent."
+            }
+        }
+    }
+
+    private fun denyRemoteAction(approval: JsonObject) {
+        lifecycleScope.launch {
+            val denied = remoteBridge.denyTask(approval)
+            if (denied) {
+                remoteApproval = null
+                remoteTaskStatus = "Action denied. The PC will not execute it."
+            } else {
+                remoteTaskStatus = "Could not send the denial. Check the secure connection."
+            }
+        }
     }
 
     private fun requestSpeechInput() {
@@ -449,6 +664,27 @@ private fun DeviceScreen(
     onDeviceSpeechAvailable: Boolean,
     meetings: List<CalendarMeeting>,
     calendarMessage: String?,
+    remoteConnectionStatus: String,
+    remoteConnected: Boolean,
+    remoteCapabilities: List<ToolDefinition>,
+    remoteTaskStatus: String,
+    remoteTaskBusy: Boolean,
+    remoteApproval: JsonObject?,
+    remoteFileQuery: String,
+    remoteUrlInput: String,
+    remoteDeletePath: String,
+    onRemoteFileQueryChange: (String) -> Unit,
+    onRemoteUrlChange: (String) -> Unit,
+    onRemoteDeletePathChange: (String) -> Unit,
+    onScanPc: () -> Unit,
+    onDisconnectPc: () -> Unit,
+    onRemoteStatus: () -> Unit,
+    onRemoteOpenChrome: () -> Unit,
+    onRemoteFindFile: () -> Unit,
+    onRemoteOpenUrl: () -> Unit,
+    onRemoteDeleteFile: () -> Unit,
+    onApproveRemote: (JsonObject) -> Unit,
+    onDenyRemote: (JsonObject) -> Unit,
     onRefresh: () -> Unit,
     onImportModel: () -> Unit,
     onLoadModel: () -> Unit,
@@ -467,10 +703,81 @@ private fun DeviceScreen(
             Text("VANESSA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text("Your local AI agent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Private on-device reasoning and Android tools. Network pairing is intentionally unavailable in this build.",
+                "Private on-device reasoning with a secure, permission-scoped connection to your Windows PC.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("REMOTE WINDOWS PC", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(remoteConnectionStatus, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onScanPc, enabled = !remoteConnected) { Text("Scan PC pairing QR") }
+                    TextButton(onClick = onDisconnectPc, enabled = remotePairingDevicePresent(remoteConnected, remoteCapabilities)) { Text("Forget PC") }
+                }
+                if (remoteConnected) {
+                    Text("Available capabilities: " + remoteCapabilities.joinToString { it.name }, style = MaterialTheme.typography.labelSmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onRemoteStatus, enabled = !remoteTaskBusy && remoteHasCapability(remoteCapabilities, "system_status")) {
+                            Text("PC status")
+                        }
+                        Button(onClick = onRemoteOpenChrome, enabled = !remoteTaskBusy && remoteHasCapability(remoteCapabilities, "open_app")) {
+                            Text("Open Chrome")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = remoteFileQuery,
+                        onValueChange = onRemoteFileQueryChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Find file by name") },
+                        singleLine = true,
+                    )
+                    Button(onClick = onRemoteFindFile, enabled = !remoteTaskBusy && remoteFileQuery.isNotBlank() && remoteHasCapability(remoteCapabilities, "find_file")) {
+                        Text("Find file on PC")
+                    }
+                    OutlinedTextField(
+                        value = remoteUrlInput,
+                        onValueChange = onRemoteUrlChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("HTTP(S) URL to open on PC") },
+                        singleLine = true,
+                    )
+                    Button(onClick = onRemoteOpenUrl, enabled = !remoteTaskBusy && remoteUrlInput.startsWith("https://") || !remoteTaskBusy && remoteUrlInput.startsWith("http://") && remoteHasCapability(remoteCapabilities, "open_url")) {
+                        Text("Open URL on PC")
+                    }
+                    if (remoteHasCapability(remoteCapabilities, "delete_file")) {
+                        OutlinedTextField(
+                            value = remoteDeletePath,
+                            onValueChange = onRemoteDeletePathChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Exact PC file path to move to Recycle Bin") },
+                            singleLine = true,
+                        )
+                        Button(onClick = onRemoteDeleteFile, enabled = !remoteTaskBusy && remoteDeletePath.isNotBlank()) {
+                            Text("Request file deletion (biometric approval)")
+                        }
+                    }
+                    Text(remoteTaskStatus, style = MaterialTheme.typography.bodySmall)
+                    remoteApproval?.let { approval ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("PC ACTION REQUIRES APPROVAL", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+                                Text(approval["consequence"]?.toString()?.trim('"') ?: "A PC action requires your approval.")
+                                Text("Target: " + (approval["target"]?.toString() ?: "Not provided"), style = MaterialTheme.typography.bodySmall)
+                                Text("The approval is bound to one task and expires at " + (approval["expiresAt"]?.toString() ?: "an unknown time") + ". Strong biometrics are required.", style = MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { onApproveRemote(approval) }) { Text("Approve with biometrics") }
+                                    TextButton(onClick = { onDenyRemote(approval) }) { Text("Deny") }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text("Sign in to the same Tailscale network on this phone and PC before scanning the v2 QR.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
