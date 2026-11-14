@@ -7,9 +7,11 @@ import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from
 import { RemotePcIdentityStore } from "./remotePcIdentityStore.js";
 import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
 import { RemotePcSignerServer } from "./remotePcSignerServer.js";
+import { RemotePairingWindowController } from "./remotePairingWindowController.js";
 
 let mainWindow: BrowserWindow | null = null;
 let remotePcSignerServer: RemotePcSignerServer | null = null;
+let remotePairingWindowController: RemotePairingWindowController | null = null;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -123,6 +125,15 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+  remotePairingWindowController = new RemotePairingWindowController();
+  const pairingShortcutRegistered = globalShortcut.register("CommandOrControl+Shift+P", () => {
+    void remotePairingWindowController?.open().catch((error) => {
+      console.error("[Vanessa Remote Pairing] Could not open pairing window:", error);
+    });
+  });
+  if (!pairingShortcutRegistered) {
+    console.warn("[Vanessa Remote Pairing] Could not register Ctrl/Cmd+Shift+P.");
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -136,6 +147,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  remotePairingWindowController?.close();
+  remotePairingWindowController = null;
   stopPackagedServices();
   void remotePcSignerServer?.stop();
   remotePcSignerServer = null;
