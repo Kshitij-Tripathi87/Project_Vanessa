@@ -507,6 +507,7 @@ export class RemoteV2Gateway {
       }
       try {
         const pending = this.options.pairings.complete(envelope, now);
+        state.challengeExpiresAt = pending.expiresAt;
         state.phase = "awaiting_local_approval";
         this.pendingPairings.set(state.pairingId, state);
         await this.send(state, "pairing.pending", pending, PRE_SESSION_ID);
@@ -712,7 +713,7 @@ export class RemoteV2Gateway {
           void this.send(state, "session.close", { reason: "expired" }, state.sessionId).catch(() => undefined);
           this.closeState(state, 1008, "Session expired.");
         }
-      } else if (state.phase !== "awaiting_local_approval" && state.challengeExpiresAt <= now) {
+      } else if (state.challengeExpiresAt <= now) {
         this.closeState(state, 1008, "Handshake expired.");
       }
     }

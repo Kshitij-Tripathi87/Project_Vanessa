@@ -698,9 +698,10 @@ export async function startServer() {
         tasks: new RemoteTaskService(mobileTaskEngine, pairings),
       });
       await remoteV2Gateway.start();
-      console.log("[Vanessa Remote v2] Authenticated loopback gateway ready on 127.0.0.1:4321/remote-v2");
+      console.log(`[Vanessa Remote v2] Authenticated loopback gateway ready on 127.0.0.1:${process.env.VANESSA_REMOTE_V2_PORT || "4321"}/remote-v2`);
     }
-    if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true") {
+    if (process.env.VANESSA_MOBILE_GATEWAY_ENABLED === "true" &&
+        process.env.VANESSA_REMOTE_V2_ENABLED !== "true") {
       const host = process.env.VANESSA_MOBILE_GATEWAY_HOST || "127.0.0.1";
       if (["0.0.0.0", "::", "::0"].includes(host)) throw new Error("Mobile gateway cannot bind to a wildcard address.");
       const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";

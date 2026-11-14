@@ -123,8 +123,12 @@ async function configureTailscaleRemoteIngress(): Promise<string | undefined> {
       }
       // Serve is private to this tailnet, provides TLS, and proxies WebSocket
       // upgrades to the loopback HTTP listener.
+      const remotePort = Number(process.env.VANESSA_REMOTE_V2_PORT || "4321");
+      if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+        throw new Error("VANESSA_REMOTE_V2_PORT must be a valid TCP port.");
+      }
       await runExecutable(executable, [
-        "serve", "--bg", "--set-path=/remote-v2", "http://127.0.0.1:4321",
+        "serve", "--bg", "--set-path=/remote-v2", `http://127.0.0.1:${remotePort}`,
       ]);
       const url = "wss://" + dnsName + "/remote-v2";
       process.env.VANESSA_REMOTE_V2_PUBLIC_URL = url;

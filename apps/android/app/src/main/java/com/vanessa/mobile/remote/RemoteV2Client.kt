@@ -97,8 +97,13 @@ class RemoteV2Client {
             serverSequence = acceptServerSequence(pending, serverSequence)
             require(pending.type == "pairing.pending") { "PC did not accept the pairing proof." }
 
-            // Pairing remains pending until the Windows user approves it locally.
-            val approved = withTimeout(5 * 60_000L) {
+            // The PC's challenge expiry is authoritative. The phone never waits
+            // beyond the registry's actual approval window.
+            val pairingExpiresAt = pending.payload["expiresAt"]?.jsonPrimitive?.content?.toLongOrNull()
+                ?: error("PC pairing response omitted its expiry.")
+            val approvalWaitMs = pairingExpiresAt - System.currentTimeMillis()
+            require(approvalWaitMs > 0L) { "The PC pairing approval window expired. Generate a new code." }
+            val approved = withTimeout(approvalWaitMs) {
                 receiveVerified(socket, pcPublicKey, configuration.pcKeyId, PRE_SESSION_ID)
             }
             serverSequence = acceptServerSequence(approved, serverSequence)
