@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   canonicalize,
@@ -38,13 +38,13 @@ const REMOTE_CAPABILITY_SCOPES: Readonly<Record<string, readonly string[]>> = {
   take_screenshot: ["screen.capture"],
 };
 
-const REMOTE_POLICY_VERSION = "mobile-policy-v1";
+export const REMOTE_POLICY_VERSION = "mobile-policy-v1";
 
 function remoteTier(tier: MobileTool["tier"]): RemotePermissionTier {
   return `T${tier}` as RemotePermissionTier;
 }
 
-function remoteTarget(tool: string, args: Record<string, unknown>): TargetDescriptor {
+export function createRemoteTargetDescriptor(tool: string, args: Record<string, unknown>): TargetDescriptor {
   if (tool === "delete_file" || tool === "open_file") {
     return { kind: "file", value: String(args.path ?? tool) };
   }
@@ -211,7 +211,7 @@ export class MobileTaskEngine {
       capability: tool,
       capabilityVersion: 1,
       canonicalArguments,
-      target: remoteTarget(tool, canonicalArguments),
+      target: createRemoteTargetDescriptor(tool, canonicalArguments),
       policyVersion: REMOTE_POLICY_VERSION,
       expiresAt,
     };
