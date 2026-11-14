@@ -47,7 +47,7 @@ let remoteV2Host: string | null = null;
 let remoteV2Port: number | null = null;
 
 const REMOTE_V2_LOCAL_SCOPES = new Set([
-  "system.read", "files.read", "apps.launch", "browser.open", "files.open",
+  "system.read", "files.read", "files.delete", "apps.launch", "browser.open", "files.open",
   "system.control", "media.control", "system.lock", "screen.capture",
 ]);
 

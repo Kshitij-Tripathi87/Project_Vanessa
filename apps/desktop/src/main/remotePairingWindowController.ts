@@ -206,6 +206,10 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
 
   private async promptForApproval(port: number, token: string, pairing: PendingPairing): Promise<void> {
     if (!this.window || this.window.isDestroyed()) return;
+    const buttons = pairing.biometricApprovalAvailable
+      ? ["Approve limited access", "Allow file deletion (biometric each time)", "Deny"]
+      : ["Approve limited access", "Deny"];
+    const denyIndex = buttons.length - 1;
     const decision = await dialog.showMessageBox(this.window, {
       type: "question",
       title: "Approve phone pairing?",
@@ -217,21 +221,26 @@ textarea{box-sizing:border-box;width:100%;height:98px;margin-top:8px;border-radi
         "Key ID: " + pairing.keyId,
         "Strong biometric approval key: " + (pairing.biometricApprovalAvailable ? "enrolled" : "not available"),
         "",
-        "Approve grants read status, search approved files, open allow-listed apps and URLs, and open files in approved folders.",
-        "Delete, lock, system-control and screen-capture permissions are not granted.",
+        "Limited access: read PC status, search approved files, launch allow-listed apps/URLs, and open approved files.",
+        pairing.biometricApprovalAvailable
+          ? "Optional file deletion: moves selected files to the Windows Recycle Bin. Every deletion still requires a separate strong-biometric approval on this phone."
+          : "File deletion is unavailable because this phone did not enroll a hardware-backed strong-biometric approval key.",
+        "Lock, system-control and screen-capture scopes remain disabled.",
       ].join("\n"),
-      buttons: ["Approve limited access", "Deny"],
-      defaultId: 1,
-      cancelId: 1,
+      buttons,
+      defaultId: denyIndex,
+      cancelId: denyIndex,
       noLink: true,
     });
-    if (decision.response === 0) {
+    if (decision.response === 0 || (pairing.biometricApprovalAvailable && decision.response === 1)) {
+      const scopes = [...GRANTED_DEFAULT_SCOPES];
+      if (pairing.biometricApprovalAvailable && decision.response === 1) scopes.push("files.delete");
       await this.localRequest(
         port,
         token,
         "/internal/remote-v2/pairings/" + encodeURIComponent(pairing.pairingId) + "/approve",
         "POST",
-        { scopes: [...GRANTED_DEFAULT_SCOPES] },
+        { scopes },
       );
     } else {
       await this.localRequest(
