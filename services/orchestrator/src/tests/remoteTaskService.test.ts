@@ -289,3 +289,22 @@ test("an authenticated phone may deny its own pending approval without an approv
     assert.equal(engine.getTask(approval.taskId)?.state, "cancelled");
   });
 });
+
+test("reconnect does not re-issue a pending approval after its capability scope is revoked", async () => {
+  const device = trustedDevice(["files.delete"]);
+  await withEngine([deleteTool()], async (engine) => {
+    const service = new RemoteTaskService(engine, pairings(device));
+    const submitted = await service.submitTask(PHONE_KEY_ID, {
+      requestId,
+      idempotencyKey: "phone-delete-recovery-scope-revoked",
+      capability: "delete_file",
+      canonicalArguments: { path: "C:/Users/test/Downloads/pending.pdf" },
+    });
+    const taskId = submitted.accepted.taskId;
+    assert.ok(service.getTaskRecovery(PHONE_KEY_ID, [taskId])[0]?.confirmationRequired);
+    device.grantedScopes = [];
+    const recovered = service.getTaskRecovery(PHONE_KEY_ID, [taskId]);
+    assert.equal(recovered[0]?.confirmationRequired, undefined);
+    assert.equal(recovered[0]?.snapshot.state, "awaiting_approval");
+  });
+});
