@@ -134,6 +134,14 @@ app.whenReady().then(async () => {
   if (!pairingShortcutRegistered) {
     console.warn("[Vanessa Remote Pairing] Could not register Ctrl/Cmd+Shift+P.");
   }
+  const revokeShortcutRegistered = globalShortcut.register("CommandOrControl+Shift+R", () => {
+    void remotePairingWindowController?.manageTrustedDevices().catch((error) => {
+      console.error("[Vanessa Remote Pairing] Could not manage trusted devices:", error);
+    });
+  });
+  if (!revokeShortcutRegistered) {
+    console.warn("[Vanessa Remote Pairing] Could not register Ctrl/Cmd+Shift+R.");
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

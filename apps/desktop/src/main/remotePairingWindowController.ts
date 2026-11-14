@@ -17,6 +17,17 @@ type PairingCreated = {
   biometricApprovalAvailable: boolean;
 };
 
+type TrustedDeviceSummary = {
+  deviceId: string;
+  keyId: string;
+  deviceHint: string;
+  platform: string;
+  appVersion: string;
+  grantedScopes: string[];
+  pairedAt: number;
+  revoked: boolean;
+};
+
 type PendingPairing = {
   pairingId: string;
   keyId: string;
@@ -115,6 +126,91 @@ export class RemotePairingWindowController {
     if (this.window && !this.window.isDestroyed()) this.window.close();
     this.window = undefined;
   }
+
+  async manageTrustedDevices(): Promise<void> {
+    const token = process.env.VANESSA_PC_SIGNER_TOKEN || "";
+    const port = Number(process.env.VANESSA_PORT || "4319");
+    if (!token || !Number.isInteger(port) || port < 1 || port > 65535) {
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Vanessa Trusted Devices",
+        message: "The local orchestrator is unavailable.",
+        buttons: ["OK"],
+      });
+      return;
+    }
+    try {
+      const status = await this.localRequest<{ trustedDevices: TrustedDeviceSummary[] }>(
+        port, token, "/internal/remote-v2/status", "GET",
+      );
+      const devices = status.trustedDevices.filter((device) => !device.revoked);
+      if (devices.length === 0) {
+        await dialog.showMessageBox({
+          type: "info",
+          title: "Vanessa Trusted Devices",
+          message: "No active paired phones.",
+          detail: "Pair a phone with Ctrl+Shift+P.",
+          buttons: ["OK"],
+        });
+        return;
+      }
+
+      const names = devices.map((device) =>
+        device.deviceHint + " (" + device.platform + ") · " + device.grantedScopes.join(", "),
+      );
+      const buttons = [...names.map((name) => "Revoke: " + name), "Done"];
+      const doneIndex = buttons.length - 1;
+      const selected = await dialog.showMessageBox({
+        type: "warning",
+        title: "Manage trusted Vanessa phones",
+        message: "Select a device to revoke its access.",
+        detail: "Revocation closes its live session and prevents future authentication with this PC.",
+        buttons,
+        defaultId: doneIndex,
+        cancelId: doneIndex,
+        noLink: true,
+      });
+      if (selected.response === doneIndex) return;
+
+      const device = devices[selected.response];
+      if (!device) return;
+      const confirmation = await dialog.showMessageBox({
+        type: "warning",
+        title: "Revoke phone access?",
+        message: "Revoke " + device.deviceHint + "?",
+        detail: "The phone will need to be paired again. Any active task owned by it remains subject to the task engine's cancellation and audit rules.",
+        buttons: ["Revoke device", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (confirmation.response !== 0) return;
+
+      await this.localRequest(
+        port,
+        token,
+        "/internal/remote-v2/devices/" + encodeURIComponent(device.deviceId) + "/revoke",
+        "POST",
+        {},
+      );
+      await dialog.showMessageBox({
+        type: "info",
+        title: "Device revoked",
+        message: device.deviceHint + " can no longer connect to this PC.",
+        buttons: ["OK"],
+      });
+    } catch (error) {
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Device revocation failed",
+        message: "Vanessa could not revoke the selected phone.",
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: ["OK"],
+      });
+    }
+  }
+
+
 
   private buildWindowHtml(data: PairingCreated, qr: string, payload: string): string {
     const escapeHtml = (value: string) => value
