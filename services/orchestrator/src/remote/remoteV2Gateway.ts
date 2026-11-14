@@ -271,7 +271,22 @@ export class RemoteV2Gateway {
         socket.close(1003, "Text frames only");
         return;
       }
-      void this.onMessage(socket, raw.toString()).catch(() => socket.close(1008, "Protocol error"));
+      void this.onMessage(socket, raw.toString()).catch(async (error: unknown) => {
+        const state = this.sockets.get(socket);
+        const sessionId = state && "sessionId" in state ? state.sessionId : PRE_SESSION_ID;
+        const suppliedCode = typeof (error as { code?: unknown })?.code === "string"
+          ? (error as { code: string }).code
+          : "INTERNAL_ERROR";
+        const known = safeParseRemotePayload("protocol.error", {
+          code: suppliedCode,
+          message: "The PC could not process that request.",
+        });
+        const code = known.success ? known.data.code : "INTERNAL_ERROR";
+        await this.sendProtocolError(socket, code, known.success ? known.data.message : "An internal PC error occurred.", sessionId);
+        if (["INVALID_SIGNATURE", "UNKNOWN_KEY", "REVOKED_DEVICE", "REPLAYED_MESSAGE", "SEQUENCE_OUT_OF_ORDER"].includes(code)) {
+          socket.close(1008, "Authentication or replay validation failed");
+        }
+      });
     });
     socket.on("close", () => this.dropSocket(socket));
     socket.on("error", () => this.dropSocket(socket));
@@ -315,7 +330,7 @@ export class RemoteV2Gateway {
       return;
     }
     state.inboundMessageTimes.push(this.now());
-    if (!("sessionId" in state) && this.now() - state.connectedAt > 90_000) {
+    if (!("sessionId" in state) && this.now() - state.connectedAt > 180_000) {
       await this.sendProtocolError(socket, "SESSION_EXPIRED", "The handshake timed out.");
       socket.close(1008, "Handshake timed out");
       return;
