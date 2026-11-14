@@ -3,6 +3,7 @@ import { useVanessaStore } from "./stores/vanessaStore.js";
 import { useTaskStream } from "./hooks/useTaskStream.js";
 import { useAudioCapture } from "./hooks/useAudioCapture.js";
 import { CompactAssistant } from "./components/CompactAssistant.js";
+import { MobilePairingModal } from "./components/MobilePairingModal.js";
 
 const PANEL_SIZE = { width: 360, height: 440 };
 const ORB_SIZE = { width: 90, height: 90 };
@@ -48,6 +49,7 @@ export function App() {
   const [expanded, setExpanded] = useState(false);
   const [dockCorner, setDockCorner] = useState<DockCorner>("bottom-right");
   const [typedInput, setTypedInput] = useState("");
+  const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
 
   // Keep typed input local to the surface. It should never become task state
   // until the user explicitly submits it.
@@ -159,6 +161,7 @@ export function App() {
   }, [currentTaskId, tasks]);
 
   return (
+    <>
     <CompactAssistant
       expanded={expanded}
       dockCorner={dockCorner}
@@ -193,6 +196,9 @@ export function App() {
       onExecute={() => void execute()}
       onApprove={(taskId) => void approve(taskId)}
       onReject={(taskId) => void reject(taskId)}
+      onOpenMobilePairing={() => setMobilePairingOpen(true)}
     />
+    <MobilePairingModal isOpen={mobilePairingOpen} onClose={() => setMobilePairingOpen(false)} />
+    </>
   );
 }
