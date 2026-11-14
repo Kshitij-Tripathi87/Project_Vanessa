@@ -1,6 +1,7 @@
 import { app, BrowserWindow, globalShortcut, screen } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
@@ -89,6 +90,10 @@ app.whenReady().then(async () => {
   if (app.isPackaged && process.platform === "win32") {
     try {
       loadUserEnvironment();
+      // Local orchestration routes are not callable by arbitrary loopback clients.
+      // This capability is generated per launch, inherited only by the child, and
+      // never exposed to the renderer or QR payload.
+      process.env.VANESSA_REMOTE_CONTROL_TOKEN = randomBytes(32).toString("base64url");
       try {
         const identityPath = path.join(app.getPath("userData"), "remote", "pc-identity-v2.json");
         remoteSigningBroker = await createRemoteSigningBroker(
@@ -126,6 +131,7 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   stopPackagedServices();
+  delete process.env.VANESSA_REMOTE_CONTROL_TOKEN;
   if (remoteSigningBroker) void remoteSigningBroker.close().catch((error) => console.warn("[Vanessa Remote v2] Signer shutdown failed:", error));
   globalShortcut.unregisterAll();
 });
