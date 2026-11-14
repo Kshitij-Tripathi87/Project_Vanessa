@@ -191,8 +191,17 @@ class VanessaBridgeClient @Inject constructor() {
             require(challengeEnvelope.type == "server.challenge") { "PC did not send the expected v2 server challenge." }
             val serverNonce = challengeEnvelope.payload.requiredString("serverNonce")
 
-            if (preferPairingClaim) {
+            val readyPayload = if (preferPairingClaim) {
                 performPairingClaim(pairing, identity, pcPublicKey, pcKeyId, challengeGuard)
+                // The PC sends pairing.approved before starting the new session.
+                val approved = waitForPairingApproval(pcPublicKey, challengeGuard)
+                onPaired(approved.requiredString("deviceId"))
+                receiveSessionReady(
+                    pcPublicKey,
+                    pcKeyId,
+                    approved.requiredString("serverNonce"),
+                    approved.requiredString("clientNonce"),
+                )
             } else {
                 val clientNonce = randomBase64Url(32)
                 val authPayload = buildJsonObject {
@@ -204,26 +213,27 @@ class VanessaBridgeClient @Inject constructor() {
                     put("appVersion", "0.1.0")
                 }
                 sendPreSession("client.authenticate", authPayload, identity, 0)
-            }
-
-            val readyEnvelope = if (preferPairingClaim) {
-                // The PC sends pairing.approved before starting the new session.
-                val approved = waitForPairingApproval(pcPublicKey, challengeGuard)
-                onPaired(approved.requiredString("deviceId"))
-                receiveSessionReady(pcPublicKey, pcKeyId)
-            } else {
-                val response = receiveVerifiedOrError(pcPublicKey, challengeGuard)
-                if (response.type == "protocol.error" && response.payload.optionalString("code") == "UNKNOWN_KEY") {
-                    throw UnknownRemoteIdentity("Phone identity has not been approved on this PC.")
+                val response = receiveEnvelope()
+                if (response.type == "protocol.error") {
+                    require(response.sessionId == PRE_SESSION_ID &&
+                        response.keyId == pcKeyId &&
+                        RemoteEnvelopeCrypto.verify(response, pcPublicKey) &&
+                        challengeGuard.verifyAndAccept(response) == RemoteEnvelopeCheck.Accepted) {
+                        "PC authentication error failed its signature or replay checks."
+                    }
+                    if (response.payload.optionalString("code") == "UNKNOWN_KEY") {
+                        throw UnknownRemoteIdentity("Phone identity has not been approved on this PC.")
+                    }
+                    throw PairingRejected(response.payload.optionalString("message") ?: "The PC rejected authentication.")
                 }
-                verifySessionReady(response, pcPublicKey, pcKeyId)
+                verifySessionReady(response, pcPublicKey, pcKeyId, serverNonce, clientNonce)
             }
 
-            val sessionId = readyEnvelope.requiredString("sessionId")
+            val sessionId = readyPayload.requiredString("sessionId")
             activeSessionId = sessionId
             outgoingSequence = 0
             _connectionState.value = ConnectionState.Connected(pairing.pcIp)
-            val deviceId = readyEnvelope.requiredString("deviceId")
+            val deviceId = readyPayload.requiredString("deviceId")
             onPaired(deviceId)
             sendSessionMessage("manifest.get", buildJsonObject {})
             pingJob = launch {
@@ -315,25 +325,34 @@ class VanessaBridgeClient @Inject constructor() {
         throw IllegalStateException("Pairing did not complete.")
     }
 
-    private suspend fun receiveSessionReady(pcPublicKey: PublicKey, pcKeyId: String): JsonObject {
+    private suspend fun receiveSessionReady(
+        pcPublicKey: PublicKey,
+        pcKeyId: String,
+        expectedServerNonce: String,
+        expectedClientNonce: String,
+    ): JsonObject {
         val envelope = receiveEnvelope()
         require(envelope.type == "session.ready" && envelope.keyId == pcKeyId) {
             "PC did not establish the authenticated session."
         }
-        return verifySessionReady(envelope, pcPublicKey, pcKeyId)
+        return verifySessionReady(envelope, pcPublicKey, pcKeyId, expectedServerNonce, expectedClientNonce)
     }
 
     private fun verifySessionReady(
         envelope: RemoteEnvelopeV2,
         pcPublicKey: PublicKey,
         pcKeyId: String,
+        expectedServerNonce: String,
+        expectedClientNonce: String,
     ): JsonObject {
         require(envelope.type == "session.ready") { "Expected session.ready from the PC." }
         val sessionId = envelope.payload.requiredString("sessionId")
         require(sessionId == envelope.sessionId) { "PC session id does not match its signed envelope." }
         val serverNonce = envelope.payload.requiredString("serverNonce")
         val clientNonce = envelope.payload.requiredString("clientNonce")
-        require(serverNonce.isNotBlank() && clientNonce.isNotBlank()) { "Session nonce echo is missing." }
+        require(serverNonce == expectedServerNonce && clientNonce == expectedClientNonce) {
+            "PC session nonce echo does not match this connection's handshake."
+        }
         val guard = RemoteEnvelopeSessionGuard(sessionId, pcKeyId, pcPublicKey)
         require(guard.verifyAndAccept(envelope) == RemoteEnvelopeCheck.Accepted) {
             "PC session.ready signature is invalid."
@@ -355,11 +374,6 @@ class VanessaBridgeClient @Inject constructor() {
         }
         return envelope
     }
-
-    private suspend fun receiveVerifiedOrError(
-        pcPublicKey: PublicKey,
-        guard: RemoteEnvelopeSessionGuard,
-    ): RemoteEnvelopeV2 = receiveVerified(pcPublicKey, guard)
 
     private suspend fun receiveEnvelope(): RemoteEnvelopeV2 {
         while (true) {
@@ -480,7 +494,7 @@ class VanessaBridgeClient @Inject constructor() {
         intent: String? = null,
     ) {
         val requestId = UUID.randomUUID().toString()
-        val args = json.encodeToJsonElement(arguments).jsonObject
+        val args = arguments.toJsonObject()
         val payload = buildJsonObject {
             put("requestId", requestId)
             put("idempotencyKey", idempotencyKey)
@@ -536,6 +550,26 @@ class VanessaBridgeClient @Inject constructor() {
     private fun randomBase64Url(size: Int): String {
         val bytes = ByteArray(size).also { java.security.SecureRandom().nextBytes(it) }
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun Map<String, Any?>.toJsonObject(): JsonObject = buildJsonObject {
+        for ((key, value) in this@toJsonObject) put(key, value.toRemoteJsonElement())
+    }
+
+    private fun Any?.toRemoteJsonElement(): JsonElement = when (this) {
+        null -> kotlinx.serialization.json.JsonNull
+        is String -> kotlinx.serialization.json.JsonPrimitive(this)
+        is Boolean -> kotlinx.serialization.json.JsonPrimitive(this)
+        is Number -> kotlinx.serialization.json.JsonPrimitive(this)
+        is JsonElement -> this
+        is Map<*, *> -> buildJsonObject {
+            for ((key, value) in this@toRemoteJsonElement) {
+                require(key is String) { "Task argument object keys must be strings." }
+                put(key, value.toRemoteJsonElement())
+            }
+        }
+        is Iterable<*> -> kotlinx.serialization.json.JsonArray(map { it.toRemoteJsonElement() })
+        else -> throw IllegalArgumentException("Unsupported task argument type: " + this::class.java.simpleName)
     }
 
     private fun JsonObject.requiredString(key: String): String =
