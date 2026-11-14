@@ -8,8 +8,8 @@ enum class PairingStatus { Idle, CodeScanned, Paired, Error }
 /**
  * Derives the screen state from persisted pairing data.
  *
- * A pairing that holds a device id and secret is fully paired and can sign
- * messages. Otherwise a stored code counts as captured while it has not
+ * A pairing with a PC-approved device id is paired. Otherwise a stored
+ * v2 claim counts as captured while it has not
  * expired; `expiresAt` of [PairingPayloadParser.NO_EXPIRY] means the PC did not
  * set an expiry, so the code is still shown rather than silently treated as
  * absent.
