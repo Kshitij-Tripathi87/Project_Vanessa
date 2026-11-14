@@ -7,7 +7,7 @@ import { privacyGuard } from "./privacy.js";
 import { executeWindowsAudio } from "../agents/windows-audio.js";
 import { executePowerShellSteps } from "../agents/powershell-executor.js";
 
-export type MobileToolContext = { signal: AbortSignal };
+export type MobileToolContext = { signal: AbortSignal; taskId?: string; requestId?: string; deviceId?: string };
 export type MobileTool<T = any> = {
   name: string;
   description: string;

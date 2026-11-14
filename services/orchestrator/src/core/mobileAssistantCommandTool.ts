@@ -5,7 +5,7 @@ import type { MobileTool, MobileToolContext } from "./mobileToolRegistry.js";
 
 const AssistantCommandArgs = z.object({
   command: z.string().trim().min(1).max(4_000),
-  language: z.string().trim().min(2).max(32).default("en"),
+  language: z.string().trim().min(2).max(32).optional(),
 }).strict();
 
 const COMMAND_OUTCOMES = new Set(["success", "partial", "failed", "awaiting_approval", "accepted"]);
@@ -30,7 +30,7 @@ export function createMobileAssistantCommandTool(
       type: "object",
       properties: {
         command: { type: "string", minLength: 1, maxLength: 4000 },
-        language: { type: "string", minLength: 2, maxLength: 32, default: "en" },
+        language: { type: "string", minLength: 2, maxLength: 32 },
       },
       required: ["command"],
       additionalProperties: false,
@@ -56,7 +56,7 @@ export function createMobileAssistantCommandTool(
       context.signal.addEventListener("abort", onAbort, { once: true });
       try {
         const result = await executeCommand({
-          command: args.command, language: args.language, source: "phone", requestId,
+          command: args.command, language: args.language ?? "en", source: "phone", requestId,
         });
         notifyProgress?.({
           ...owner, state: "verifying",
