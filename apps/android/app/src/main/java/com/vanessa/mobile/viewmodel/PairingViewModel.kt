@@ -2,6 +2,7 @@ package com.vanessa.mobile.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vanessa.mobile.bridge.BridgeEvent
 import com.vanessa.mobile.bridge.ConnectionState
 import com.vanessa.mobile.bridge.VanessaBridgeClient
 import com.vanessa.mobile.di.PairingRepository
@@ -11,22 +12,17 @@ import com.vanessa.mobile.pairing.PairingPayloadResult
 import com.vanessa.mobile.pairing.PairingState
 import com.vanessa.mobile.pairing.PairingStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Drives the pairing screen.
- *
- * The QR payload carries a single-use pairing code, never the HMAC secret. The
- * phone redeems the code at the PC's `POST /pair` route, stores the device id
- * and secret it receives, and connects with that device id so the gateway can
- * verify this phone's signatures.
- */
+/** Drives the signed protocol-v2 PC pairing and connection lifecycle. */
 @HiltViewModel
 class PairingViewModel @Inject constructor(
     private val pairingRepository: PairingRepository,
@@ -42,6 +38,7 @@ class PairingViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+    private var connectionJob: Job? = null
 
     init {
         pairingRepository.pairing
@@ -56,6 +53,10 @@ class PairingViewModel @Inject constructor(
         bridgeClient.connectionState
             .onEach { connection -> _state.value = _state.value.copy(connection = connection) }
             .launchIn(viewModelScope)
+
+        bridgeClient.events
+            .onEach(::onBridgeEvent)
+            .launchIn(viewModelScope)
     }
 
     fun onPairingPayloadScanned(raw: String) {
@@ -65,61 +66,60 @@ class PairingViewModel @Inject constructor(
 
             is PairingPayloadResult.Valid -> viewModelScope.launch {
                 val scanned = result.pairing
+                bridgeClient.disconnect()
+                connectionJob?.cancel()
                 pairingRepository.savePairing(scanned)
                 _state.value = _state.value.copy(
                     status = PairingStatus.CodeScanned,
-                    message = "Redeeming pairing code with ${scanned.pcIp}:${scanned.port}…",
+                    message = "Connecting to ${scanned.pcIp}. Approve this phone on the Windows PC.",
                 )
-
-                val grant = bridgeClient.redeemPairing(
-                    pcIp = scanned.pcIp,
-                    port = scanned.port,
-                    pairingCode = scanned.pairingCode,
-                    deviceName = android.os.Build.MODEL,
-                )
-
-                if (grant == null) {
-                    _state.value = _state.value.copy(
-                        status = PairingStatus.Error,
-                        message = "The PC rejected this pairing code. It may have expired or " +
-                            "already been used — generate a new code on the PC and scan again.",
-                    )
-                    return@launch
-                }
-
-                val paired = scanned.copy(deviceId = grant.deviceId, secret = grant.secret)
-                pairingRepository.savePairing(paired)
-                _state.value = _state.value.copy(
-                    status = PairingStatus.Paired,
-                    message = "Paired with ${grant.pcName ?: scanned.pcIp}.",
-                )
-
-                bridgeClient.connect(
-                    pcIP = paired.pcIp,
-                    port = paired.port,
-                    deviceId = grant.deviceId,
-                    secret = grant.secret,
-                )
+                connectionJob = viewModelScope.launch { bridgeClient.connect(scanned) }
             }
         }
     }
 
-    /** Reconnect using the stored pairing, if this phone is already paired. */
+    /** Reconnect, or resume an unexpired QR claim, using the stored PC pin. */
     fun connect() {
         val pairing = _state.value.pairing ?: return
-        val deviceId = pairing.deviceId ?: return
-        val secret = pairing.secret ?: return
+        if (connectionJob?.isActive == true) return
+        connectionJob = viewModelScope.launch { bridgeClient.connect(pairing) }
+    }
 
-        viewModelScope.launch {
-            bridgeClient.connect(pairing.pcIp, pairing.port, deviceId, secret)
+    private fun onBridgeEvent(event: BridgeEvent) {
+        when (event) {
+            is BridgeEvent.PairingPending -> {
+                _state.value = _state.value.copy(
+                    status = PairingStatus.CodeScanned,
+                    message = "Pairing proof verified. Confirm this phone in Vanessa on the PC.",
+                )
+            }
+            is BridgeEvent.PairingApproved -> viewModelScope.launch {
+                val existing = pairingRepository.pairing.first() ?: _state.value.pairing ?: return@launch
+                pairingRepository.savePairing(existing.copy(deviceId = event.deviceId))
+                _state.value = _state.value.copy(
+                    status = PairingStatus.Paired,
+                    message = "Phone identity approved by the PC. Establishing the secure session.",
+                )
+            }
+            is BridgeEvent.SessionClosed -> {
+                _state.value = _state.value.copy(message = "PC session closed: ${event.reason}")
+            }
+            is BridgeEvent.TaskError -> {
+                _state.value = _state.value.copy(message = event.message)
+            }
+            else -> Unit
         }
     }
 
     fun forgetDevice() {
         viewModelScope.launch {
+            connectionJob?.cancel()
             bridgeClient.disconnect()
             pairingRepository.clear()
-            _state.value = _state.value.copy(status = PairingStatus.Idle, message = null)
+            _state.value = _state.value.copy(
+                status = PairingStatus.Idle,
+                message = "This phone has been disconnected. Revoke its trust on the PC to remove access.",
+            )
         }
     }
 }
