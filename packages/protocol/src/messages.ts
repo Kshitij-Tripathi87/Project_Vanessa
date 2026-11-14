@@ -471,7 +471,7 @@ const PairingClaimPayload = z
     clientNonce: Base64UrlSchema.min(16).max(128).optional(),
     /** Optional separate P-256 key used only for biometric-bound approvals. */
     approvalPublicKey: Base64UrlSchema.min(46).max(400).optional(),
-    approvalKeyId: KeyIdSchema.optional(),
+    approvalKeyId: OpaqueIdSchema.optional(),
   })
   .strict()
   .refine((value) => (value.approvalPublicKey === undefined) === (value.approvalKeyId === undefined), {
@@ -608,7 +608,7 @@ const TaskConfirmationResponsePayload = z
     method: z.string().min(3).max(40),
     /** Signature made by a distinct per-use biometric-authenticated key. */
     biometricProof: z.object({
-      approvalKeyId: KeyIdSchema,
+      approvalKeyId: OpaqueIdSchema,
       signature: Base64UrlSchema.min(16).max(200),
     }).strict().optional(),
   })
