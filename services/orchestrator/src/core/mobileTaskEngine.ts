@@ -6,6 +6,8 @@ import {
   type ApprovalBinding,
   type RemoteCapability,
   type RemotePermissionTier,
+  type RemoteTaskState,
+  type TaskSnapshot,
   type TargetDescriptor,
 } from "@vanessa/protocol";
 import * as fs from "node:fs";
@@ -15,6 +17,12 @@ import { privacyGuard } from "./privacy.js";
 
 export type MobileTaskState = "queued" | "validating" | "awaiting_confirm" | "running" | "verifying" | "done" | "failed" | "cancelled" | "timed_out";
 export type MobileTaskRecord = { taskId: string; requestId: string; tool: string; state: MobileTaskState; result?: unknown; error?: string; actionHash?: string };
+export type MobileTaskRecoveryRecord = {
+  snapshot: TaskSnapshot;
+  task: MobileTaskRecord;
+  canonicalArguments: Record<string, unknown>;
+  confirmation?: { expiresAt: number; tier: MobileTool["tier"] };
+};
 export type MobileTaskEngineOptions = { dbPath?: string; tools?: MobileTool[]; now?: () => number; notify?: (event: { task: MobileTaskRecord; deviceId?: string; ephemeralResult?: unknown }) => void };
 
 function redactStructured(value: unknown): unknown {
@@ -189,6 +197,63 @@ export class MobileTaskEngine {
     if (!row || typeof row.device_id !== "string" || row.device_id !== deviceId) {
       throw Object.assign(new Error("Task was not found for this device."), { code: "TASK_NOT_FOUND" });
     }
+  }
+
+  /**
+   * Restore only task IDs supplied by the phone and owned by its authenticated
+   * device identity. All state and results come from durable PC-side SQLite rows.
+   */
+  getTaskRecoveryForDevice(taskIds: string[], deviceId: string): MobileTaskRecoveryRecord[] {
+    const ids = [...new Set(taskIds)]
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
+      .slice(0, 50);
+    const select = this.db.prepare(
+      "SELECT task_id, request_id, tool, tier, state, created_at, updated_at, args_json, confirm_expires_at FROM mobile_tasks WHERE task_id=? AND device_id=?"
+    );
+    const stateMap: Record<MobileTaskState, RemoteTaskState> = {
+      queued: "queued", validating: "validating", awaiting_confirm: "awaiting_approval",
+      running: "running", verifying: "verifying", done: "succeeded", failed: "failed",
+      cancelled: "cancelled", timed_out: "timed_out",
+    };
+    const remoteNames = new Set(this.getRemoteCapabilities().map((capability) => capability.name));
+    const recovered: MobileTaskRecoveryRecord[] = [];
+    for (const taskId of ids) {
+      const row = select.get(taskId, deviceId) as {
+        task_id: string; request_id: string; tool: string; tier: number; state: MobileTaskState;
+        created_at: number; updated_at: number; args_json: string; confirm_expires_at: number | null;
+      } | undefined;
+      if (!row || !remoteNames.has(row.tool as never)) continue;
+      const task = this.getTask(taskId);
+      if (!task) continue;
+      const terminal = ["done", "failed", "cancelled", "timed_out"].includes(row.state);
+      const safeSummary = row.state === "done"
+        ? "The PC task completed and passed its independent verifier."
+        : row.state === "awaiting_confirm"
+          ? "The PC task is awaiting an approval decision."
+          : terminal
+            ? "The PC task ended without a verified successful result."
+            : "The PC task is " + row.state.replace(/_/g, " ") + " on the PC.";
+      recovered.push({
+        snapshot: {
+          taskId: row.task_id,
+          requestId: row.request_id,
+          capability: row.tool as TaskSnapshot["capability"],
+          state: stateMap[row.state] ?? "unknown",
+          tier: remoteTier(row.tier as MobileTool["tier"]),
+          taskVersion: 1,
+          acceptedAt: row.created_at,
+          updatedAt: row.updated_at,
+          ...(terminal ? { completedAt: row.updated_at } : {}),
+          safeSummary,
+        },
+        task,
+        canonicalArguments: JSON.parse(row.args_json) as Record<string, unknown>,
+        ...(row.state === "awaiting_confirm" && task.actionHash && typeof row.confirm_expires_at === "number"
+          ? { confirmation: { expiresAt: row.confirm_expires_at, tier: row.tier as MobileTool["tier"] } }
+          : {}),
+      });
+    }
+    return recovered;
   }
 
   /** Read a task only after validating its durable device ownership. */
