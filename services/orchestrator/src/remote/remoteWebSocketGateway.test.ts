@@ -256,7 +256,7 @@ test("authenticated v2 WebSocket executes a PC task, returns verified output, an
         if (next.type === "protocol.error") replayError = next;
       }
       assert.ok(replayError);
-      assert.equal(replayError!.payload.code, "SEQUENCE_OUT_OF_ORDER");
+      assert.equal(replayError!.payload.code, "REPLAYED_MESSAGE");
     } finally {
       socket.close();
       await new Promise<void>((resolve) => {
