@@ -34,6 +34,21 @@ declare global {
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       cancelTask: (requestId?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
       getMobileAudit?: (limit?: number) => Promise<Array<{ seq: number; at: number; taskId: string; requestId: string; tool: string; args: string; tier: number; state: string; resultSummary?: string; durationMs?: number }>>;
+      createRemoteV2PairingWindow: () => Promise<{
+        pairingId?: string; expiresAt?: number; endpoint?: string; pcKeyId?: string;
+        pcPublicKey?: string; qrPayload?: string; error?: string;
+      }>;
+      getRemoteV2PendingPairings: () => Promise<Array<{
+        pairingId: string; keyId: string; deviceHint: string; platform: string;
+        appVersion: string; requestedAt: number; expiresAt: number;
+      }> | { error: string }>;
+      getRemoteV2Devices: () => Promise<Array<{
+        deviceId: string; deviceHint: string; platform: string; appVersion: string;
+        grantedScopes: string[]; pairedAt: number; revoked: boolean;
+      }> | { error: string }>;
+      approveRemoteV2Pairing: (pairingId: string, scopes: string[]) => Promise<{ success?: boolean; error?: string }>;
+      rejectRemoteV2Pairing: (pairingId: string) => Promise<{ success?: boolean; error?: string }>;
+      revokeRemoteV2Device: (deviceId: string) => Promise<{ success?: boolean; error?: string }>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;
       onTriggerPTT?: (callback: () => void) => () => void;
       onTriggerCancel?: (callback: () => void) => () => void;
