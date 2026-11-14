@@ -17,6 +17,25 @@ contextBridge.exposeInMainWorld("vanessa", {
   getMobileAudit: (limit?: number) =>
     ipcRenderer.invoke("vanessa:get-mobile-audit", limit),
 
+  createRemoteV2PairingWindow: () =>
+    ipcRenderer.invoke("vanessa:remote-v2:create-pairing-window"),
+
+  getRemoteV2PendingPairings: () =>
+    ipcRenderer.invoke("vanessa:remote-v2:get-pending-pairings"),
+
+  getRemoteV2Devices: () =>
+    ipcRenderer.invoke("vanessa:remote-v2:get-devices"),
+
+  approveRemoteV2Pairing: (pairingId: string, scopes: string[]) =>
+    ipcRenderer.invoke("vanessa:remote-v2:approve-pairing", pairingId, scopes),
+
+  rejectRemoteV2Pairing: (pairingId: string) =>
+    ipcRenderer.invoke("vanessa:remote-v2:reject-pairing", pairingId),
+
+  revokeRemoteV2Device: (deviceId: string) =>
+    ipcRenderer.invoke("vanessa:remote-v2:revoke-device", deviceId),
+
+
   onEvent: (callback: (event: VanessaEvent) => void) => {
     const handler = (_: any, data: any) => callback(data);
     ipcRenderer.on("vanessa:event", handler);
