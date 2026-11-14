@@ -13,7 +13,7 @@ import type { MobileTool } from "../core/mobileToolRegistry.js";
 const PHONE_KEY_ID = "phone_key_id_123456";
 const PHONE_DEVICE_ID = "11112222-3333-4444-8555-666677778888";
 
-function trustedDevice(scopes: string[]): TrustedRemoteDevice {
+function trustedDevice(scopes: string[], overrides: Partial<TrustedRemoteDevice> = {}): TrustedRemoteDevice {
   return {
     deviceId: PHONE_DEVICE_ID,
     keyId: PHONE_KEY_ID,
@@ -24,6 +24,7 @@ function trustedDevice(scopes: string[]): TrustedRemoteDevice {
     grantedScopes: scopes,
     pairedAt: 1_760_000_000_000,
     revoked: false,
+    ...overrides,
   };
 }
 
@@ -182,8 +183,26 @@ test("ungranted scopes, unknown identities and revoked devices fail closed", asy
   });
 });
 
-test("destructive approval remains blocked until a biometric-bound proof verifier accepts it", async () => {
+test("T2 capability submissions fail before task creation when no biometric key is registered", async () => {
   const device = trustedDevice(["files.delete"]);
+  await withEngine([deleteTool()], async (engine) => {
+    const service = new RemoteTaskService(engine, pairings(device));
+    assert.deepEqual(service.manifestSnapshot(PHONE_KEY_ID).capabilities, []);
+    await assert.rejects(service.submitTask(PHONE_KEY_ID, {
+      requestId,
+      idempotencyKey: "phone-delete-without-biometric",
+      capability: "delete_file",
+      canonicalArguments: { path: "C:/Users/test/Downloads/report.pdf" },
+    }), { code: "PERMISSION_DENIED" });
+    assert.equal(engine.recentAudit().length, 0);
+  });
+});
+
+test("destructive approval remains blocked until a biometric-bound proof verifier accepts it", async () => {
+  const device = trustedDevice(["files.delete"], {
+    approvalPublicKeySpki: "registered-p256-test-key",
+    approvalKeyId: "registered_approval_key_123",
+  });
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device));
     const submission = await service.submitTask(PHONE_KEY_ID, {
