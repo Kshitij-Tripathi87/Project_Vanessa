@@ -7,7 +7,6 @@ import {
   RemoteSessionGuard,
   computeKeyId,
   normalizeIdentityPublicKey,
-  safeParseRemoteEnvelope,
   safeParseRemotePayload,
   verifyRemoteEnvelopeSignature,
   type RemoteEnvelope,
@@ -16,6 +15,7 @@ import {
 } from "@vanessa/protocol";
 import type { RemotePairingRegistry, TrustedRemoteDevice } from "./remotePairingRegistry.js";
 import type { RemoteTaskService } from "./remoteTaskService.js";
+import { privacyGuard } from "../core/privacy.js";
 
 export type RemotePcPublicIdentity = {
   keyId: string;
@@ -100,12 +100,20 @@ function safeTransportResult(value: unknown): unknown {
   const visit = (input: unknown, depth: number): unknown => {
     if (input === null || typeof input === "boolean") return input;
     if (typeof input === "number") return Number.isFinite(input) ? input : null;
-    if (typeof input === "string") return input.slice(0, 1200);
+    if (typeof input === "string") {
+      return privacyGuard.redactSensitiveData(input).cleanText.slice(0, 1200);
+    }
     if (depth >= 6) return "[depth limit]";
     if (Array.isArray(input)) return input.slice(0, 40).map((item) => visit(item, depth + 1));
     if (input && typeof input === "object") {
       const entries = Object.entries(input as Record<string, unknown>).slice(0, 40);
-      return Object.fromEntries(entries.map(([key, item]) => [key.slice(0, 64), visit(item, depth + 1)]));
+      return Object.fromEntries(entries.map(([key, item]) => {
+        const safeKey = key.slice(0, 64);
+        if (/(password|passwd|secret|token|authorization|cookie|api[_-]?key|private[_-]?key)/i.test(safeKey)) {
+          return [safeKey, "[redacted]"];
+        }
+        return [safeKey, visit(item, depth + 1)];
+      }));
     }
     return null;
   };
@@ -263,14 +271,19 @@ export class RemoteWebSocketGateway {
   }
 
   /** Publish task lifecycle only to the authenticated socket that owns the task. */
-  publishTask(event: { task: { taskId: string; requestId: string; tool: string; state: string; error?: string; result?: unknown }; deviceId?: string }): void {
+  publishTask(event: {
+    task: { taskId: string; requestId: string; tool: string; state: string; error?: string; result?: unknown };
+    deviceId?: string;
+    ephemeralResult?: unknown;
+  }): void {
     if (!event.deviceId) return;
     const connectionId = this.deviceConnections.get(event.deviceId);
     const connection = connectionId ? this.connections.get(connectionId) : undefined;
     if (!connection?.authenticated || !connection.sessionId || connection.ws.readyState !== WebSocket.OPEN) return;
     const state = event.task.state;
-    const safeSummary = (event.task.error ??
-      (state === "done" ? `PC verified ${event.task.tool}.` : `PC task ${state.replace(/_/g, " ")}.`)).slice(0, 500);
+    const safeSummary = (state === "done"
+      ? `PC verified ${event.task.tool}.`
+      : `PC task ${state.replace(/_/g, " ")}.`).slice(0, 500);
     connection.eventSequence += 1;
     if (["done", "failed", "cancelled", "timed_out"].includes(state)) {
       void this.sendSession(connection, "task.result", {
@@ -281,8 +294,8 @@ export class RemoteWebSocketGateway {
           summary: state === "done" ? "The PC-side postcondition verifier passed." : "The task ended without a verified successful outcome.",
         },
         safeSummary,
-        ...(state === "done" && event.task.result !== undefined
-          ? { result: safeTransportResult(event.task.result) }
+        ...(state === "done" && (event.task.result !== undefined || event.ephemeralResult !== undefined)
+          ? { result: safeTransportResult(event.task.result ?? event.ephemeralResult) }
           : {}),
         eventSeq: connection.eventSequence,
         completedAt: this.now(),
