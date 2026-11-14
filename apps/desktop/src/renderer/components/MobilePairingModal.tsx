@@ -16,6 +16,7 @@ type PendingPairing = {
   deviceHint: string;
   platform: string;
   appVersion: string;
+  biometricApprovalAvailable: boolean;
   requestedAt: number;
   expiresAt: number;
 };
@@ -28,6 +29,7 @@ type TrustedDevice = {
   grantedScopes: string[];
   pairedAt: number;
   revoked: boolean;
+  biometricApprovalAvailable: boolean;
 };
 
 type ScopeOption = { id: string; label: string; description: string; defaultGrant?: boolean };
@@ -305,8 +307,9 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8 }}>
                 {SCOPES.map((scope) => (
-                  <label key={scope.id} style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11, color: "#d5dfec" }}>
+                  <label key={scope.id} style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11, color: "#d5dfec", opacity: scope.id === "files.delete" && !item.biometricApprovalAvailable ? 0.45 : 1 }}>
                     <input type="checkbox" checked={selectedFor(item.pairingId).includes(scope.id)}
+                      disabled={scope.id === "files.delete" && !item.biometricApprovalAvailable}
                       onChange={(event) => toggleScope(item.pairingId, scope.id, event.target.checked)} />
                     <span><strong>{scope.label}</strong><br /><span style={{ color: "#8799b0" }}>{scope.description}</span></span>
                   </label>
@@ -334,7 +337,7 @@ export const MobilePairingModal: React.FC<MobilePairingModalProps> = ({
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600 }}><Laptop size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />{device.deviceHint}</div>
                 <div style={{ fontSize: 10, color: "#93a4ba", marginTop: 4 }}>
-                  {device.platform} · paired {new Date(device.pairedAt).toLocaleDateString()} · {device.grantedScopes.length} scopes · {device.revoked ? "revoked" : "active"}
+                  {device.platform} · paired {new Date(device.pairedAt).toLocaleDateString()} · {device.grantedScopes.length} scopes · {device.biometricApprovalAvailable ? "biometric approval ready" : "read-only approval profile"} · {device.revoked ? "revoked" : "active"}
                 </div>
               </div>
               {!device.revoked && <button disabled={busy} onClick={() => void revoke(device.deviceId)} style={{ ...actionStyle, color: "#ffb6b6" }}>
