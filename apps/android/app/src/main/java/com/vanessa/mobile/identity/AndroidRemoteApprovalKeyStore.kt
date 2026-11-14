@@ -6,6 +6,9 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import com.vanessa.protocol.v2.RemoteEnvelopeCrypto
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
@@ -15,9 +18,9 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 /**
- * Separate approval identity. It is created only on Android 11+ when strong
- * biometrics are enrolled, is hardware-backed, and requires a fresh biometric
- * auth token for every ES256 signature.
+ * Separate approval identity. The key is generated in Android Keystore and
+ * requires a fresh strong-biometric authentication for every signature.
+ * The returned CryptoObject is the only signing handle exposed to the UI.
  */
 class AndroidRemoteApprovalKeyStore(
     private val context: Context,
@@ -53,13 +56,57 @@ class AndroidRemoteApprovalKeyStore(
         }
     }
 
-    @Synchronized
-    fun createSignature(): Signature {
+    /**
+     * Starts the Android system biometric prompt using a Signature initialized
+     * with the non-exportable key. This is the supported way to authorize a
+     * per-use Android Keystore signing operation.
+     */
+    fun authenticateForSignature(
+        activity: FragmentActivity,
+        onSuccess: (Signature) -> Unit,
+        onFailure: (String) -> Unit,
+    ) {
         val identity = loadOrCreate()
-            ?: throw IllegalStateException("A hardware-backed strong biometric approval key is unavailable. Re-pair after enrolling strong biometrics.")
-        return Signature.getInstance("SHA256withECDSA").apply {
-            initSign(identity.privateKey)
+        if (identity == null) {
+            onFailure("A hardware-backed strong-biometric approval key is unavailable.")
+            return
         }
+        val signature = try {
+            Signature.getInstance("SHA256withECDSA").apply { initSign(identity.privateKey) }
+        } catch (error: Exception) {
+            onFailure(error.message ?: "Unable to initialize the biometric approval key.")
+            return
+        }
+        val prompt = BiometricPrompt(
+            activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    val authorized = result.cryptoObject?.signature
+                    if (authorized == null) {
+                        onFailure("Android did not return the biometric-authorized signing object.")
+                    } else {
+                        onSuccess(authorized)
+                    }
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    onFailure(errString.toString())
+                }
+
+                override fun onAuthenticationFailed() {
+                    // Android may continue offering retries; do not send a proof.
+                }
+            },
+        )
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Approve protected PC action")
+            .setSubtitle("Verify with a strong biometric")
+            .setDescription("The signature authorizes only the exact action shown in Vanessa.")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText("Cancel")
+            .build()
+        prompt.authenticate(info, BiometricPrompt.CryptoObject(signature))
     }
 
     @Synchronized
