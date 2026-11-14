@@ -252,9 +252,32 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal(resultPayload.result.platform, "win32");
     assert.equal(JSON.stringify(resultPayload).includes("privateDiagnostic"), false);
 
-    // Replaying the exact signed task envelope must be rejected before the
-    // task adapter sees it for a second time.
-    await send(socket, taskFrame);
+    // A reconnect asks for task IDs, not arbitrary device IDs. The server
+    // restores only durable rows owned by the currently authenticated phone.
+    await send(socket, signed(phone, "sync.resume", {
+      lastEventSeq: 0,
+      activeTaskIds: [acceptedPayload.taskId],
+      clientNonce: Buffer.from("vanessa-recovery-nonce").toString("base64url"),
+    }, sessionId, 3));
+    const recoverySnapshot = await next("sync.snapshot");
+    assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, recoverySnapshot).ok, true);
+    const recoveredTasks = (recoverySnapshot.payload as Record<string, any>).tasks;
+    assert.equal(recoveredTasks.length, 1);
+    assert.equal(recoveredTasks[0].taskId, acceptedPayload.taskId);
+    assert.equal(recoveredTasks[0].state, "succeeded");
+    const recoveredResult = await next("task.result");
+    assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, recoveredResult).ok, true);
+    assert.equal((recoveredResult.payload as Record<string, any>).taskId, acceptedPayload.taskId);
+    assert.equal((recoveredResult.payload as Record<string, any>).status, "succeeded");
+    await next("sync.complete");
+
+    // Replaying the exact signed ping is detected by message ID even when
+    // its sequence is otherwise the latest accepted sequence.
+    const pingFrame = signed(phone, "ping", { sentAt: Date.now() }, sessionId, 4);
+    await send(socket, pingFrame);
+    const pong = await next("pong");
+    assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, pong).ok, true);
+    await send(socket, pingFrame);
     const replayError = await next("protocol.error");
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, replayError).ok, true);
     assert.equal((replayError.payload as Record<string, any>).code, "REPLAYED_MESSAGE");
