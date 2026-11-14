@@ -53,7 +53,11 @@ test("HTTP and WebSocket overrides are validated and resolved independently", ()
 
 
 test("voice-agent orchestrator clients receive the same resolved endpoint", () => {
-  const env = { VANESSA_PORT: "4421" };
+  const env: {
+    VANESSA_PORT?: string;
+    ORCHESTRATOR_URL?: string;
+    VANESSA_ORCHESTRATOR_URL?: string;
+  } = { VANESSA_PORT: "4421" };
   const resolved = applyOrchestratorRuntimeUrls(env);
   assert.equal(resolved, "http://127.0.0.1:4421");
   assert.equal(env.ORCHESTRATOR_URL, resolved);
@@ -61,7 +65,11 @@ test("voice-agent orchestrator clients receive the same resolved endpoint", () =
 });
 
 test("explicit orchestrator URL is propagated to both voice-agent clients", () => {
-  const env = { ORCHESTRATOR_URL: "http://127.0.0.1:5123" };
+  const env: {
+    VANESSA_PORT?: string;
+    ORCHESTRATOR_URL?: string;
+    VANESSA_ORCHESTRATOR_URL?: string;
+  } = { ORCHESTRATOR_URL: "http://127.0.0.1:5123" };
   const resolved = applyOrchestratorRuntimeUrls(env);
   assert.equal(resolved, "http://127.0.0.1:5123");
   assert.equal(env.ORCHESTRATOR_URL, resolved);
