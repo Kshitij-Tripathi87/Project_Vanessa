@@ -90,6 +90,27 @@ function publicKeyMatches(stored: TrustedRemoteDevice, supplied: string): boolea
   }
 }
 
+function safeTransportResult(value: unknown): unknown {
+  const visit = (input: unknown, depth: number): unknown => {
+    if (input === null || typeof input === "boolean") return input;
+    if (typeof input === "number") return Number.isFinite(input) ? input : null;
+    if (typeof input === "string") return input.slice(0, 1200);
+    if (depth >= 6) return "[depth limit]";
+    if (Array.isArray(input)) return input.slice(0, 40).map((item) => visit(item, depth + 1));
+    if (input && typeof input === "object") {
+      const entries = Object.entries(input as Record<string, unknown>).slice(0, 40);
+      return Object.fromEntries(entries.map(([key, item]) => [key.slice(0, 64), visit(item, depth + 1)]));
+    }
+    return null;
+  };
+
+  const candidate = visit(value, 0);
+  try {
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= 8 * 1024) return candidate;
+  } catch { /* omit unsupported values */ }
+  return "[verified result omitted because it exceeds the remote result size limit]";
+}
+
 function errorCode(error: unknown): string {
   const code = (error as { code?: unknown })?.code;
   return typeof code === "string" ? code : "INTERNAL_ERROR";
@@ -241,7 +262,8 @@ export class RemoteWebSocketGateway {
     const connection = connectionId ? this.connections.get(connectionId) : undefined;
     if (!connection?.authenticated || !connection.sessionId || connection.ws.readyState !== WebSocket.OPEN) return;
     const state = event.task.state;
-    const safeSummary = (event.task.error ?? `PC task ${state.replace(/_/g, " ")}.`).slice(0, 500);
+    const safeSummary = (event.task.error ??
+      (state === "done" ? `PC verified ${event.task.tool}.` : `PC task ${state.replace(/_/g, " ")}.`)).slice(0, 500);
     connection.eventSequence += 1;
     if (["done", "failed", "cancelled", "timed_out"].includes(state)) {
       void this.sendSession(connection, "task.result", {
@@ -252,6 +274,9 @@ export class RemoteWebSocketGateway {
           summary: state === "done" ? "The PC-side postcondition verifier passed." : "The task ended without a verified successful outcome.",
         },
         safeSummary,
+        ...(state === "done" && event.task.result !== undefined
+          ? { result: safeTransportResult(event.task.result) }
+          : {}),
         eventSeq: connection.eventSequence,
         completedAt: this.now(),
       }).catch(() => undefined);
