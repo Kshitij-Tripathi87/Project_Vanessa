@@ -274,12 +274,13 @@ class RemoteV2BridgeClient(context: Context) {
                                 require(!completeSent) { "PC sent more than one pairing challenge." }
                                 val nonce = incomingEnvelope.payload["nonce"]?.jsonPrimitive?.content
                                     ?: throw IllegalStateException("Pairing challenge omitted its nonce.")
-                                val nonceHash = sha256Hex(nonce.toByteArray(Charsets.UTF_8))
                                 val pairingId = incomingEnvelope.payload["pairingId"]?.jsonPrimitive?.content
                                     ?: throw IllegalStateException("Pairing challenge omitted its pairing ID.")
+                                // Echo the raw one-time nonce inside the signed envelope.
+                                // The PC hashes the response before its constant-time comparison.
                                 val completion = buildJsonObject {
                                     put("pairingId", pairingId)
-                                    put("challengeNonce", nonceHash)
+                                    put("challengeNonce", nonce)
                                 }
                                 sendEnvelope(
                                     session = this,
@@ -569,9 +570,6 @@ class RemoteV2BridgeClient(context: Context) {
 
     private fun base64Url(bytes: ByteArray): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-
-    private fun sha256Hex(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private fun randomBytes(size: Int): ByteArray = ByteArray(size).also { java.security.SecureRandom().nextBytes(it) }
 

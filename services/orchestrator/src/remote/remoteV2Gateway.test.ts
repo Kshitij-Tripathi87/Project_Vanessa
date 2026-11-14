@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -160,8 +160,8 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
 
     await send(socket, signed(phone, "pairing.complete", {
       pairingId: window.pairingId,
-      // Pairing completion carries SHA-256(nonce), not the raw nonce.
-      challengeNonce: createHash("sha256").update(challengePayload.nonce, "utf8").digest("hex"),
+      // Pairing completion echoes the raw nonce in a signed envelope.
+      challengeNonce: challengePayload.nonce,
     }, PRE_SESSION_ID, 1));
     const pending = await next(undefined, 5000);
     assert.equal(

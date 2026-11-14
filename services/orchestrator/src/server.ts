@@ -71,7 +71,7 @@ function getVerifiedTailscaleIPv4(): string | undefined {
         timeout: 2500,
         windowsHide: true,
         stdio: ["ignore", "pipe", "ignore"],
-      }).trim().split(/\\s+/)[0];
+      }).trim().split(/\s+/)[0];
       if (!output || !isTailscaleIPv4(output)) continue;
       const assigned = Object.values(os.networkInterfaces())
         .flatMap((entries) => entries ?? [])
