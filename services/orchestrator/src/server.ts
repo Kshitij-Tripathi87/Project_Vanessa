@@ -22,6 +22,7 @@ import { RemotePairingRegistry } from "./remote/remotePairingRegistry.js";
 import { RemoteTaskService } from "./remote/remoteTaskService.js";
 import { RemoteWebSocketGateway } from "./remote/remoteWebSocketGateway.js";
 import { HttpRemoteEnvelopeSigner } from "./remote/remoteSignerClient.js";
+import { verifyRemoteBiometricApproval } from "./remote/remoteApprovalProof.js";
 import { validateToken, pairDevice, revokeDevice, getDeviceQuotaUsage, DEFAULT_PAIRING_CODE, seedPairingCode } from "./auth/authService.js";
 
 // Load .env searching current and parent directories
@@ -770,7 +771,9 @@ export async function startServer() {
         // Confirm the PC signing identity before opening either listener.
         const identity = await signer.getIdentity();
         if (!identity.pcId || !identity.keyId) throw new Error("PC v2 identity is incomplete.");
-        const remoteTasks = new RemoteTaskService(mobileTaskEngine!, remotePairings);
+        const remoteTasks = new RemoteTaskService(mobileTaskEngine!, remotePairings, {
+          verifyApprovalProof: verifyRemoteBiometricApproval,
+        });
         remoteV2Gateway = new RemoteWebSocketGateway({
           host: "127.0.0.1", port: localPort, signer, pairings: remotePairings, tasks: remoteTasks,
         });
