@@ -1,0 +1,78 @@
+name: Android UI QA (emulator)
+
+on:
+  push:
+    branches:
+      - feat/android-vanessa-frontend-prototype
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-ui-qa.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-ui-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ui-qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator-journeys:
+    name: Android emulator user journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install Android test platform
+        run: |
+          sdkmanager --install \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'system-images;android-35;google_apis;x86_64'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run UI journeys on a clean Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            cd apps/android
+            ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Upload Android UI test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanessa-android-emulator-ui-test-reports
+          path: |
+            apps/android/app/build/reports/androidTests/connected/**
+            apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: warn
