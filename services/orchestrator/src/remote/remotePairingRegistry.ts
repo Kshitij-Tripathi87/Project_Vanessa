@@ -309,6 +309,98 @@ export class RemotePairingRegistry {
     };
   }
 
+  /**
+   * Reattach a previously claimed pairing after a transport drop. A QR code
+   * alone is insufficient: the same phone key must sign a fresh claim and
+   * prove possession again. Existing challenge state is preserved.
+   */
+  resumeClaim(
+    value: unknown,
+    nowMs = this.now(),
+  ): { type: "pairing.challenge"; payload: RemotePayloadFor<"pairing.challenge"> } |
+     { type: "pairing.pending"; payload: RemotePayloadFor<"pairing.pending"> } {
+    this.ensureInitialized();
+    const envelope = this.parsePreSessionEnvelope(value, "pairing.claim");
+    const parsed = safeParseRemotePayload("pairing.claim", envelope.payload);
+    if (!parsed.success) throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Pairing resume payload is invalid.");
+    const payload = parsed.data;
+    const entry = this.pairings.get(payload.pairingId);
+    if (!entry) throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
+    if (entry.expiresAt <= nowMs || entry.state === "expired" ||
+        (entry.challengeExpiresAt !== undefined && entry.challengeExpiresAt <= nowMs)) {
+      entry.state = "expired";
+      throw new PairingRegistryError("PAIRING_EXPIRED", "Pairing challenge has expired.");
+    }
+    if (entry.state !== "challenge_issued" && entry.state !== "awaiting_approval") {
+      throw new PairingRegistryError("PAIRING_STATE_INVALID", "Pairing cannot be resumed in its current state.");
+    }
+    if (!entry.keyId || !entry.publicKeySpki || !entry.challengeNonce || !entry.challengeExpiresAt ||
+        !payload.clientNonce || payload.keyId !== entry.keyId || envelope.keyId !== entry.keyId) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone identity does not match the original claim.");
+    }
+
+    let publicKey;
+    try {
+      publicKey = normalizeIdentityPublicKey(payload.publicKey);
+    } catch {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone public key is invalid.");
+    }
+    if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== entry.keyId ||
+        payload.publicKey !== entry.publicKeySpki) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone key does not match the original claim.");
+    }
+    if (!constantTimeCodeMatch(payload.code, entry.codeDigest)) {
+      throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
+    }
+
+    const guard = new RemoteSessionGuard({
+      sessionId: PRE_SESSION_ID,
+      keyId: entry.keyId,
+      publicKey,
+      direction: "client_to_server",
+      lastAcceptedSequence: envelope.sequence - 1,
+      maxMessageAgeMs: this.pairingTtlMs,
+      maxFutureSkewMs: 5_000,
+    });
+    const proof = guard.verifyAndAccept(envelope, nowMs);
+    if (!proof.accepted) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone signature or freshness check failed.");
+    }
+
+    if (payload.approvalPublicKey !== undefined || payload.approvalKeyId !== undefined) {
+      if (!entry.approvalPublicKeySpki || !entry.approvalKeyId ||
+          payload.approvalPublicKey !== entry.approvalPublicKeySpki ||
+          payload.approvalKeyId !== entry.approvalKeyId) {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval key changed during pairing.");
+      }
+    } else if (entry.approvalKeyId) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "The original biometric approval key must be presented when resuming.");
+    }
+
+    entry.phoneGuard = guard;
+    entry.clientNonce = payload.clientNonce;
+    if (entry.state === "awaiting_approval") {
+      return {
+        type: "pairing.pending",
+        payload: {
+          pairingId: entry.pairingId,
+          state: "awaiting_approval",
+          expiresAt: entry.challengeExpiresAt,
+        },
+      };
+    }
+    return {
+      type: "pairing.challenge",
+      payload: {
+        pairingId: entry.pairingId,
+        nonce: entry.challengeNonce,
+        issuedAt: nowMs,
+        expiresAt: entry.challengeExpiresAt,
+        clientNonce: entry.clientNonce,
+      },
+    };
+  }
+
   /** Verify the phone's signed challenge response. Successful completion still requires local approval. */
   complete(value: unknown, nowMs = this.now()): RemotePayloadFor<"pairing.pending"> {
     this.ensureInitialized();
