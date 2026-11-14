@@ -44,6 +44,7 @@ const REMOTE_CAPABILITY_SCOPES: Readonly<Record<string, readonly string[]>> = {
   media_control: ["media.control"],
   lock_pc: ["system.lock"],
   take_screenshot: ["screen.capture"],
+  assistant_command: ["assistant.execute"],
 };
 
 export const REMOTE_POLICY_VERSION = "mobile-policy-v1";
@@ -316,7 +317,7 @@ export class MobileTaskEngine {
     try {
       let result: unknown;
       for (let attempt = 0; ; attempt++) {
-        try { result = await Promise.race([tool.handler(valid.data, { signal: controller.signal }), timeout]); break; }
+        try { result = await Promise.race([tool.handler(valid.data, { signal: controller.signal, taskId, requestId: task.requestId, deviceId }), timeout]); break; }
         catch (error) {
           if (!tool.idempotent || attempt >= 1 || controller.signal.aborted) throw error;
           await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));

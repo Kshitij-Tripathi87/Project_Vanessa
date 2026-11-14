@@ -123,6 +123,31 @@ function compactResult(capability: string, value: unknown): Record<string, unkno
       };
       break;
     }
+    case "assistant_command": {
+      const status = ["success", "partial", "failed", "awaiting_approval", "accepted"].includes(result.status)
+        ? result.status : "unknown";
+      const verification = result.verification && typeof result.verification === "object" ? result.verification : {};
+      const tasks = Array.isArray(result.plan?.tasks) ? result.plan.tasks : [];
+      compact = {
+        status,
+        ...(typeof result.spokenSummary === "string" ? { spokenSummary: result.spokenSummary.slice(0, 1200) } : {}),
+        ...(typeof result.requestId === "string" ? { requestId: result.requestId.slice(0, 160) } : {}),
+        verification: {
+          verified: verification.verified === true,
+          outcome: typeof verification.outcome === "string" ? verification.outcome.slice(0, 40) : "inconclusive",
+          details: typeof verification.details === "string" ? verification.details.slice(0, 500) : "",
+        },
+        ...(tasks.length ? { plan: {
+          taskCount: tasks.length,
+          steps: tasks.slice(0, 12).map((task: any) => ({
+            agent: typeof task.agent === "string" ? task.agent.slice(0, 40) : "unknown",
+            action: typeof task.action === "string" ? task.action.slice(0, 80) : "unknown",
+            status: typeof task.status === "string" ? task.status.slice(0, 30) : "unknown",
+          })),
+        } } : {}),
+      };
+      break;
+    }
     case "find_file":
       compact = {
         files: Array.isArray(result.files) ? result.files.slice(0, 20).flatMap((file: any) =>
@@ -260,6 +285,27 @@ export class RemoteV2Gateway {
       }
       this.closePeer(peer, 1008, "Device revoked");
     }
+  }
+
+  /** Bounded lifecycle events for a natural-language request owned by this phone. */
+  publishAssistantProgress(event: {
+    deviceId?: string;
+    taskId?: string;
+    state: "planning" | "running" | "verifying";
+    safeSummary: string;
+  }): void {
+    if (!event.deviceId || !event.taskId) return;
+    const peer = [...this.connections].find((candidate) =>
+      candidate.deviceId === event.deviceId && candidate.state === "ready" &&
+      candidate.acceptedTasks.has(event.taskId!),
+    );
+    if (!peer) return;
+    void this.send(peer, "task.progress", {
+      taskId: event.taskId,
+      state: event.state,
+      eventSeq: ++peer.eventSeq,
+      safeSummary: event.safeSummary.slice(0, 200),
+    }, peer.sessionId).catch(() => this.closePeer(peer, 1011, "Assistant progress delivery failed"));
   }
 
   /** Called after the task engine has committed a state transition and audit row. */

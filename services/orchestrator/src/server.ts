@@ -23,6 +23,8 @@ import { getRemotePwaHtml } from "./remotePwa.js";
 import { modelRouter } from "./core/router.js";
 import { MobileGateway } from "./core/mobileGateway.js";
 import { MobileTaskEngine } from "./core/mobileTaskEngine.js";
+import { mobileToolRegistry } from "./core/mobileToolRegistry.js";
+import { createMobileAssistantCommandTool } from "./core/mobileAssistantCommandTool.js";
 import { validateToken, pairDevice, revokeDevice, getDeviceQuotaUsage, DEFAULT_PAIRING_CODE, seedPairingCode } from "./auth/authService.js";
 
 // Load .env searching current and parent directories
@@ -49,7 +51,7 @@ let remoteV2Port: number | null = null;
 
 const REMOTE_V2_LOCAL_SCOPES = new Set([
   "system.read", "files.read", "files.delete", "apps.launch", "browser.open", "files.open",
-  "system.control", "media.control", "system.lock", "screen.capture",
+  "system.control", "media.control", "system.lock", "screen.capture", "assistant.execute",
 ]);
 
 function isTailscaleIPv4(address: string): boolean {
@@ -728,7 +730,13 @@ export async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: "127.0.0.1" });
     console.log(`[Vanessa Orchestrator] Online at http://127.0.0.1:${PORT}`);
-    mobileTaskEngine = new MobileTaskEngine({ notify: ({ task, deviceId, ephemeralResult }) => {
+    mobileTaskEngine = new MobileTaskEngine({
+      tools: [...mobileToolRegistry, createMobileAssistantCommandTool(
+        (payload) => orchestrator.executeCommand(payload),
+        (requestId) => orchestrator.cancelRequest(requestId),
+        (progress) => remoteV2Gateway?.publishAssistantProgress(progress),
+      )],
+      notify: ({ task, deviceId, ephemeralResult }) => {
       mobileGateway?.publishTask({ ...task, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
       remoteV2Gateway?.publishTask({ task, deviceId, ...(ephemeralResult !== undefined ? { ephemeralResult } : {}) });
       const auditRow = mobileTaskEngine?.recentAudit(100).find((row: any) => row.taskId === task.taskId && row.state === task.state) as any;
