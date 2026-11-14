@@ -3,10 +3,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
+import { startRemoteIdentitySignerServer, type RemoteIdentitySignerHandle } from "./remoteIdentitySignerServer.js";
 import { applyOrchestratorRuntimeUrls, resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
 
 const managedChildren = new Map<string, ChildProcess>();
 let shuttingDown = false;
+let remoteIdentitySigner: RemoteIdentitySignerHandle | undefined;
 
 export function parseEnvironmentFile(contents: string): Record<string, string> {
   const parsed: Record<string, string> = {};
@@ -169,6 +172,23 @@ export async function startPackagedServices(): Promise<void> {
   if (!app.isPackaged || process.platform !== "win32") return;
 
   const resourceRuntime = path.join(process.resourcesPath, "runtime");
+  // The v2 listener asks this Electron-main-only signer to produce PC
+  // signatures. The private key never enters the orchestrator child process.
+  if (!remoteIdentitySigner) {
+    try {
+      remoteIdentitySigner = await startRemoteIdentitySignerServer(app.getPath("userData"));
+      process.env.VANESSA_REMOTE_SIGNER_URL = remoteIdentitySigner.url;
+      process.env.VANESSA_REMOTE_SIGNER_TOKEN = remoteIdentitySigner.token;
+      process.env.VANESSA_REMOTE_ADMIN_TOKEN = randomBytes(32).toString("base64url");
+      process.env.VANESSA_REMOTE_DATA_DIR = path.join(app.getPath("userData"), "remote-v2");
+      if (!process.env.VANESSA_REMOTE_V2_ENABLED) process.env.VANESSA_REMOTE_V2_ENABLED = "true";
+      console.info("[Vanessa Runtime] PC identity signer ready; remote v2 uses the OS-protected identity.");
+    } catch (error) {
+      delete process.env.VANESSA_REMOTE_SIGNER_URL;
+      delete process.env.VANESSA_REMOTE_SIGNER_TOKEN;
+      console.error("[Vanessa Runtime] Remote v2 remains disabled because the PC identity signer is unavailable:", error);
+    }
+  }
   const metadataPath = path.join(resourceRuntime, "build-meta.json");
   if (!fs.existsSync(metadataPath)) throw new Error("Packaged backend metadata is missing. Rebuild Vanessa from a desktop-release workflow.");
 
@@ -231,4 +251,13 @@ export function stopPackagedServices(): void {
     }
   }
   managedChildren.clear();
+  if (remoteIdentitySigner) {
+    const signer = remoteIdentitySigner;
+    remoteIdentitySigner = undefined;
+    void signer.stop().catch((error) => console.warn("[Vanessa Runtime] Could not stop PC identity signer:", error));
+  }
+  delete process.env.VANESSA_REMOTE_SIGNER_URL;
+  delete process.env.VANESSA_REMOTE_SIGNER_TOKEN;
+  delete process.env.VANESSA_REMOTE_ADMIN_TOKEN;
+  delete process.env.VANESSA_REMOTE_DATA_DIR;
 }

@@ -5,6 +5,7 @@ import ai.vanessa.agent.LocalPlanOutcome
 import ai.vanessa.agent.LocalPlanError
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -60,7 +61,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Local-first assistant. Network and the legacy pairing client remain disabled in this build. */
+/** Local-first assistant with an authenticated remote-PC companion flow. */
 class MainActivity : ComponentActivity() {
     private var profile by mutableStateOf<DeviceProfile?>(null)
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
@@ -159,6 +160,7 @@ class MainActivity : ComponentActivity() {
                         onSpeakRequest = ::requestSpeechInput,
                         onSpeakResponse = ::speakAssistantResponse,
                         onReadCalendar = ::requestMeetings,
+                        onOpenRemoteControl = { startActivity(Intent(this, RemoteControlActivity::class.java)) },
                     )
                 }
             }
@@ -458,6 +460,7 @@ private fun DeviceScreen(
     onSpeakRequest: () -> Unit,
     onSpeakResponse: () -> Unit,
     onReadCalendar: () -> Unit,
+    onOpenRemoteControl: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -467,10 +470,20 @@ private fun DeviceScreen(
             Text("VANESSA", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text("Your local AI agent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Private on-device reasoning and Android tools. Network pairing is intentionally unavailable in this build.",
+                "Private on-device reasoning and Android tools, with an authenticated phone-to-PC control channel.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("REMOTE PC CONTROL", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Pair this phone with Vanessa running on Windows, then send scoped tasks over your Tailscale network.")
+                Button(onClick = onOpenRemoteControl, modifier = Modifier.fillMaxWidth()) {
+                    Text("Open secure PC connection")
+                }
+            }
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {

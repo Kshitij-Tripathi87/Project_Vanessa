@@ -122,6 +122,52 @@ test("a bad code does not consume the code until the bounded attempt limit", asy
   });
 });
 
+test("a disconnected phone can resume an awaiting PC approval with a fresh signed claim", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    const firstNonce = randomBytes(24).toString("base64url");
+    const challenge = registry.claim(claimEnvelope(phone, window, { clientNonce: firstNonce }), NOW);
+    registry.complete(completeEnvelope(phone, window.pairingId, challenge.nonce), NOW + 100);
+
+    const resumedClientNonce = randomBytes(24).toString("base64url");
+    const resumed = registry.resumeClaim(
+      claimEnvelope(phone, window, { clientNonce: resumedClientNonce, sentAt: NOW + 200 }),
+      NOW + 200,
+    );
+    assert.equal(resumed.type, "pairing.pending");
+    if (resumed.type !== "pairing.pending") assert.fail("Expected pending state after resume");
+    assert.equal(resumed.payload.pairingId, window.pairingId);
+    assert.equal(resumed.payload.state, "awaiting_approval");
+
+    const approved = await registry.approve(window.pairingId, ["system.read"], NOW + 300);
+    assert.equal(approved.clientNonce, resumedClientNonce);
+    assert.equal(approved.serverNonce, challenge.nonce);
+  });
+});
+
+test("a disconnected phone can resume a challenge that has not yet been completed", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    const first = registry.claim(claimEnvelope(phone, window), NOW);
+    const resumed = registry.resumeClaim(
+      claimEnvelope(phone, window, { clientNonce: randomBytes(24).toString("base64url"), sentAt: NOW + 100 }),
+      NOW + 100,
+    );
+    assert.equal(resumed.type, "pairing.challenge");
+    if (resumed.type !== "pairing.challenge") assert.fail("Expected challenge after resume");
+    assert.equal(resumed.payload.nonce, first.nonce);
+    assert.equal(resumed.payload.pairingId, window.pairingId);
+    assert.equal(resumed.payload.clientNonce, resumedClientNonce);
+    const pending = registry.complete(
+      completeEnvelope(phone, window.pairingId, resumed.payload.nonce),
+      NOW + 200,
+    );
+    assert.equal(pending.state, "awaiting_approval");
+  });
+});
+
 test("pairing code locks after the configured number of failed code checks", async () => {
   await withRegistry(async (registry) => {
     const phone = newPhone();

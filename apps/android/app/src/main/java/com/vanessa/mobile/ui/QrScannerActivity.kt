@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.Barcode
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
@@ -32,9 +34,9 @@ import java.util.concurrent.Executors
 /**
  * Camera-backed QR scanner.
  *
- * The PC shows a QR payload of {pairingCode, pcIP, port, timestamp, expiresAt}.
- * The payload never contains the long-lived HMAC secret: the phone must redeem
- * the code with the PC, which is not yet exposed over the gateway.
+ * The PC shows a one-time v2 QR payload containing its Tailscale TLS endpoint,
+ * a short-lived pairing claim and its pinned ES256 public identity. It contains
+ * no reusable shared secret or private key.
  */
 class QrScannerActivity : ComponentActivity() {
 
@@ -43,8 +45,12 @@ class QrScannerActivity : ComponentActivity() {
     }
 
     private val cameraExecutor = Executors.newSingleThreadExecutor()
-    private val scanner = BarcodeScanning.getClient()
-    private var delivered = false
+    private val scanner = BarcodeScanning.getClient(
+        BarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+    )
+    private val delivered = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val requestCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -108,10 +114,12 @@ class QrScannerActivity : ComponentActivity() {
         val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
         scanner.process(input)
             .addOnSuccessListener { barcodes ->
-                val value = barcodes.firstOrNull()?.rawValue
-                if (!delivered && value != null) {
-                    delivered = true
-                    setResult(RESULT_OK, android.content.Intent().putExtra(EXTRA_SCANNED_PAYLOAD, value))
+                val value = barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
+                if (value != null && delivered.compareAndSet(false, true)) {
+                    setResult(
+                        RESULT_OK,
+                        android.content.Intent().putExtra(EXTRA_SCANNED_PAYLOAD, value),
+                    )
                     finish()
                 }
             }

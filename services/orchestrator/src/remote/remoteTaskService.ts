@@ -89,7 +89,10 @@ export class RemoteTaskService {
     const device = this.requireTrustedDevice(keyId);
     const granted = new Set(device.grantedScopes);
     const capabilities = this.engine.getRemoteCapabilities()
-      .filter((capability) => capability.scopes.every((scope) => granted.has(scope)));
+      .filter((capability) =>
+        capability.scopes.every((scope) => granted.has(scope)) &&
+        (capability.tier !== "T2" || Boolean(device.approvalKeyId && device.approvalPublicKeySpki))
+      );
     const manifestVersion = createHash("sha256")
       .update(canonicalize(capabilities), "utf8")
       .digest("hex")
@@ -115,6 +118,9 @@ export class RemoteTaskService {
     const granted = new Set(device.grantedScopes);
     if (!capability.scopes.every((scope) => granted.has(scope))) {
       serviceError("SCOPE_REQUIRED", "This paired device has not been granted the required capability scope.");
+    }
+    if (capability.tier === "T2" && (!device.approvalKeyId || !device.approvalPublicKeySpki)) {
+      serviceError("PERMISSION_DENIED", "This phone must be paired with a strong-biometric approval key before it can request this action.");
     }
 
     const submitted = await this.engine.submit({
@@ -206,7 +212,11 @@ export class RemoteTaskService {
       if (!verifier) {
         serviceError("PERMISSION_DENIED", "Remote approval is disabled until a biometric-bound approval proof verifier is configured.");
       }
-      const verified = await verifier({ device, response: parsed.data, proof });
+      const verified = await verifier({
+        device,
+        response: parsed.data,
+        proof: proof ?? parsed.data.biometricProof,
+      });
       if (!verified) {
         serviceError("PERMISSION_DENIED", "The phone did not provide a valid biometric-bound approval proof.");
       }

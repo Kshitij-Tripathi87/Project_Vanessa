@@ -469,8 +469,14 @@ const PairingClaimPayload = z
     appVersion: z.string().min(1).max(40),
     /** Fresh phone nonce echoed by the PC to bind the proof exchange. */
     clientNonce: Base64UrlSchema.min(16).max(128).optional(),
+    /** Optional separate P-256 key used only for biometric-bound approvals. */
+    approvalPublicKey: Base64UrlSchema.min(46).max(400).optional(),
+    approvalKeyId: OpaqueIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => (value.approvalPublicKey === undefined) === (value.approvalKeyId === undefined), {
+    message: "Biometric approval public key and keyId must be supplied together.",
+  });
 
 const PairingChallengePayload = z
   .object({
@@ -600,6 +606,11 @@ const TaskConfirmationResponsePayload = z
     approvedAt: EpochMsSchema,
     /** Method used to authorize, e.g. `biometric_strong` or `pc_local`. */
     method: z.string().min(3).max(40),
+    /** Signature made by a distinct per-use biometric-authenticated key. */
+    biometricProof: z.object({
+      approvalKeyId: OpaqueIdSchema,
+      signature: Base64UrlSchema.min(16).max(200),
+    }).strict().optional(),
   })
   .strict();
 

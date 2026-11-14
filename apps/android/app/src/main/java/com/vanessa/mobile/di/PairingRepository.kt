@@ -11,46 +11,61 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Pairing state captured from the PC's QR payload. */
+/** PC identity pin and one-time pairing data scanned from a v2 QR code. */
 data class StoredPairing(
     val pcIp: String,
     val port: Int,
+    val pairingId: String,
     val pairingCode: String,
     val expiresAt: Long,
-    /** Assigned by the PC when the code is redeemed; null until then. */
+    val pcKeyId: String,
+    val pcPublicKey: String,
+    val scheme: String = "wss",
+    val path: String = "/remote-v2",
+    /** Set only after explicit approval in the PC's local UI. */
     val deviceId: String? = null,
-    /** Per-device HMAC secret; only ever received from the PC. */
-    val secret: String? = null,
 )
 
 /**
- * Persists the PC address, the short-lived pairing code, and (after
- * redemption) the device id and secret issued by the PC.
+ * Stores the PC's public identity pin and the short-lived pairing claim.
+ * The phone's private identity key remains in Android Keystore. No shared
+ * HMAC secret or exportable private key is stored here.
  */
 @Singleton
 class PairingRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>
 ) {
     private object Keys {
-        val PC_IP = stringPreferencesKey("paired_pc_ip")
-        val PC_PORT = intPreferencesKey("paired_pc_port")
-        val PAIRING_CODE = stringPreferencesKey("pairing_code")
-        val PAIRING_EXPIRES_AT = longPreferencesKey("pairing_expires_at")
-        val DEVICE_ID = stringPreferencesKey("paired_device_id")
-        val DEVICE_SECRET = stringPreferencesKey("paired_device_secret")
+        val PC_IP = stringPreferencesKey("remote_v2_pc_host")
+        val PC_PORT = intPreferencesKey("remote_v2_pc_port")
+        val PAIRING_ID = stringPreferencesKey("remote_v2_pairing_id")
+        val PAIRING_CODE = stringPreferencesKey("remote_v2_pairing_code")
+        val PAIRING_EXPIRES_AT = longPreferencesKey("remote_v2_pairing_expires_at")
+        val PC_KEY_ID = stringPreferencesKey("remote_v2_pc_key_id")
+        val PC_PUBLIC_KEY = stringPreferencesKey("remote_v2_pc_public_key")
+        val SCHEME = stringPreferencesKey("remote_v2_scheme")
+        val PATH = stringPreferencesKey("remote_v2_path")
+        val DEVICE_ID = stringPreferencesKey("remote_v2_device_id")
     }
 
     val pairing: Flow<StoredPairing?> = dataStore.data.map { preferences ->
-        val ip = preferences[Keys.PC_IP]
+        val host = preferences[Keys.PC_IP]
+        val pairingId = preferences[Keys.PAIRING_ID]
         val code = preferences[Keys.PAIRING_CODE]
-        if (ip == null || code == null) null
+        val keyId = preferences[Keys.PC_KEY_ID]
+        val publicKey = preferences[Keys.PC_PUBLIC_KEY]
+        if (host == null || pairingId == null || code == null || keyId == null || publicKey == null) null
         else StoredPairing(
-            pcIp = ip,
-            port = preferences[Keys.PC_PORT] ?: 8765,
+            pcIp = host,
+            port = preferences[Keys.PC_PORT] ?: 43443,
+            pairingId = pairingId,
             pairingCode = code,
             expiresAt = preferences[Keys.PAIRING_EXPIRES_AT] ?: 0L,
+            pcKeyId = keyId,
+            pcPublicKey = publicKey,
+            scheme = preferences[Keys.SCHEME] ?: "wss",
+            path = preferences[Keys.PATH] ?: "/remote-v2",
             deviceId = preferences[Keys.DEVICE_ID],
-            secret = preferences[Keys.DEVICE_SECRET],
         )
     }
 
@@ -58,10 +73,15 @@ class PairingRepository @Inject constructor(
         dataStore.edit { preferences ->
             preferences[Keys.PC_IP] = pairing.pcIp
             preferences[Keys.PC_PORT] = pairing.port
+            preferences[Keys.PAIRING_ID] = pairing.pairingId
             preferences[Keys.PAIRING_CODE] = pairing.pairingCode
             preferences[Keys.PAIRING_EXPIRES_AT] = pairing.expiresAt
-            pairing.deviceId?.let { preferences[Keys.DEVICE_ID] = it }
-            pairing.secret?.let { preferences[Keys.DEVICE_SECRET] = it }
+            preferences[Keys.PC_KEY_ID] = pairing.pcKeyId
+            preferences[Keys.PC_PUBLIC_KEY] = pairing.pcPublicKey
+            preferences[Keys.SCHEME] = pairing.scheme
+            preferences[Keys.PATH] = pairing.path
+            if (pairing.deviceId == null) preferences.remove(Keys.DEVICE_ID)
+            else preferences[Keys.DEVICE_ID] = pairing.deviceId
         }
     }
 
@@ -69,10 +89,14 @@ class PairingRepository @Inject constructor(
         dataStore.edit { preferences ->
             preferences.remove(Keys.PC_IP)
             preferences.remove(Keys.PC_PORT)
+            preferences.remove(Keys.PAIRING_ID)
             preferences.remove(Keys.PAIRING_CODE)
             preferences.remove(Keys.PAIRING_EXPIRES_AT)
+            preferences.remove(Keys.PC_KEY_ID)
+            preferences.remove(Keys.PC_PUBLIC_KEY)
+            preferences.remove(Keys.SCHEME)
+            preferences.remove(Keys.PATH)
             preferences.remove(Keys.DEVICE_ID)
-            preferences.remove(Keys.DEVICE_SECRET)
         }
     }
 }

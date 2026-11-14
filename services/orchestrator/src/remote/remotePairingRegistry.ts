@@ -56,6 +56,9 @@ export type TrustedRemoteDevice = {
   keyId: string;
   /** Base64url SPKI DER. Public material only; the phone's private key stays in Android Keystore. */
   publicKeySpki: string;
+  /** Optional distinct P-256 key, whose Android Keystore use requires strong biometrics. */
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
   deviceHint: string;
   platform: "android" | "desktop" | "web" | "unknown";
   appVersion: string;
@@ -76,6 +79,8 @@ type PairingEntry = {
   phoneGuard?: RemoteSessionGuard;
   keyId?: string;
   publicKeySpki?: string;
+  approvalPublicKeySpki?: string;
+  approvalKeyId?: string;
   deviceHint?: string;
   platform?: PendingRemotePairing["platform"];
   appVersion?: string;
@@ -265,10 +270,28 @@ export class RemotePairingRegistry {
       throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
     }
 
+    let approvalPublicKeySpki: string | undefined;
+    let approvalKeyId: string | undefined;
+    if (payload.approvalPublicKey !== undefined && payload.approvalKeyId !== undefined) {
+      try {
+        const approvalKey = normalizeIdentityPublicKey(payload.approvalPublicKey);
+        const derivedApprovalKeyId = computeKeyId(approvalKey);
+        if (!isSupportedIdentityKey(approvalKey) || derivedApprovalKeyId !== payload.approvalKeyId) {
+          throw new Error("Biometric approval identity key is invalid.");
+        }
+        approvalPublicKeySpki = payload.approvalPublicKey;
+        approvalKeyId = derivedApprovalKeyId;
+      } catch {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval identity key is invalid.");
+      }
+    }
+
     entry.state = "challenge_issued";
     entry.phoneGuard = guard;
     entry.keyId = derivedKeyId;
     entry.publicKeySpki = payload.publicKey;
+    entry.approvalPublicKeySpki = approvalPublicKeySpki;
+    entry.approvalKeyId = approvalKeyId;
     entry.deviceHint = payload.deviceHint;
     entry.platform = payload.platform;
     entry.appVersion = payload.appVersion;
@@ -283,6 +306,98 @@ export class RemotePairingRegistry {
       issuedAt: nowMs,
       expiresAt: entry.challengeExpiresAt,
       clientNonce: entry.clientNonce,
+    };
+  }
+
+  /**
+   * Reattach a previously claimed pairing after a transport drop. A QR code
+   * alone is insufficient: the same phone key must sign a fresh claim and
+   * prove possession again. Existing challenge state is preserved.
+   */
+  resumeClaim(
+    value: unknown,
+    nowMs = this.now(),
+  ): { type: "pairing.challenge"; payload: RemotePayloadFor<"pairing.challenge"> } |
+     { type: "pairing.pending"; payload: RemotePayloadFor<"pairing.pending"> } {
+    this.ensureInitialized();
+    const envelope = this.parsePreSessionEnvelope(value, "pairing.claim");
+    const parsed = safeParseRemotePayload("pairing.claim", envelope.payload);
+    if (!parsed.success) throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Pairing resume payload is invalid.");
+    const payload = parsed.data;
+    const entry = this.pairings.get(payload.pairingId);
+    if (!entry) throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
+    if (entry.expiresAt <= nowMs || entry.state === "expired" ||
+        (entry.challengeExpiresAt !== undefined && entry.challengeExpiresAt <= nowMs)) {
+      entry.state = "expired";
+      throw new PairingRegistryError("PAIRING_EXPIRED", "Pairing challenge has expired.");
+    }
+    if (entry.state !== "challenge_issued" && entry.state !== "awaiting_approval") {
+      throw new PairingRegistryError("PAIRING_STATE_INVALID", "Pairing cannot be resumed in its current state.");
+    }
+    if (!entry.keyId || !entry.publicKeySpki || !entry.challengeNonce || !entry.challengeExpiresAt ||
+        !payload.clientNonce || payload.keyId !== entry.keyId || envelope.keyId !== entry.keyId) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone identity does not match the original claim.");
+    }
+
+    let publicKey;
+    try {
+      publicKey = normalizeIdentityPublicKey(payload.publicKey);
+    } catch {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone public key is invalid.");
+    }
+    if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== entry.keyId ||
+        payload.publicKey !== entry.publicKeySpki) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone key does not match the original claim.");
+    }
+    if (!constantTimeCodeMatch(payload.code, entry.codeDigest)) {
+      throw new PairingRegistryError("PAIRING_CODE_INVALID", "Pairing code is invalid or expired.");
+    }
+
+    const guard = new RemoteSessionGuard({
+      sessionId: PRE_SESSION_ID,
+      keyId: entry.keyId,
+      publicKey,
+      direction: "client_to_server",
+      lastAcceptedSequence: envelope.sequence - 1,
+      maxMessageAgeMs: this.pairingTtlMs,
+      maxFutureSkewMs: 5_000,
+    });
+    const proof = guard.verifyAndAccept(envelope, nowMs);
+    if (!proof.accepted) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Resuming phone signature or freshness check failed.");
+    }
+
+    if (payload.approvalPublicKey !== undefined || payload.approvalKeyId !== undefined) {
+      if (!entry.approvalPublicKeySpki || !entry.approvalKeyId ||
+          payload.approvalPublicKey !== entry.approvalPublicKeySpki ||
+          payload.approvalKeyId !== entry.approvalKeyId) {
+        throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Biometric approval key changed during pairing.");
+      }
+    } else if (entry.approvalKeyId) {
+      throw new PairingRegistryError("PAIRING_PROOF_INVALID", "The original biometric approval key must be presented when resuming.");
+    }
+
+    entry.phoneGuard = guard;
+    entry.clientNonce = payload.clientNonce;
+    if (entry.state === "awaiting_approval") {
+      return {
+        type: "pairing.pending",
+        payload: {
+          pairingId: entry.pairingId,
+          state: "awaiting_approval",
+          expiresAt: entry.challengeExpiresAt,
+        },
+      };
+    }
+    return {
+      type: "pairing.challenge",
+      payload: {
+        pairingId: entry.pairingId,
+        nonce: entry.challengeNonce,
+        issuedAt: nowMs,
+        expiresAt: entry.challengeExpiresAt,
+        clientNonce: entry.clientNonce,
+      },
     };
   }
 
@@ -354,6 +469,9 @@ export class RemotePairingRegistry {
       deviceId: randomUUID(),
       keyId: entry.keyId,
       publicKeySpki: entry.publicKeySpki,
+      ...(entry.approvalPublicKeySpki && entry.approvalKeyId
+        ? { approvalPublicKeySpki: entry.approvalPublicKeySpki, approvalKeyId: entry.approvalKeyId }
+        : {}),
       deviceHint: entry.deviceHint,
       platform: entry.platform,
       appVersion: entry.appVersion,
@@ -449,6 +567,9 @@ export class RemotePairingRegistry {
         typeof value.keyId !== "string" ||
         !/^[A-Za-z0-9_-]{16,128}$/.test(value.keyId) ||
         typeof value.publicKeySpki !== "string" ||
+        (value.approvalPublicKeySpki !== undefined && typeof value.approvalPublicKeySpki !== "string") ||
+        (value.approvalKeyId !== undefined && typeof value.approvalKeyId !== "string") ||
+        ((value.approvalPublicKeySpki === undefined) !== (value.approvalKeyId === undefined)) ||
         typeof value.deviceHint !== "string" ||
         !/^[A-Za-z0-9_-]{8,64}$/.test(value.deviceHint) ||
         !["android", "desktop", "web", "unknown"].includes(String(value.platform)) ||
@@ -464,6 +585,16 @@ export class RemotePairingRegistry {
     if (!isSupportedIdentityKey(publicKey) || computeKeyId(publicKey) !== value.keyId) {
       throw new Error("Trusted-device store contains an invalid P-256 identity.");
     }
+    let approvalPublicKeySpki: string | undefined;
+    let approvalKeyId: string | undefined;
+    if (typeof value.approvalPublicKeySpki === "string" && typeof value.approvalKeyId === "string") {
+      const approvalKey = normalizeIdentityPublicKey(value.approvalPublicKeySpki);
+      if (!isSupportedIdentityKey(approvalKey) || computeKeyId(approvalKey) !== value.approvalKeyId) {
+        throw new Error("Trusted-device store contains an invalid biometric approval identity.");
+      }
+      approvalPublicKeySpki = value.approvalPublicKeySpki;
+      approvalKeyId = value.approvalKeyId;
+    }
     if (value.grantedScopes.length > 32 ||
         new Set(value.grantedScopes).size !== value.grantedScopes.length ||
         value.grantedScopes.some((scope) => typeof scope !== "string" || !validScope(scope))) {
@@ -473,6 +604,7 @@ export class RemotePairingRegistry {
       deviceId: value.deviceId,
       keyId: value.keyId,
       publicKeySpki: value.publicKeySpki,
+      ...(approvalPublicKeySpki && approvalKeyId ? { approvalPublicKeySpki, approvalKeyId } : {}),
       deviceHint: value.deviceHint,
       platform: value.platform as TrustedRemoteDevice["platform"],
       appVersion: value.appVersion,

@@ -42,6 +42,61 @@ function assertTaskId(taskId: unknown): asserts taskId is string {
   }
 }
 
+type RemoteAdminResponse = {
+  success?: boolean;
+  error?: string;
+  [key: string]: unknown;
+};
+
+const remoteAdminAllowedScopes = new Set([
+  "system.read",
+  "files.read",
+  "apps.launch",
+  "browser.open",
+  "files.open",
+  "system.control",
+  "files.delete",
+  "media.control",
+  "system.lock",
+  "screen.capture",
+]);
+
+async function remoteV2AdminRequest(
+  route: string,
+  options: { method?: "GET" | "POST"; body?: unknown } = {},
+): Promise<RemoteAdminResponse> {
+  const token = process.env.VANESSA_REMOTE_ADMIN_TOKEN;
+  if (!token || token.length < 32) {
+    throw new Error("The packaged PC remote control service is not initialized.");
+  }
+  const response = await fetch(resolveOrchestratorHttpUrl(process.env) + route, {
+    method: options.method ?? "GET",
+    headers: {
+      authorization: "Bearer " + token,
+      ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+    signal: AbortSignal.timeout(5000),
+  });
+  const value = await response.json().catch(() => ({})) as RemoteAdminResponse;
+  if (!response.ok) {
+    throw new Error(typeof value.error === "string" ? value.error : "Remote control request failed (HTTP " + response.status + ").");
+  }
+  return value;
+}
+
+function assertPairingId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^pair_[a-f0-9]{24}$/.test(value)) {
+    throw new Error("Invalid pairing request ID.");
+  }
+}
+
+function assertDeviceUuid(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^[0-9a-f-]{36}$/.test(value)) {
+    throw new Error("Invalid trusted device ID.");
+  }
+}
+
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // 1. Execute Command
   ipcMain.handle("vanessa:execute-command", async (event, payload: ExecuteCommandPayload) => {
@@ -153,6 +208,56 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     assertTrustedRenderer(event, mainWindow);
     mainWindow?.close();
     return { success: true };
+  });
+
+  // Remote v2 pairing and device administration. The bearer token stays in
+  // Electron main and is never exposed through preload or the renderer.
+  ipcMain.handle("vanessa:remote-v2-status", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    try { return await remoteV2AdminRequest("/api/remote-v2/status"); }
+    catch (error) { return { enabled: false, tailscale: false, error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  ipcMain.handle("vanessa:remote-v2-create-pairing", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    return remoteV2AdminRequest("/api/remote-v2/pairing-window", { method: "POST", body: {} });
+  });
+
+  ipcMain.handle("vanessa:remote-v2-pending-pairings", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    return remoteV2AdminRequest("/api/remote-v2/pairings/pending");
+  });
+
+  ipcMain.handle("vanessa:remote-v2-approve-pairing", async (event, input: { pairingId: unknown; grantedScopes: unknown }) => {
+    assertTrustedRenderer(event, mainWindow);
+    assertPairingId(input?.pairingId);
+    if (!Array.isArray(input.grantedScopes) || input.grantedScopes.length < 1 ||
+        input.grantedScopes.length > remoteAdminAllowedScopes.size ||
+        input.grantedScopes.some((scope) => typeof scope !== "string" || !remoteAdminAllowedScopes.has(scope)) ||
+        new Set(input.grantedScopes).size !== input.grantedScopes.length) {
+      throw new Error("Select one or more valid PC capabilities.");
+    }
+    return remoteV2AdminRequest("/api/remote-v2/pairings/approve", {
+      method: "POST",
+      body: { pairingId: input.pairingId, grantedScopes: input.grantedScopes },
+    });
+  });
+
+  ipcMain.handle("vanessa:remote-v2-reject-pairing", async (event, pairingId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    assertPairingId(pairingId);
+    return remoteV2AdminRequest("/api/remote-v2/pairings/reject", { method: "POST", body: { pairingId } });
+  });
+
+  ipcMain.handle("vanessa:remote-v2-devices", async (event) => {
+    assertTrustedRenderer(event, mainWindow);
+    return remoteV2AdminRequest("/api/remote-v2/devices");
+  });
+
+  ipcMain.handle("vanessa:remote-v2-revoke-device", async (event, deviceId: unknown) => {
+    assertTrustedRenderer(event, mainWindow);
+    assertDeviceUuid(deviceId);
+    return remoteV2AdminRequest("/api/remote-v2/devices/revoke", { method: "POST", body: { deviceId } });
   });
 
   // Connect to WebSocket stream and forward to Renderer
