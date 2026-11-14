@@ -46,7 +46,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.security.KeyFactory
-import java.security.MessageDigest
 import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
@@ -302,9 +301,9 @@ class VanessaBridgeClient @Inject constructor(@ApplicationContext private val ap
         if (challenge.type == "protocol.error") throw PairingRejected(challenge.payload.optionalString("message") ?: "The PC rejected the pairing claim.")
         require(challenge.type == "pairing.challenge") { "PC did not issue a pairing proof challenge." }
         val nonce = challenge.payload.requiredString("nonce")
-        val challengeNonce = MessageDigest.getInstance("SHA-256")
-            .digest(nonce.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        // The PC stores SHA-256(nonce) and compares SHA-256(submitted nonce)
+        // in constant time. Send the original one-use nonce, not its digest.
+        val challengeNonce = nonce
         val complete = buildJsonObject {
             put("pairingId", pairing.pairingId)
             put("challengeNonce", challengeNonce)
