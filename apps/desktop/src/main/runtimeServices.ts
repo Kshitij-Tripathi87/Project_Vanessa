@@ -112,6 +112,7 @@ async function startService(options: {
   healthUrl: string;
   serviceIdentity: string;
   startupTimeoutMs?: number;
+  extraEnv?: NodeJS.ProcessEnv;
 }): Promise<void> {
   if (await serviceHealthy(options.healthUrl, options.serviceIdentity)) {
     console.info("[Vanessa Runtime] Reusing healthy " + options.name + " service.");
@@ -125,6 +126,14 @@ async function startService(options: {
 
   const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
+  // Signing and device-admin bearer capabilities are only for the orchestrator.
+  // They must never be inherited by the independent voice-agent child.
+  delete childEnvironment.VANESSA_REMOTE_SIGNER_URL;
+  delete childEnvironment.VANESSA_REMOTE_SIGNER_TOKEN;
+  delete childEnvironment.VANESSA_REMOTE_CONTROL_TOKEN;
+  for (const [key, value] of Object.entries(options.extraEnv ?? {})) {
+    if (value !== undefined) childEnvironment[key] = value;
+  }
   const child = spawn(path.join(process.resourcesPath, "runtime", "node.exe"), [options.entryPath], {
     cwd: options.workingDirectory,
     env: { ...childEnvironment, HOST: "127.0.0.1" },
@@ -210,6 +219,11 @@ export async function startPackagedServices(): Promise<void> {
     port: orchestratorPort,
     healthUrl: "http://127.0.0.1:" + orchestratorPort + "/health",
     serviceIdentity: "vanessa-orchestrator",
+    extraEnv: {
+      VANESSA_REMOTE_SIGNER_URL: process.env.VANESSA_REMOTE_SIGNER_URL,
+      VANESSA_REMOTE_SIGNER_TOKEN: process.env.VANESSA_REMOTE_SIGNER_TOKEN,
+      VANESSA_REMOTE_CONTROL_TOKEN: process.env.VANESSA_REMOTE_CONTROL_TOKEN,
+    },
   });
   await startService({
     name: "voice-agent",
