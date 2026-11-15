@@ -288,7 +288,8 @@ export class RemoteTaskService {
     return this.engine.getTaskRecoveryForDevice(taskIds, device.deviceId).map((item) => {
       const capability = capabilities.get(item.task.tool as never);
       if (!capability || !item.confirmation || !item.task.actionHash ||
-          !capability.scopes.every((scope) => device.grantedScopes.includes(scope))) {
+          !capability.scopes.every((scope) => device.grantedScopes.includes(scope)) ||
+          (capability.tier === "T2" && device.approvalKeyHardwareAttested !== true)) {
         return { snapshot: item.snapshot, task: item.task };
       }
       const approval = {
