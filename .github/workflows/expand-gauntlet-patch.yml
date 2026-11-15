@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: expand-vanessa-gauntlet-{{ github.ref }}
+  group: expand-vanessa-gauntlet-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -41,9 +41,8 @@ jobs:
           from pathlib import Path
           path = Path("evals/vanessa-gauntlet/tests/runner.test.mjs")
           source = path.read_text()
-          old = '''  const batchIds = await import('node:fs/promises').then((fs) => fs.readdir(batchRoot));
-          const summary = JSON.parse(await readFile(path.join(batchRoot, batchIds[0], 'summary.json'), 'utf8'));'''
-          new = '''  const batchIds = await import('node:fs/promises').then((fs) => fs.readdir(batchRoot));
+          old = "  const batchIds = await import('node:fs/promises').then((fs) => fs.readdir(batchRoot));\\n  const summary = JSON.parse(await readFile(path.join(batchRoot, batchIds[0], 'summary.json'), 'utf8'));"
+          new = """  const batchIds = await import('node:fs/promises').then((fs) => fs.readdir(batchRoot));
           const summaryPath = path.join(batchRoot, batchIds[0] ?? "", 'summary.json');
           let summary;
           try {
@@ -54,11 +53,11 @@ jobs:
               `Runner omitted summary.json. exit=${result.status}; signal=${result.signal}; error=${result.error}; stdout=${result.stdout}; stderr=${result.stderr}; entries=${batchEntries.map((entry) => entry.name).join(", ")}`,
               { cause: error },
             );
-          }'''
+          }"""
           if old not in source:
               raise SystemExit("Could not locate runner.test.mjs summary read block")
           path.write_text(source.replace(old, new))
-          PY
+          PY          PY
           node --test evals/vanessa-gauntlet/tests/*.test.mjs
           rm .github/workflows/expand-gauntlet-patch.yml
           git add -A evals/vanessa-gauntlet IMPLEMENTATION_STATUS.md RESULTS_SUMMARY.json .github/workflows/expand-gauntlet-patch.yml
