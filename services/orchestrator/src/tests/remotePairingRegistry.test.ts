@@ -37,7 +37,7 @@ async function withRegistry(run: (registry: RemotePairingRegistry, advance: (mil
   }
 }
 
-function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId: string; code: string }, options: { code?: string; sequence?: number; sentAt?: number; clientNonce?: string } = {}) {
+function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId: string; code: string }, options: { code?: string; sequence?: number; sentAt?: number; clientNonce?: string; approvalPublicKey?: string; approvalKeyId?: string } = {}) {
   return signRemoteEnvelope(phone.privateKey, createRemoteEnvelope({
     type: "pairing.claim",
     sessionId: PRE_SESSION_ID,
@@ -53,6 +53,9 @@ function claimEnvelope(phone: ReturnType<typeof newPhone>, pairing: { pairingId:
       platform: "android",
       appVersion: "0.1.0",
       clientNonce: options.clientNonce ?? randomBytes(24).toString("base64url"),
+      ...(options.approvalPublicKey && options.approvalKeyId
+        ? { approvalPublicKey: options.approvalPublicKey, approvalKeyId: options.approvalKeyId }
+        : {}),
     },
   }));
 }
@@ -102,6 +105,29 @@ test("pairing requires a signed claim, challenge completion, and local approval"
     const restored = new RemotePairingRegistry({ storePath });
     await restored.initialize();
     assert.equal(restored.getTrustedDeviceByKeyId(phone.keyId)?.deviceId, approved.deviceId);
+  });
+});
+
+test("a self-asserted software approval key cannot obtain the files.delete scope", async () => {
+  await withRegistry(async (registry) => {
+    const phone = newPhone();
+    const softwareApprovalKey = newPhone();
+    const window = registry.createPairingWindow(NOW);
+    const challenge = registry.claim(claimEnvelope(phone, window, {
+      approvalPublicKey: softwareApprovalKey.publicKey,
+      approvalKeyId: softwareApprovalKey.keyId,
+    }), NOW);
+    registry.complete(completeEnvelope(phone, window.pairingId, challenge.nonce), NOW + 100);
+
+    await assert.rejects(
+      registry.approve(window.pairingId, ["system.read", "files.delete"], NOW + 200),
+      (error: unknown) => error instanceof PairingRegistryError && error.code === "PAIRING_PROOF_INVALID",
+    );
+    assert.equal(registry.getTrustedDeviceByKeyId(phone.keyId), undefined);
+
+    const safeGrant = await registry.approve(window.pairingId, ["system.read"], NOW + 300);
+    assert.deepEqual(safeGrant.grantedScopes, ["system.read"]);
+    assert.equal(registry.getTrustedDeviceByKeyId(phone.keyId)?.approvalKeyHardwareAttested, false);
   });
 });
 
