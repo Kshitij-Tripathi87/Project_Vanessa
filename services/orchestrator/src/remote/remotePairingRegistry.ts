@@ -371,6 +371,16 @@ export class RemotePairingRegistry {
         grantedScopes.some((scope) => !validScope(scope))) {
       throw new PairingRegistryError("PAIRING_PROOF_INVALID", "Granted scopes are invalid.");
     }
+    // Never grant destructive file access from a client-asserted public key.
+    // The PC-side Android attestation verifier is not implemented yet; until
+    // it is, this registry boundary rejects deletion even if an approval key
+    // was included in the signed pairing claim.
+    if (grantedScopes.includes("files.delete")) {
+      throw new PairingRegistryError(
+        "PAIRING_PROOF_INVALID",
+        "The files.delete scope is disabled until the PC verifies Android key attestation.",
+      );
+    }
     if (this.trustedDevices.has(entry.keyId)) {
       const existing = this.trustedDevices.get(entry.keyId)!;
       if (!existing.revoked) throw new PairingRegistryError("PAIRING_ALREADY_CLAIMED", "This phone is already paired.");
