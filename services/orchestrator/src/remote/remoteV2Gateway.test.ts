@@ -252,13 +252,6 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, secondReady).ok, true);
 
     const taskRequestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const taskFrame = signed(phone, "task.submit", {
-      requestId: taskRequestId,
-      idempotencyKey: "remote-status-e2e-0001",
-      capability: "system_status",
-      canonicalArguments: {},
-      intent: "Read the PC system status",
-    }, sessionId, 2);
     // Submit through the second live session while the first session remains
     // connected. The result must be delivered to the submitting socket.
     const secondTaskFrame = signed(phone, "task.submit", {
