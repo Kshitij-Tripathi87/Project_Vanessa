@@ -20,7 +20,7 @@ import { MobileTaskEngine } from "../core/mobileTaskEngine.js";
 import type { MobileTool } from "../core/mobileToolRegistry.js";
 import { RemotePairingRegistry } from "./remotePairingRegistry.js";
 import { RemoteTaskService } from "./remoteTaskService.js";
-import { RemoteV2Gateway } from "./remoteV2Gateway.js";
+import { RemoteV2Gateway, compactRemoteResult } from "./remoteV2Gateway.js";
 
 type Frame = RemoteEnvelope;
 
@@ -418,3 +418,33 @@ test("pairing approval is not persisted when the phone disconnects before local 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("compact remote result projection matches actual tool outputs and omits screenshot bytes", () => {
+  assert.deepEqual(
+    compactRemoteResult("set_volume", { requestedVolume: 55, observedVolume: 55 }),
+    { requestedVolume: 55, observedVolume: 55, matchesRequest: true },
+  );
+  assert.deepEqual(
+    compactRemoteResult("set_volume", { requestedVolume: 40, observedVolume: 25 }),
+    { requestedVolume: 40, observedVolume: 25, matchesRequest: false },
+  );
+  assert.deepEqual(
+    compactRemoteResult("media_control", { sent: true }),
+    { sent: true },
+  );
+
+  const screenshot = compactRemoteResult("take_screenshot", {
+    mimeType: "image/jpeg",
+    data: "base64-private-image-data",
+    width: 320,
+    height: 240,
+  });
+  assert.deepEqual(screenshot, { captured: true, width: 320, height: 240 });
+  assert.equal(JSON.stringify(screenshot).includes("base64-private-image-data"), false);
+  assert.deepEqual(
+    compactRemoteResult("take_screenshot", { mimeType: "image/png", data: "not-accepted" }),
+    { captured: false },
+  );
+});
+
