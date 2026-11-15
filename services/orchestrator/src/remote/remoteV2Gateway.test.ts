@@ -330,3 +330,72 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     await rm(directory, { recursive: true, force: true });
   }
 });
+ 
+test("pairing approval is not persisted when the phone disconnects before local approval", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vanessa-v2-disconnected-pairing-"));
+  const pc = keyPair();
+  const phone = keyPair();
+  let gateway: RemoteV2Gateway | undefined;
+  const engine = new MobileTaskEngine({ dbPath: join(directory, "tasks.sqlite"), tools: [statusTool()] });
+  const pairings = new RemotePairingRegistry({ storePath: join(directory, "trusted-devices.json") });
+  await pairings.initialize();
+  const taskService = new RemoteTaskService(engine, pairings);
+  gateway = new RemoteV2Gateway({
+    host: "127.0.0.1",
+    port: 0,
+    pcId: `pc_${pc.keyId.slice(0, 12)}`,
+    pcName: "Test PC",
+    pcKeyId: pc.keyId,
+    pcPublicKeySpki: pc.publicKeySpki,
+    sign: async (unsigned) => signRemoteEnvelope(pc.privateKey, unsigned),
+    pairings,
+    tasks: taskService,
+  });
+
+  let socket: WebSocket | undefined;
+  try {
+    await gateway.start();
+    const address = gateway.address();
+    const window = pairings.createPairingWindow();
+    socket = new WebSocket("ws://" + address.host + ":" + address.port);
+    const next = createFrameReader(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket!.once("open", resolve);
+      socket!.once("error", reject);
+    });
+    await next("server.challenge");
+    const clientNonce = Buffer.from("disconnect-test-client-nonce").toString("base64url");
+    await send(socket, signed(phone, "pairing.claim", {
+      pairingId: window.pairingId,
+      code: window.code,
+      publicKey: phone.publicKeySpki,
+      keyId: phone.keyId,
+      deviceHint: "pixel-disconnect-test",
+      platform: "android",
+      appVersion: "0.1.0",
+      clientNonce,
+    }, PRE_SESSION_ID, 0));
+    const challenge = await next("pairing.challenge");
+    const challengePayload = challenge.payload as Record<string, any>;
+    await send(socket, signed(phone, "pairing.complete", {
+      pairingId: window.pairingId,
+      challengeNonce: challengePayload.nonce,
+    }, PRE_SESSION_ID, 1));
+    await next("pairing.pending");
+
+    const closed = new Promise<void>((resolve) => socket!.once("close", () => resolve()));
+    socket.close();
+    await closed;
+
+    await assert.rejects(
+      gateway.approvePairing(window.pairingId, ["system.read"]),
+      { code: "PAIRING_STATE_INVALID" },
+    );
+    assert.equal(pairings.getTrustedDeviceByKeyId(phone.keyId), undefined);
+  } finally {
+    socket?.close();
+    await gateway.stop();
+    engine.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
