@@ -578,7 +578,13 @@ export class RemoteV2Gateway {
           }
           const pendingEvent = peer.pendingTaskEvents.get(submitted.accepted.taskId);
           peer.pendingTaskEvents.delete(submitted.accepted.taskId);
-          if (pendingEvent) await this.publishTaskNow(peer, pendingEvent);
+          if (pendingEvent) {
+            await this.publishTaskNow(peer, pendingEvent);
+            if (TERMINAL_STATES.has(pendingEvent.task.state) &&
+                this.taskPeers.get(pendingEvent.task.taskId) === peer) {
+              this.taskPeers.delete(pendingEvent.task.taskId);
+            }
+          }
           // Idempotent retries do not create a new engine event. Replay the
           // durable current task state to the socket that made this retry.
           if (submitted.duplicate) {
