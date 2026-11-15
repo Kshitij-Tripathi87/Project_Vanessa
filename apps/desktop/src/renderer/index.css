@@ -415,6 +415,23 @@ input {
 .progress-steps .step-done { color: #c6eefa; }
 .progress-steps .step-done i, .progress-steps .step-done svg { border-color: #56d9fa; background: #56d9fa; box-shadow: 0 0 8px rgba(86, 217, 250, 0.4); }
 
+.execution-feed { margin-top: 14px; }
+.execution-feed-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 7px; color: var(--text-dim); font-size: 9px; font-weight: 750; letter-spacing: 0.12em; text-transform: uppercase; }
+.execution-feed-heading span:last-child { color: var(--text-muted); letter-spacing: 0.02em; font-weight: 550; }
+.execution-feed-list { display: grid; gap: 6px; }
+.execution-row { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 9px; border: 1px solid rgba(255,255,255,0.075); border-radius: 10px; background: rgba(255,255,255,0.025); }
+.execution-marker { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 7px rgba(148,163,184,0.25); }
+.execution-verified .execution-marker { background: #6ee7b7; box-shadow: 0 0 8px rgba(110,231,183,0.5); }
+.execution-approval .execution-marker, .execution-partial .execution-marker { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.4); }
+.execution-failed .execution-marker { background: #fb7185; box-shadow: 0 0 8px rgba(251,113,133,0.4); }
+.execution-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.execution-copy strong { overflow: hidden; color: var(--text-main); font-size: 10px; font-weight: 650; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+.execution-copy span { overflow: hidden; color: var(--text-dim); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.execution-state { flex: 0 0 auto; padding: 3px 6px; border: 1px solid rgba(255,255,255,0.09); border-radius: 5px; color: var(--text-muted); font-size: 8px; font-weight: 700; }
+.state-verified { border-color: rgba(52,211,153,0.22); color: #6ee7b7; background: rgba(16,185,129,0.07); }
+.state-approval, .state-partial { border-color: rgba(251,191,36,0.22); color: #fcd34d; background: rgba(245,158,11,0.07); }
+.state-failed { border-color: rgba(251,113,133,0.22); color: #fda4af; background: rgba(244,63,94,0.07); }
+
 .approval-card { margin-top: 14px; padding: 12px; border: 1px solid rgba(251, 191, 36, 0.36); border-radius: 12px; background: rgba(120, 78, 8, 0.13); }
 .approval-heading { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #fcd34d; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .approval-card strong { display: block; font-size: 12px; }
