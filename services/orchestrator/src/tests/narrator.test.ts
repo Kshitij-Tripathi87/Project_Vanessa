@@ -100,3 +100,31 @@ test("verified narration redacts secrets, strips URLs and normalizes multiline e
   assert.doesNotMatch(summary, /https:\/\//);
   assert.match(summary, /link/);
 });
+ 
+test("Hindi and Hinglish verified success narration stays in the requested language", () => {
+  const narrator = new Narrator();
+  const hindi = narrator.narrateVerifiedSuccess([verifiedTask()], "hi");
+  const hinglish = narrator.narrateVerifiedSuccess([verifiedTask()], "hinglish");
+
+  assert.match(hindi, /कार्य/);
+  assert.doesNotMatch(hindi, /Verified|Adapter status is Up/);
+  assert.match(hinglish, /ka verification/);
+  assert.doesNotMatch(hinglish, /Verified|Adapter status is Up/);
+});
+
+test("verified narration redacts POSIX absolute paths before speech", () => {
+  const narrator = new Narrator();
+  const summary = narrator.narrateVerifiedSuccess([
+    verifiedTask({
+      verification: {
+        verified: true,
+        details: "Output file was confirmed at /home/runner/work/private/output.txt.",
+        postconditions: [],
+        outcome: "succeeded",
+      },
+    }),
+  ]);
+
+  assert.doesNotMatch(summary, /\/home\/runner/);
+  assert.match(summary, /local file/);
+});
