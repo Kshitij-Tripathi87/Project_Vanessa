@@ -53,6 +53,14 @@ jobs:
           if old not in source:
               raise SystemExit("Could not locate runner.test.mjs summary read block")
           path.write_text(source.replace(old, new))
+          runner = Path("evals/vanessa-gauntlet/run.mjs")
+          runner_source = runner.read_text()
+          old_copy = """  await mkdir(workspaceDir, { recursive: false });
+          await cp(pack.templatePath, workspaceDir, { recursive: true, errorOnExist: true, force: false });"""
+          new_copy = """  await cp(pack.templatePath, workspaceDir, { recursive: true, errorOnExist: true, force: false });"""
+          if old_copy not in runner_source:
+              raise SystemExit("Could not locate workspace pre-creation/copy sequence")
+          runner.write_text(runner_source.replace(old_copy, new_copy))
           PY
           node --test evals/vanessa-gauntlet/tests/*.test.mjs
           rm .github/workflows/expand-gauntlet-patch.yml
