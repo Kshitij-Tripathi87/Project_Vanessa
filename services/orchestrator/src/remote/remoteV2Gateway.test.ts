@@ -88,7 +88,7 @@ function createFrameReader(socket: WebSocket) {
       if (!type || frame.type === type) return frame;
       queued.push(frame);
     }
-    throw new Error(`Timed out waiting for ${type ?? "a remote frame"}`);
+    throw new Error(`Timed out waiting for ${type ?? "a remote frame"}; queued frames: ${queued.map((frame) => frame.type).join(", ") || "none"}`);
   };
 }
 
