@@ -66,6 +66,6 @@ jobs:
           PY
           node --test evals/vanessa-gauntlet/tests/*.test.mjs
           rm .github/workflows/expand-gauntlet-patch.yml
-          git add -A evals/vanessa-gauntlet IMPLEMENTATION_STATUS.md RESULTS_SUMMARY.json .github/workflows/expand-gauntlet-patch.yml
+          git add -A evals/vanessa-gauntlet .github/workflows/expand-gauntlet-patch.yml
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "feat(eval): expand Vanessa Gauntlet L1 benchmark source"
           git push origin HEAD:feat/vanessa-gauntlet-l1
