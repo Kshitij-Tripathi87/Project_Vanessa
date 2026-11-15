@@ -1,0 +1,51 @@
+name: Reconcile remote v2 branch with main
+
+on:
+  push:
+    branches:
+      - feat/remote-v2-authenticated-gateway
+    paths:
+      - .github/workflows/reconcile-main-merge.yml
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out canonical remote v2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/remote-v2-authenticated-gateway
+          fetch-depth: 0
+      - name: Merge main with a guarded CI-only conflict resolver
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if git merge --no-edit origin/main; then
+            echo "main merged cleanly"
+          else
+            conflicts="$(git diff --name-only --diff-filter=U | sort)"
+            printf 'Conflicting paths:\n%s\n' "$conflicts"
+            if [[ "$conflicts" != ".github/workflows/ci.yml" ]]; then
+              git merge --abort
+              echo "Unexpected conflict set. Aborted without pushing."
+              exit 1
+            fi
+            # The branch workflow was reconciled to include both main's
+            # narration test gate and this branch's v2 gateway/signer tests.
+            git checkout --ours -- .github/workflows/ci.yml
+            git add .github/workflows/ci.yml
+            git commit -m "merge main: retain narration and remote v2 CI gates"
+          fi
+          rm .github/workflows/reconcile-main-merge.yml
+          git add -u .github/workflows/reconcile-main-merge.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(ci): remove one-time merge helper"
+          fi
+          git push origin HEAD:feat/remote-v2-authenticated-gateway
