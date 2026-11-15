@@ -68,27 +68,46 @@ function statusTool(): MobileTool {
 }
 
 function createFrameReader(socket: WebSocket) {
+  type PendingRead = {
+    type?: RemoteMessageType;
+    resolve: (frame: Frame) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  };
   const queued: Frame[] = [];
-  const waiters: Array<(frame: Frame) => void> = [];
+  const waiters: PendingRead[] = [];
+
   socket.on("message", (data) => {
     const frame = JSON.parse(data.toString()) as Frame;
-    const waiter = waiters.shift();
-    if (waiter) waiter(frame);
-    else queued.push(frame);
-  });
-  return async function next(type?: RemoteMessageType, timeoutMs = 5000): Promise<Frame> {
-    const index = type ? queued.findIndex((frame) => frame.type === type) : 0;
-    if (queued.length && index >= 0) return queued.splice(index, 1)[0];
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const frame = await new Promise<Frame>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${type ?? "a remote frame"}; queued frames: ${queued.map((frame) => frame.type).join(", ") || "none"}`)), Math.max(1, deadline - Date.now()));
-        waiters.push((item) => { clearTimeout(timer); resolve(item); });
-      });
-      if (!type || frame.type === type) return frame;
+    const waiterIndex = waiters.findIndex((waiter) => !waiter.type || waiter.type === frame.type);
+    if (waiterIndex < 0) {
       queued.push(frame);
+      return;
     }
-    throw new Error(`Timed out waiting for ${type ?? "a remote frame"}; queued frames: ${queued.map((frame) => frame.type).join(", ") || "none"}`);
+    const [waiter] = waiters.splice(waiterIndex, 1);
+    clearTimeout(waiter.timer);
+    waiter.resolve(frame);
+  });
+
+  return function next(type?: RemoteMessageType, timeoutMs = 5000): Promise<Frame> {
+    const index = queued.findIndex((frame) => !type || frame.type === type);
+    if (index >= 0) return Promise.resolve(queued.splice(index, 1)[0]);
+
+    return new Promise<Frame>((resolve, reject) => {
+      const waiter: PendingRead = {
+        type,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const pendingIndex = waiters.indexOf(waiter);
+          if (pendingIndex >= 0) waiters.splice(pendingIndex, 1);
+          reject(new Error(
+            `Timed out waiting for ${type ?? "a remote frame"}; queued frames: ${queued.map((frame) => frame.type).join(", ") || "none"}`,
+          ));
+        }, timeoutMs),
+      };
+      waiters.push(waiter);
+    });
   };
 }
 
