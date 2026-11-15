@@ -131,9 +131,9 @@ export class RemoteTaskService {
     const granted = new Set(device.grantedScopes);
     const capabilities = this.engine.getRemoteCapabilities()
       .filter((capability) => capability.scopes.every((scope) => granted.has(scope)))
-      // Every T2 approval requires an independently attested biometric key.
-      // Hide capabilities that this PC is not currently able to authorize.
-      .filter((capability) => capability.tier !== "T2" || device.approvalKeyHardwareAttested === true);
+      // A T2 action is advertised only when this PC can verify an
+      // independently attested biometric key and has the proof verifier wired.
+      .filter((capability) => this.canAuthorizeCapability(capability, device));
     const manifestVersion = createHash("sha256")
       .update(canonicalize(capabilities), "utf8")
       .digest("hex")
@@ -155,10 +155,10 @@ export class RemoteTaskService {
     const payload = parsed.data;
     const capability = this.engine.getRemoteCapabilities().find((entry) => entry.name === payload.capability);
     if (!capability) serviceError("CAPABILITY_DISABLED", "The requested PC capability is not available.");
-    if (capability.tier === "T2" && device.approvalKeyHardwareAttested !== true) {
+    if (!this.canAuthorizeCapability(capability, device)) {
       serviceError(
         "PERMISSION_DENIED",
-        "Tier-2 remote capabilities are disabled until this PC independently verifies the phone's Android key attestation.",
+        "Tier-2 remote capabilities are disabled until this PC verifies the phone's Android key attestation and configures the biometric-proof verifier.",
       );
     }
 
@@ -289,7 +289,7 @@ export class RemoteTaskService {
       const capability = capabilities.get(item.task.tool as never);
       if (!capability || !item.confirmation || !item.task.actionHash ||
           !capability.scopes.every((scope) => device.grantedScopes.includes(scope)) ||
-          (capability.tier === "T2" && device.approvalKeyHardwareAttested !== true)) {
+          !this.canAuthorizeCapability(capability, device)) {
         return { snapshot: item.snapshot, task: item.task };
       }
       const approval = {
@@ -317,6 +317,15 @@ export class RemoteTaskService {
   getTaskSnapshot(keyId: string, taskId: string) {
     const device = this.requireTrustedDevice(keyId);
     return this.engine.getTaskForDevice(taskId, device.deviceId);
+  }
+
+  private canAuthorizeCapability(
+    capability: { tier: string },
+    device: TrustedRemoteDevice,
+  ): boolean {
+    if (capability.tier !== "T2") return true;
+    return device.approvalKeyHardwareAttested === true &&
+      typeof this.options.verifyApprovalProof === "function";
   }
 
   private requireTrustedDevice(keyId: string): TrustedRemoteDevice {
