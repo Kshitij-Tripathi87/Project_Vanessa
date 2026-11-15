@@ -41,11 +41,11 @@ Use JDK 17, Android SDK platform 35, build-tools 35.0.0, NDK 27.2.12479018, and 
 From this directory, with the pinned llama.cpp checkout available:
 
 ```sh
-./gradlew \\
-  :core:protocol:test \\
-  :core:agent:test \\
-  :app:testDebugUnitTest \\
-  :app:verifyLocalInferenceApk \\
+./gradlew \
+  :core:protocol:test \
+  :core:agent:test \
+  :app:testDebugUnitTest \
+  :app:verifyLocalInferenceApk \
   -PllamaCppDir=/absolute/path/to/llama.cpp
 ```
 
