@@ -125,6 +125,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
   });
 
   let socket: WebSocket | undefined;
+  let socket2: WebSocket | undefined;
   try {
     await gateway.start();
     const address = gateway.address();
@@ -228,6 +229,28 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, manifest).ok, true);
     assert.deepEqual((manifest.payload as Record<string, any>).capabilities.map((entry: any) => entry.name), ["system_status"]);
 
+    // A second session for the same trusted phone must not steal task events
+    // from the socket that actually submitted the task.
+    socket2 = new WebSocket("ws://" + address.host + ":" + address.port);
+    const next2 = createFrameReader(socket2);
+    await new Promise<void>((resolve, reject) => {
+      socket2!.once("open", resolve);
+      socket2!.once("error", reject);
+    });
+    const secondChallenge = await next2("server.challenge");
+    const secondChallengePayload = secondChallenge.payload as Record<string, any>;
+    const secondSessionId = secondChallenge.sessionId;
+    await send(socket2, signed(phone, "client.authenticate", {
+      serverNonce: secondChallengePayload.serverNonce,
+      clientNonce: Buffer.from("second-session-client-nonce").toString("base64url"),
+      publicKey: phone.publicKeySpki,
+      deviceHint: "pixel-test-phone",
+      platform: "android",
+      appVersion: "0.1.0",
+    }, secondSessionId, 0));
+    const secondReady = await next2("session.ready");
+    assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, secondReady).ok, true);
+
     const taskRequestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const taskFrame = signed(phone, "task.submit", {
       requestId: taskRequestId,
@@ -236,14 +259,23 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
       canonicalArguments: {},
       intent: "Read the PC system status",
     }, sessionId, 2);
-    await send(socket, taskFrame);
+    // Submit through the second live session while the first session remains
+    // connected. The result must be delivered to the submitting socket.
+    const secondTaskFrame = signed(phone, "task.submit", {
+      requestId: taskRequestId,
+      idempotencyKey: "remote-status-e2e-0001",
+      capability: "system_status",
+      canonicalArguments: {},
+      intent: "Read the PC system status",
+    }, secondSessionId, 1);
+    await send(socket2, secondTaskFrame);
 
-    const accepted = await next("task.accepted");
+    const accepted = await next2("task.accepted");
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, accepted).ok, true);
     const acceptedPayload = accepted.payload as Record<string, any>;
     assert.equal(acceptedPayload.requestId, taskRequestId);
 
-    const result = await next("task.result", 5000);
+    const result = await next2("task.result", 5000);
     assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, result).ok, true);
     const resultPayload = result.payload as Record<string, any>;
     assert.equal(resultPayload.taskId, acceptedPayload.taskId);
@@ -251,6 +283,22 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal(resultPayload.verification.status, "verified");
     assert.equal(resultPayload.result.platform, "win32");
     assert.equal(JSON.stringify(resultPayload).includes("privateDiagnostic"), false);
+
+    // A duplicate idempotency key returns the original durable task and
+    // replays its terminal result on the current submitting session.
+    await send(socket, signed(phone, "task.submit", {
+      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      idempotencyKey: "remote-status-e2e-0001",
+      capability: "system_status",
+      canonicalArguments: {},
+      intent: "Retry the same status read",
+    }, sessionId, 2));
+    const duplicateAccepted = await next("task.accepted");
+    assert.equal((duplicateAccepted.payload as Record<string, any>).taskId, acceptedPayload.taskId);
+    const duplicateResult = await next("task.result", 5000);
+    assert.equal(verifyRemoteEnvelopeSignature(pc.publicKey, duplicateResult).ok, true);
+    assert.equal((duplicateResult.payload as Record<string, any>).taskId, acceptedPayload.taskId);
+    assert.equal((duplicateResult.payload as Record<string, any>).status, "succeeded");
 
     // A reconnect asks for task IDs, not arbitrary device IDs. The server
     // restores only durable rows owned by the currently authenticated phone.
@@ -283,6 +331,7 @@ test("v2 WebSocket pairs a phone, authenticates it, executes a PC task and retur
     assert.equal((replayError.payload as Record<string, any>).code, "REPLAYED_MESSAGE");
   } finally {
     socket?.close();
+    socket2?.close();
     await gateway.stop();
     engine.close();
     await rm(directory, { recursive: true, force: true });
