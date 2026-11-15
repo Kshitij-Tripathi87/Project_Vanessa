@@ -124,7 +124,7 @@ export class MobileTaskEngine {
     });
   }
 
-  async submit(input: { requestId: string; idempotencyKey: string; tool: string; args: Record<string, unknown>; deviceId?: string }): Promise<{ taskId: string; requestId: string; acceptedAt: number; state: MobileTaskState; actionHash?: string; expiresAt?: number; summary?: string; duplicate: boolean }> {
+  async submit(input: { requestId: string; idempotencyKey: string; tool: string; args: Record<string, unknown>; deviceId?: string; onAccepted?: (taskId: string) => void }): Promise<{ taskId: string; requestId: string; acceptedAt: number; state: MobileTaskState; actionHash?: string; expiresAt?: number; summary?: string; duplicate: boolean }> {
     const deviceId = input.deviceId ?? "unknown";
     const found = this.db.prepare("SELECT task_id, request_id, created_at, state, action_hash, confirm_expires_at, tool, args_json FROM mobile_tasks WHERE device_id=? AND idempotency_key=?").get(deviceId, input.idempotencyKey) as any;
 
@@ -146,6 +146,7 @@ export class MobileTaskEngine {
       if (canonicalize(existingArgs) !== canonicalize(parsed.data)) {
         throw Object.assign(new Error("Idempotency key was already used for different arguments."), { code: "IDEMPOTENCY_CONFLICT" });
       }
+      input.onAccepted?.(found.task_id);
       return { taskId: found.task_id, requestId: found.request_id, acceptedAt: found.created_at, state: found.state, ...(found.action_hash ? { actionHash: found.action_hash } : {}), ...(found.confirm_expires_at ? { expiresAt: found.confirm_expires_at } : {}), ...(existingTool?.confirmSummary ? { summary: existingTool.confirmSummary(existingArgs) } : {}), duplicate: true };
     }
     const taskId = randomUUID();
@@ -158,6 +159,7 @@ export class MobileTaskEngine {
     this.db.prepare(`INSERT INTO mobile_tasks(task_id,request_id,idempotency_key,device_id,tool,args_json,tier,state,action_hash,confirm_expires_at,created_at,updated_at,transitions_json)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(taskId, input.requestId, input.idempotencyKey, deviceId, tool.name, safeArgs, tool.tier, initialState, actionHash ?? null, expiresAt ?? null, createdAt, createdAt, JSON.stringify(transitions));
     this.audit(taskId, input.requestId, input.deviceId, tool, parsed.data, initialState, "Task accepted.");
+    input.onAccepted?.(taskId);
     const record = { taskId, requestId: input.requestId, tool: tool.name, state: initialState, ...(actionHash ? { actionHash } : {}) };
     this.notify?.({ task: record, deviceId: input.deviceId });
     if (initialState === "queued") void this.execute(taskId, tool, parsed.data, input.deviceId);
