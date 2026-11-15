@@ -131,6 +131,29 @@ test("unattested devices cannot see or submit Tier-2 capabilities", async () => 
   });
 });
 
+test("attested Tier-2 capabilities remain hidden until a proof verifier is configured", async () => {
+  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
+  await withEngine([deleteTool()], async (engine) => {
+    const unavailable = new RemoteTaskService(engine, pairings(device));
+    assert.deepEqual(unavailable.manifestSnapshot(PHONE_KEY_ID).capabilities, []);
+    await assert.rejects(unavailable.submitTask(PHONE_KEY_ID, {
+      requestId,
+      idempotencyKey: "phone-delete-no-verifier-0001",
+      capability: "delete_file",
+      canonicalArguments: { path: "C:/Users/test/Downloads/report.pdf" },
+    }), { code: "PERMISSION_DENIED" });
+    assert.equal(engine.recentAudit().length, 0);
+
+    const ready = new RemoteTaskService(engine, pairings(device), {
+      verifyApprovalProof: async () => true,
+    });
+    assert.deepEqual(
+      ready.manifestSnapshot(PHONE_KEY_ID).capabilities.map((capability) => capability.name),
+      ["delete_file"],
+    );
+  });
+});
+
 test("task submission resolves device identity and permission scopes on the PC", async () => {
   const device = trustedDevice(["system.read"]);
   await withEngine([systemStatusTool()], async (engine) => {
@@ -290,7 +313,9 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
 test("an authenticated phone may deny its own pending approval without an approval proof", async () => {
   const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
   await withEngine([deleteTool()], async (engine) => {
-    const service = new RemoteTaskService(engine, pairings(device));
+    const service = new RemoteTaskService(engine, pairings(device), {
+      verifyApprovalProof: async () => true,
+    });
     const submission = await service.submitTask(PHONE_KEY_ID, {
       requestId,
       idempotencyKey: "phone-delete-request-2",
@@ -333,7 +358,9 @@ test("reconnect does not re-issue a Tier-2 approval after key attestation is no 
 test("reconnect does not re-issue a pending approval after its capability scope is revoked", async () => {
   const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
   await withEngine([deleteTool()], async (engine) => {
-    const service = new RemoteTaskService(engine, pairings(device));
+    const service = new RemoteTaskService(engine, pairings(device), {
+      verifyApprovalProof: async () => true,
+    });
     const submitted = await service.submitTask(PHONE_KEY_ID, {
       requestId,
       idempotencyKey: "phone-delete-recovery-scope-revoked",
