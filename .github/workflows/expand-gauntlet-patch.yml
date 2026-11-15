@@ -55,7 +55,7 @@ jobs:
           path.write_text(source.replace(old, new))
           runner = Path("evals/vanessa-gauntlet/run.mjs")
           runner_source = runner.read_text()
-          old_copy = "\\n".join([
+          old_copy = "\n".join([
               "  await mkdir(workspaceDir, { recursive: false });",
               "  await cp(pack.templatePath, workspaceDir, { recursive: true, errorOnExist: true, force: false });",
           ])
