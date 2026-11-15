@@ -1,0 +1,24 @@
+{
+  "schema": "vanessa.gauntlet.pack.v1",
+  "id": "build.expense-app.l1",
+  "level": "L1",
+  "title": "Expense application from a pre-wired starter",
+  "description": "Validate Vanessa's task supervision loop using a deliberately incomplete but pre-wired application template.",
+  "spec": "spec.md",
+  "template": "template",
+  "judge": "judge.mjs",
+  "requiredRuns": 5,
+  "expectedChecks": 7,
+  "maxHumanInterventions": 0,
+  "adapterTimeoutMs": 3600000,
+  "judgeTimeoutMs": 300000,
+  "protectedFiles": [
+    "package.json",
+    "test/app.test.mjs"
+  ],
+  "allowedPaths": [
+    "src/auth.mjs",
+    "src/expenses.mjs",
+    "src/dashboard.mjs"
+  ]
+}
