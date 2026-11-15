@@ -68,8 +68,7 @@ jobs:
           cores: 4
           disable-animations: true
           script: |
-            cd apps/android
-            ../../gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
+            cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
 
       - name: Upload Android UI test reports
         if: always()
