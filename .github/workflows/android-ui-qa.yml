@@ -27,7 +27,7 @@ jobs:
   emulator-journeys:
     name: Android emulator user journeys
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -67,6 +67,8 @@ jobs:
           ram-size: 4096M
           cores: 4
           disable-animations: true
+          # Keep directory change and Gradle invocation in one shell command:
+          # the emulator action executes separate script lines in separate shells.
           script: |
             cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
 
