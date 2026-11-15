@@ -3,7 +3,8 @@ name: Android UI QA (emulator)
 on:
   push:
     branches:
-      - feat/android-vanessa-frontend-prototype
+      - feat/remote-v2-authenticated-gateway
+      - main
     paths:
       - 'apps/android/**'
       - '.github/workflows/android-ui-qa.yml'
