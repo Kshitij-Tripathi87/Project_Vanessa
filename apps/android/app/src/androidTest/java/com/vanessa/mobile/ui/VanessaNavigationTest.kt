@@ -81,7 +81,7 @@ class VanessaNavigationTest {
         waitForHome()
 
         composeRule.onNodeWithText("My PC").performClick()
-        composeRule.onNodeWithText("Windows companion").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Windows companion")[0].assertIsDisplayed()
         composeRule.onNodeWithText("Pair with Windows").performClick()
         composeRule.onNodeWithText("Scan PC pairing code").assertIsDisplayed()
         composeRule.onNodeWithText(
