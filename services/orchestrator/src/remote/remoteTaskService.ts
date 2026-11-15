@@ -40,6 +40,7 @@ export type RemoteTaskServiceOptions = {
 export type RemoteTaskSubmission = {
   accepted: RemotePayloadFor<"task.accepted">;
   confirmationRequired?: RemotePayloadFor<"task.confirmation_required">;
+  duplicate: boolean;
 };
 
 const TIER_TO_STATE: Record<string, RemoteTaskState> = {
@@ -143,7 +144,7 @@ export class RemoteTaskService {
     };
   }
 
-  async submitTask(keyId: string, value: unknown): Promise<RemoteTaskSubmission> {
+  async submitTask(keyId: string, value: unknown, onTaskAccepted?: (taskId: string) => void): Promise<RemoteTaskSubmission> {
     const parsed = safeParseRemotePayload("task.submit", value);
     if (!parsed.success) serviceError("INVALID_PAYLOAD", "Task submission payload is invalid.");
 
@@ -163,6 +164,7 @@ export class RemoteTaskService {
       tool: capability.name,
       args: payload.canonicalArguments,
       deviceId: device.deviceId,
+      onAccepted: onTaskAccepted,
     });
 
     const accepted: RemotePayloadFor<"task.accepted"> = {
@@ -175,7 +177,7 @@ export class RemoteTaskService {
     };
 
     if (capability.tier !== "T2" || !submitted.actionHash || !submitted.expiresAt) {
-      return { accepted };
+      return { accepted, duplicate: submitted.duplicate };
     }
 
     const approval = {
@@ -195,6 +197,7 @@ export class RemoteTaskService {
     return {
       accepted,
       confirmationRequired: { approval, eventSeq: 0 },
+      duplicate: submitted.duplicate,
     };
   }
 
