@@ -115,7 +115,7 @@ test("manifest is derived from PC capabilities and filtered by the trusted devic
 });
 
 test("unattested devices cannot see or submit Tier-2 capabilities", async () => {
-  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
+  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: false };
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device));
     const manifest = service.manifestSnapshot(PHONE_KEY_ID);
@@ -331,7 +331,7 @@ test("reconnect does not re-issue a Tier-2 approval after key attestation is no 
 });
 
 test("reconnect does not re-issue a pending approval after its capability scope is revoked", async () => {
-  const device = trustedDevice(["files.delete"]);
+  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device));
     const submitted = await service.submitTask(PHONE_KEY_ID, {
