@@ -267,6 +267,15 @@ export class RemoteV2Gateway {
       });
     }
     await this.send(peer, "pairing.approved", approved, PRE_SESSION_ID);
+    if (peer.socket.readyState !== WebSocket.OPEN || peer.state !== "awaiting_pairing_approval") {
+      // send() may have been queued immediately before a concurrent close and
+      // then become a no-op. Revoke rather than persist trust the phone could
+      // not have received.
+      await this.options.pairings.revokeDevice(approved.deviceId);
+      throw Object.assign(new Error("The phone disconnected before receiving pairing approval. Start a fresh QR pairing."), {
+        code: "PAIRING_STATE_INVALID",
+      });
+    }
     peer.pendingPairingId = undefined;
     await this.beginHandshake(peer);
     return approved;
