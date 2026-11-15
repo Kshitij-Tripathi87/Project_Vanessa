@@ -576,9 +576,9 @@ export class RemoteV2Gateway {
         case "task.submit": {
           const submitted = await this.options.tasks.submitTask(peer.keyId, payload, (taskId) => {
             this.taskPeers.set(taskId, peer);
-            peer.acceptedTasks.add(taskId);
           });
           await this.send(peer, "task.accepted", submitted.accepted, peer.sessionId);
+          peer.acceptedTasks.add(submitted.accepted.taskId);
           if (submitted.confirmationRequired) {
             await this.send(peer, "task.confirmation_required", {
               ...submitted.confirmationRequired,
