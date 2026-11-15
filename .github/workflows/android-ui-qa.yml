@@ -64,12 +64,12 @@ jobs:
           arch: x86_64
           profile: pixel_2
           emulator-boot-timeout: 1200
-          ram-size: 2048M
-          cores: 2
+          ram-size: 4096M
+          cores: 4
           disable-animations: true
           script: |
             cd apps/android
-            ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
+            ../../gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
 
       - name: Upload Android UI test reports
         if: always()
