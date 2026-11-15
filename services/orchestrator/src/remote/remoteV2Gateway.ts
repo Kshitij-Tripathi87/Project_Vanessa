@@ -165,6 +165,7 @@ export class RemoteV2Gateway {
   private server?: WebSocketServer;
   private readonly connections = new Set<PeerConnection>();
   private readonly pairingConnections = new Map<string, PeerConnection>();
+  private readonly taskPeers = new Map<string, PeerConnection>();
   private readonly now: () => number;
 
   constructor(private readonly options: RemoteV2GatewayOptions) {
@@ -265,13 +266,16 @@ export class RemoteV2Gateway {
   /** Called after the task engine has committed a state transition and audit row. */
   publishTask(event: { task: MobileTaskRecord; deviceId?: string; ephemeralResult?: unknown }): void {
     if (!event.deviceId) return;
-    const peer = [...this.connections].find((candidate) => candidate.deviceId === event.deviceId && candidate.state === "ready");
-    if (!peer) return;
-    if (!peer.acceptedTasks.has(event.task.taskId)) {
-      peer.pendingTaskEvents.set(event.task.taskId, event);
-      return;
-    }
-    void this.publishTaskNow(peer, event).catch(() => this.closePeer(peer, 1011, "Task event delivery failed"));
+    // A task belongs to the authenticated socket that submitted it (or
+    // explicitly resumed it), not simply the first socket for that device.
+    const peer = this.taskPeers.get(event.task.taskId);
+    if (!peer || peer.deviceId !== event.deviceId || peer.state !== "ready" ||
+        peer.socket.readyState !== WebSocket.OPEN) return;
+    void this.publishTaskNow(peer, event).then(() => {
+      if (TERMINAL_STATES.has(event.task.state) && this.taskPeers.get(event.task.taskId) === peer) {
+        this.taskPeers.delete(event.task.taskId);
+      }
+    }).catch(() => this.closePeer(peer, 1011, "Task event delivery failed"));
   }
 
   private accept(socket: WebSocket): void {
@@ -525,8 +529,10 @@ export class RemoteV2Gateway {
           return;
         }
         case "task.submit": {
-          const submitted = await this.options.tasks.submitTask(peer.keyId, payload);
-          peer.acceptedTasks.add(submitted.accepted.taskId);
+          const submitted = await this.options.tasks.submitTask(peer.keyId, payload, (taskId) => {
+            this.taskPeers.set(taskId, peer);
+            peer.acceptedTasks.add(taskId);
+          });
           await this.send(peer, "task.accepted", submitted.accepted, peer.sessionId);
           if (submitted.confirmationRequired) {
             await this.send(peer, "task.confirmation_required", {
@@ -534,9 +540,17 @@ export class RemoteV2Gateway {
               eventSeq: ++peer.eventSeq,
             }, peer.sessionId);
           }
-          const pending = peer.pendingTaskEvents.get(submitted.accepted.taskId);
-          peer.pendingTaskEvents.delete(submitted.accepted.taskId);
-          if (pending) await this.publishTaskNow(peer, pending);
+          // Idempotent retries do not create a new engine event. Replay the
+          // durable current task state to the socket that made this retry.
+          if (submitted.duplicate) {
+            const existing = this.options.tasks.getTaskSnapshot(peer.keyId, submitted.accepted.taskId);
+            if (existing) {
+              await this.publishTaskNow(peer, { task: existing });
+              if (TERMINAL_STATES.has(existing.state) && this.taskPeers.get(existing.taskId) === peer) {
+                this.taskPeers.delete(existing.taskId);
+              }
+            }
+          }
           return;
         }
         case "task.cancel": {
@@ -554,6 +568,12 @@ export class RemoteV2Gateway {
             ? payload.activeTaskIds.filter((value): value is string => typeof value === "string").slice(0, 50)
             : [];
           const recovered = this.options.tasks.getTaskRecovery(peer.keyId, requestedIds);
+          for (const item of recovered) {
+            if (!TERMINAL_STATES.has(item.task.state)) {
+              this.taskPeers.set(item.task.taskId, peer);
+              peer.acceptedTasks.add(item.task.taskId);
+            }
+          }
           await this.send(peer, "sync.snapshot", {
             lastEventSeq: peer.eventSeq,
             // The current engine persists task state, but not the full event stream.
@@ -687,6 +707,9 @@ export class RemoteV2Gateway {
 
   private cleanupPeer(peer: PeerConnection): void {
     this.connections.delete(peer);
+    for (const [taskId, owner] of this.taskPeers) {
+      if (owner === peer) this.taskPeers.delete(taskId);
+    }
     if (peer.pendingPairingId && this.pairingConnections.get(peer.pendingPairingId) === peer) {
       this.pairingConnections.delete(peer.pendingPairingId);
     }
