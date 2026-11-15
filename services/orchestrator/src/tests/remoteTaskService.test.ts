@@ -102,7 +102,7 @@ const waitFor = async (check: () => boolean, timeoutMs = 1500): Promise<void> =>
 const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 test("manifest is derived from PC capabilities and filtered by the trusted device scopes", async () => {
-  const device = trustedDevice(["system.read"]);
+  const device = trustedDevice(["system.read", "files.delete"]);
   await withEngine([systemStatusTool(), deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device), { now: () => 1_800_000_000_000 });
     const manifest = service.manifestSnapshot(PHONE_KEY_ID);
@@ -111,6 +111,23 @@ test("manifest is derived from PC capabilities and filtered by the trusted devic
     assert.equal(manifest.capabilities[0].tier, "T0");
     assert.deepEqual(manifest.capabilities[0].scopes, ["system.read"]);
     assert.equal(manifest.generatedAt, 1_800_000_000_000);
+  });
+});
+
+test("unattested devices cannot see or submit Tier-2 capabilities", async () => {
+  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
+  await withEngine([deleteTool()], async (engine) => {
+    const service = new RemoteTaskService(engine, pairings(device));
+    const manifest = service.manifestSnapshot(PHONE_KEY_ID);
+    assert.deepEqual(manifest.capabilities, []);
+
+    await assert.rejects(service.submitTask(PHONE_KEY_ID, {
+      requestId,
+      idempotencyKey: "phone-delete-unattested-0001",
+      capability: "delete_file",
+      canonicalArguments: { path: "C:/Users/test/Downloads/report.pdf" },
+    }), { code: "PERMISSION_DENIED" });
+    assert.equal(engine.recentAudit().length, 0);
   });
 });
 
@@ -192,7 +209,7 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
     ...trustedDevice(["files.delete"]),
     approvalPublicKeySpki,
     approvalKeyId,
-    approvalKeyHardwareAttested: false,
+    approvalKeyHardwareAttested: true,
   };
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device), {
@@ -250,6 +267,9 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
       approvedAt,
       method: "biometric_strong",
     };
+    // A valid biometric signature is not accepted when the PC has not
+    // independently attested this enrolled key.
+    device.approvalKeyHardwareAttested = false;
     await assert.rejects(service.confirmTask(PHONE_KEY_ID, withoutProof), { code: "PERMISSION_DENIED" });
     await assert.rejects(service.confirmTask(PHONE_KEY_ID, forged), { code: "PERMISSION_DENIED" });
     // A valid signature is still insufficient until the PC has independently
@@ -268,7 +288,7 @@ test("destructive approval requires an enrolled action-bound ES256 biometric pro
 });
 
 test("an authenticated phone may deny its own pending approval without an approval proof", async () => {
-  const device = trustedDevice(["files.delete"]);
+  const device = { ...trustedDevice(["files.delete"]), approvalKeyHardwareAttested: true };
   await withEngine([deleteTool()], async (engine) => {
     const service = new RemoteTaskService(engine, pairings(device));
     const submission = await service.submitTask(PHONE_KEY_ID, {
