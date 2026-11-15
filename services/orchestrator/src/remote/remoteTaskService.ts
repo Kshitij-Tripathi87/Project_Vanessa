@@ -130,7 +130,10 @@ export class RemoteTaskService {
     const device = this.requireTrustedDevice(keyId);
     const granted = new Set(device.grantedScopes);
     const capabilities = this.engine.getRemoteCapabilities()
-      .filter((capability) => capability.scopes.every((scope) => granted.has(scope)));
+      .filter((capability) => capability.scopes.every((scope) => granted.has(scope)))
+      // Every T2 approval requires an independently attested biometric key.
+      // Hide capabilities that this PC is not currently able to authorize.
+      .filter((capability) => capability.tier !== "T2" || device.approvalKeyHardwareAttested === true);
     const manifestVersion = createHash("sha256")
       .update(canonicalize(capabilities), "utf8")
       .digest("hex")
@@ -152,6 +155,12 @@ export class RemoteTaskService {
     const payload = parsed.data;
     const capability = this.engine.getRemoteCapabilities().find((entry) => entry.name === payload.capability);
     if (!capability) serviceError("CAPABILITY_DISABLED", "The requested PC capability is not available.");
+    if (capability.tier === "T2" && device.approvalKeyHardwareAttested !== true) {
+      serviceError(
+        "PERMISSION_DENIED",
+        "Tier-2 remote capabilities are disabled until this PC independently verifies the phone's Android key attestation.",
+      );
+    }
 
     const granted = new Set(device.grantedScopes);
     if (!capability.scopes.every((scope) => granted.has(scope))) {
