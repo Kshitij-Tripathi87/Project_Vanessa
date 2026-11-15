@@ -82,7 +82,7 @@ function createFrameReader(socket: WebSocket) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const frame = await new Promise<Frame>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${type ?? "a remote frame"}`)), Math.max(1, deadline - Date.now()));
+        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${type ?? "a remote frame"}; queued frames: ${queued.map((frame) => frame.type).join(", ") || "none"}`)), Math.max(1, deadline - Date.now()));
         waiters.push((item) => { clearTimeout(timer); resolve(item); });
       });
       if (!type || frame.type === type) return frame;
