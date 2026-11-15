@@ -1,0 +1,44 @@
+name: Expand Vanessa Gauntlet patch
+
+on:
+  push:
+    branches:
+      - feat/vanessa-gauntlet-l1
+    paths:
+      - .github/workflows/expand-gauntlet-patch.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: expand-vanessa-gauntlet-{{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  expand-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the benchmark branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/vanessa-gauntlet-l1
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify and expand the reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip -dc evals/vanessa-gauntlet/artifacts/Vanessa_Gauntlet_L1.patch.gz > /tmp/Vanessa_Gauntlet_L1.patch
+          git apply --check /tmp/Vanessa_Gauntlet_L1.patch
+          git apply /tmp/Vanessa_Gauntlet_L1.patch
+          node --test evals/vanessa-gauntlet/tests/*.test.mjs
+          rm .github/workflows/expand-gauntlet-patch.yml
+          git add -A evals/vanessa-gauntlet IMPLEMENTATION_STATUS.md RESULTS_SUMMARY.json .github/workflows/expand-gauntlet-patch.yml
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "feat(eval): expand Vanessa Gauntlet L1 benchmark source"
+          git push origin HEAD:feat/vanessa-gauntlet-l1
