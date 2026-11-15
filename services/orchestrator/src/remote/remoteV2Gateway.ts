@@ -301,6 +301,12 @@ export class RemoteV2Gateway {
     const peer = this.taskPeers.get(event.task.taskId);
     if (!peer || peer.deviceId !== event.deviceId || peer.state !== "ready" ||
         peer.socket.readyState !== WebSocket.OPEN) return;
+    // The task engine can emit its first transition before submitTask returns.
+    // Buffer it until task.accepted has been written to this session.
+    if (!peer.acceptedTasks.has(event.task.taskId)) {
+      peer.pendingTaskEvents.set(event.task.taskId, event);
+      return;
+    }
     void this.publishTaskNow(peer, event).then(() => {
       if (TERMINAL_STATES.has(event.task.state) && this.taskPeers.get(event.task.taskId) === peer) {
         this.taskPeers.delete(event.task.taskId);
@@ -570,6 +576,9 @@ export class RemoteV2Gateway {
               eventSeq: ++peer.eventSeq,
             }, peer.sessionId);
           }
+          const pendingEvent = peer.pendingTaskEvents.get(submitted.accepted.taskId);
+          peer.pendingTaskEvents.delete(submitted.accepted.taskId);
+          if (pendingEvent) await this.publishTaskNow(peer, pendingEvent);
           // Idempotent retries do not create a new engine event. Replay the
           // durable current task state to the socket that made this retry.
           if (submitted.duplicate) {
