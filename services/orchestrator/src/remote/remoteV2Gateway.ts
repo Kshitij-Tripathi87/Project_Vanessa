@@ -140,17 +140,33 @@ function compactResult(capability: string, value: unknown): Record<string, unkno
     case "open_file":
       compact = { opened: result.launched === true };
       break;
-    case "set_volume":
-      compact = { changed: result.changed === true || result.success === true, ...(Number.isFinite(result.volumePercent) ? { volumePercent: result.volumePercent } : {}) };
+    case "set_volume": {
+      const requestedVolume = Number.isFinite(result.requestedVolume) ? result.requestedVolume : undefined;
+      const observedVolume = Number.isFinite(result.observedVolume) ? result.observedVolume : undefined;
+      compact = {
+        ...(requestedVolume !== undefined ? { requestedVolume } : {}),
+        ...(observedVolume !== undefined ? { observedVolume } : {}),
+        ...(requestedVolume !== undefined && observedVolume !== undefined
+          ? { matchesRequest: Math.abs(requestedVolume - observedVolume) <= 1 }
+          : {}),
+      };
       break;
+    }
     case "media_control":
-      compact = { completed: result.completed === true || result.success === true };
+      // This capability verifies that Windows accepted the media-key event;
+      // it cannot claim the player actually changed playback state.
+      compact = { sent: result.sent === true };
       break;
     case "lock_pc":
       compact = { locked: result.locked === true || result.success === true };
       break;
     case "take_screenshot":
-      compact = { captured: result.captured === true || result.success === true };
+      // The image bytes must never cross this transport's compact-result path.
+      compact = {
+        captured: result.mimeType === "image/jpeg" && typeof result.data === "string" && result.data.length > 0,
+        ...(Number.isFinite(result.width) ? { width: result.width } : {}),
+        ...(Number.isFinite(result.height) ? { height: result.height } : {}),
+      };
       break;
   }
   return compact ? JSON.parse(JSON.stringify(compact)) as Record<string, unknown> : undefined;
@@ -231,14 +247,28 @@ export class RemoteV2Gateway {
   }
 
   async approvePairing(pairingId: string, grantedScopes: string[]) {
-    const approved = await this.options.pairings.approve(pairingId, grantedScopes, this.now());
+    // Do not persist a trusted device when the phone has already disconnected
+    // from the one-time approval handshake. Otherwise its client never receives
+    // the pairing grant and cannot resume authentication with the saved PC pin.
     const peer = this.pairingConnections.get(pairingId);
-    this.pairingConnections.delete(pairingId);
-    if (peer && peer.socket.readyState === WebSocket.OPEN && peer.state === "awaiting_pairing_approval") {
-      await this.send(peer, "pairing.approved", approved, PRE_SESSION_ID);
-      peer.pendingPairingId = undefined;
-      await this.beginHandshake(peer);
+    if (!peer || peer.socket.readyState !== WebSocket.OPEN || peer.state !== "awaiting_pairing_approval") {
+      throw Object.assign(new Error("The phone disconnected before pairing approval. Start a fresh QR pairing."), {
+        code: "PAIRING_STATE_INVALID",
+      });
     }
+    const approved = await this.options.pairings.approve(pairingId, grantedScopes, this.now());
+    this.pairingConnections.delete(pairingId);
+    if (peer.socket.readyState !== WebSocket.OPEN || peer.state !== "awaiting_pairing_approval") {
+      // A disconnect raced the durable registry write. Revoke the just-created
+      // trust record so an approval the phone never received cannot be used.
+      await this.options.pairings.revokeDevice(approved.deviceId);
+      throw Object.assign(new Error("The phone disconnected during pairing approval. Start a fresh QR pairing."), {
+        code: "PAIRING_STATE_INVALID",
+      });
+    }
+    await this.send(peer, "pairing.approved", approved, PRE_SESSION_ID);
+    peer.pendingPairingId = undefined;
+    await this.beginHandshake(peer);
     return approved;
   }
 
