@@ -1,5 +1,4 @@
 <resources>
-    <!-- Base application theme -->
     <style name="Theme.Vanessa" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/vanessa_primary</item>
         <item name="colorPrimaryVariant">@color/vanessa_primary_variant</item>
@@ -14,12 +13,12 @@
         <item name="colorSurfaceVariant">@color/vanessa_surface_variant</item>
         <item name="colorOnSurface">@color/vanessa_on_surface</item>
         <item name="colorOutline">@color/vanessa_outline</item>
-
         <item name="android:windowBackground">@color/vanessa_background</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@color/vanessa_background</item>
+        <item name="android:navigationBarColor">@color/vanessa_background</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 
     <style name="Theme.Vanessa.Fullscreen" parent="Theme.Vanessa">
