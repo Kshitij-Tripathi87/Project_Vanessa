@@ -317,8 +317,10 @@ export class RemoteV2Gateway {
       return;
     }
     void this.publishTaskNow(peer, event).then(() => {
-      if (TERMINAL_STATES.has(event.task.state) && this.taskPeers.get(event.task.taskId) === peer) {
-        this.taskPeers.delete(event.task.taskId);
+      if (TERMINAL_STATES.has(event.task.state)) {
+        peer.acceptedTasks.delete(event.task.taskId);
+        peer.pendingTaskEvents.delete(event.task.taskId);
+        if (this.taskPeers.get(event.task.taskId) === peer) this.taskPeers.delete(event.task.taskId);
       }
     }).catch(() => this.closePeer(peer, 1011, "Task event delivery failed"));
   }
@@ -589,9 +591,11 @@ export class RemoteV2Gateway {
           peer.pendingTaskEvents.delete(submitted.accepted.taskId);
           if (pendingEvent) {
             await this.publishTaskNow(peer, pendingEvent);
-            if (TERMINAL_STATES.has(pendingEvent.task.state) &&
-                this.taskPeers.get(pendingEvent.task.taskId) === peer) {
-              this.taskPeers.delete(pendingEvent.task.taskId);
+            if (TERMINAL_STATES.has(pendingEvent.task.state)) {
+              peer.acceptedTasks.delete(pendingEvent.task.taskId);
+              if (this.taskPeers.get(pendingEvent.task.taskId) === peer) {
+                this.taskPeers.delete(pendingEvent.task.taskId);
+              }
             }
           }
           // Idempotent retries do not create a new engine event. Replay the
@@ -600,8 +604,10 @@ export class RemoteV2Gateway {
             const existing = this.options.tasks.getTaskSnapshot(peer.keyId, submitted.accepted.taskId);
             if (existing) {
               await this.publishTaskNow(peer, { task: existing });
-              if (TERMINAL_STATES.has(existing.state) && this.taskPeers.get(existing.taskId) === peer) {
-                this.taskPeers.delete(existing.taskId);
+              if (TERMINAL_STATES.has(existing.state)) {
+                peer.acceptedTasks.delete(existing.taskId);
+                peer.pendingTaskEvents.delete(existing.taskId);
+                if (this.taskPeers.get(existing.taskId) === peer) this.taskPeers.delete(existing.taskId);
               }
             }
           }
