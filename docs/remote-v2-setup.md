@@ -11,6 +11,22 @@ This guide describes the current authenticated protocol-v2 connection. The PC li
 
 The PC backend runs `tailscale ip -4` and verifies that the returned address is assigned to a non-loopback network interface and is in the Tailscale CGNAT range (100.64.0.0/10). If it cannot verify the address, the remote listener stays offline.
 
+## Windows Firewall
+
+The app binds only to the verified Tailscale IPv4 address on TCP port 4321. Windows Defender Firewall must also allow inbound traffic on that exact local address. From an elevated PowerShell session, run:
+
+```powershell
+.\scripts\setup-vanessa-tailscale.ps1
+```
+
+The script reads the address from `tailscale ip -4`, verifies it is in `100.64.0.0/10` and assigned locally, then creates one inbound TCP rule scoped to that local address and the Tailscale peer range. Tailnet ACLs/grants must still limit which devices may connect. No LAN/wildcard rule, port forwarding, Tailscale Serve, or Funnel configuration is created.
+
+To remove the rule:
+
+```powershell
+.\scripts\setup-vanessa-tailscale.ps1 -Remove
+```
+
 ## Start the remote listener
 
 1. Start Tailscale on both devices and confirm they show as connected in the same tailnet.
