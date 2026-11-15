@@ -95,7 +95,7 @@ function taskState(state: string): RemoteTaskState {
   return states[state] ?? "unknown";
 }
 
-function compactResult(capability: string, value: unknown): Record<string, unknown> | undefined {
+export function compactRemoteResult(capability: string, value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const result = value as Record<string, any>;
   let compact: Record<string, unknown> | undefined;
@@ -622,7 +622,7 @@ export class RemoteV2Gateway {
             const state = item.snapshot.state;
             if (!["succeeded", "failed", "cancelled", "timed_out"].includes(state)) continue;
             const succeeded = state === "succeeded";
-            const compact = compactResult(item.task.tool, item.task.result);
+            const compact = compactRemoteResult(item.task.tool, item.task.result);
             await this.send(peer, "task.result", {
               taskId: item.task.taskId,
               status: succeeded ? "succeeded" : state === "cancelled" ? "cancelled" : state === "timed_out" ? "timed_out" : "failed",
@@ -676,7 +676,7 @@ export class RemoteV2Gateway {
     const eventSeq = ++peer.eventSeq;
     if (TERMINAL_STATES.has(task.state)) {
       const succeeded = task.state === "done";
-      const result = compactResult(task.tool, task.result ?? event.ephemeralResult);
+      const result = compactRemoteResult(task.tool, task.result ?? event.ephemeralResult);
       await this.send(peer, "task.result", {
         taskId: task.taskId,
         status: succeeded ? "succeeded" : task.state === "cancelled" ? "cancelled" : task.state === "timed_out" ? "timed_out" : "failed",
