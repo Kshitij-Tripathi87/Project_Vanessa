@@ -67,7 +67,11 @@ export class Narrator {
    * or a message was sent from the action name or an agent-authored summary.
    */
   narrateVerifiedSuccess(tasks: Task[], language: string = "en", sentiment?: any): string {
-    const prefix = sentiment?.urgency === "critical" ? "Urgent update: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
+    const prefix = language === "hi"
+      ? sentiment?.urgency === "critical" ? "Zaroori soochna: " : sentiment?.emotion === "frustrated" ? "Samajh gaya. " : ""
+      : language === "hinglish"
+        ? sentiment?.urgency === "critical" ? "Important update: " : sentiment?.emotion === "frustrated" ? "Samajh gaya. " : ""
+        : sentiment?.urgency === "critical" ? "Urgent update: " : sentiment?.emotion === "frustrated" ? "Understood. " : "";
     const verifiedTasks = tasks.filter((task) =>
       task.status === "success" && task.verification?.verified === true
     );
@@ -88,6 +92,16 @@ export class Narrator {
       return detail || `${task.action.replace(/[._]/g, " ")} passed verification`;
     });
 
+    // We do not have a trusted translation layer for arbitrary verifier text.
+    // For Hindi/Hinglish requests, use a localized, evidence-faithful count
+    // instead of switching to English or inventing a translation.
+    if (language === "hi") {
+      return `${prefix}${verifiedTasks.length} कार्यों का सत्यापन सफल रहा।`;
+    }
+    if (language === "hinglish") {
+      return `${prefix}${verifiedTasks.length} actions ka verification successful raha.`;
+    }
+
     const uniqueDetails = [...new Set(details)].slice(0, 4);
     const remaining = details.length - uniqueDetails.length;
     const suffix = remaining > 0 ? `; ${remaining} additional action(s) verified` : "";
@@ -103,6 +117,7 @@ export class Narrator {
     // Strip file paths, JWTs, and long technical strings
     const clean = redacted
       .replace(/[A-Za-z]:\\[\w\-\\]+/g, "local folder")
+      .replace(/(^|[\s"'(])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?=$|[\s,;)"'])/g, "$1local file")
       .replace(/https?:\/\/[^\s]+/g, "link")
       .replace(/\b((?:api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED_SECRET]")
       .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|nvapi-[A-Za-z0-9_-]{12,}|hf_[A-Za-z0-9]{12,})\b/g, "[REDACTED_SECRET]")
