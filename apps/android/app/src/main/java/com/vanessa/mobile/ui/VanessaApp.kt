@@ -681,10 +681,13 @@ private fun SettingsScreen(
         }
 
         SettingsSection("WINDOWS CONNECTION") {
-            SettingsValue("Paired PC", "None")
-            Text("Authenticated Windows pairing is not enabled in this prototype build.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = { onNavigate("PAIRING") }) {
-                Text("Open pairing")
+            SettingsValue("Connection management", "Available from My PC")
+            Text(
+                "Pair or reconnect from My PC to use the authenticated Windows connection. New phones require approval on the Windows PC.",
+                color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium,
+            )
+            TextButton(onClick = { onNavigate("PC") }) {
+                Text("Manage Windows connection")
                 Spacer(Modifier.width(6.dp))
                 Icon(Icons.Outlined.ChevronRight, contentDescription = null)
             }
