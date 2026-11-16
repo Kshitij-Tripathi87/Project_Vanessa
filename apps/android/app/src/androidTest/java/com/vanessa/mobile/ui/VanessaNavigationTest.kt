@@ -3,10 +3,8 @@ package com.vanessa.mobile.ui
 import android.Manifest
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertNotNull
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.fetchSemanticsNodes
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -39,7 +37,7 @@ class VanessaNavigationTest {
 
     private fun waitForHome() {
         composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText("How can I help?").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("How can I help?").fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
         }
     }
 
@@ -55,8 +53,8 @@ class VanessaNavigationTest {
 
         // The simplified prototype intentionally removes setup/import and
         // capabilities catalogue screens.
-        composeRule.onNodeWithText("Import GGUF").assertDoesNotExist()
-        composeRule.onNodeWithText("Capabilities").assertDoesNotExist()
+        composeRule.onAllNodesWithText("Import GGUF").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Capabilities").assertCountEquals(0)
     }
 
     @Test
