@@ -49,7 +49,7 @@ class VanessaNavigationTest {
         composeRule.onNodeWithText("How can I help?").assertIsDisplayed()
         composeRule.onNodeWithText("MY DEVICES").assertIsDisplayed()
         composeRule.onNodeWithText("On device").assertIsDisplayed()
-        composeRule.onNodeWithText("My PC").assertIsDisplayed()
+        composeRule.onAllNodesWithText("My PC").assertCountEquals(2)
         composeRule.onNodeWithText("No local model detected").assertIsDisplayed()
 
         // The simplified prototype intentionally removes setup/import and
@@ -79,7 +79,7 @@ class VanessaNavigationTest {
     fun pcDashboardShowsTheRealRemoteControlEntryPoint() {
         waitForHome()
 
-        composeRule.onNodeWithText("My PC").performClick()
+        composeRule.onAllNodesWithText("My PC")[0].performClick()
         composeRule.onAllNodesWithText("Windows companion")[0].assertIsDisplayed()
         composeRule.onNodeWithText("Pair with Windows").performClick()
         composeRule.onNodeWithText("Scan PC pairing code").assertIsDisplayed()
@@ -111,10 +111,9 @@ class VanessaNavigationTest {
     fun settingsIsReachableAndScrollable() {
         waitForHome()
 
-        composeRule.onNodeWithContentDescription("Open navigation menu").performClick()
-        composeRule.onNodeWithText("Settings").performClick()
+        composeRule.onNodeWithContentDescription("Settings navigation").performClick()
 
-        composeRule.onNodeWithText("Settings").assertIsDisplayed()
+        composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL MODEL").assertIsDisplayed()
         composeRule.onNodeWithText("VOICE").assertIsDisplayed()
         composeRule.onNodeWithText("THIS DEVICE").performScrollTo()
