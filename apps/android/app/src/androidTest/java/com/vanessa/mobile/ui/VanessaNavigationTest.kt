@@ -114,10 +114,10 @@ class VanessaNavigationTest {
         composeRule.onNodeWithContentDescription("Settings navigation").performClick()
 
         composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
-        composeRule.onNodeWithText("Connection management").assertIsDisplayed()
-        composeRule.onNodeWithText("Manage Windows connection").assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL MODEL").assertIsDisplayed()
         composeRule.onNodeWithText("VOICE").assertIsDisplayed()
+        composeRule.onNodeWithText("Connection management").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Manage Windows connection").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("THIS DEVICE").performScrollTo()
         composeRule.onNodeWithText("ABOUT").performScrollTo()
         composeRule.onNodeWithText("Vanessa Android").performScrollTo().assertIsDisplayed()
