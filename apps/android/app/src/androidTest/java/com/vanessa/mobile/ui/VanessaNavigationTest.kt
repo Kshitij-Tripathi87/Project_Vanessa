@@ -3,6 +3,7 @@ package com.vanessa.mobile.ui
 import android.Manifest
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertNotNull
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
