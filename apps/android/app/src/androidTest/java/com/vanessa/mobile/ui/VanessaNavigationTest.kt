@@ -114,6 +114,8 @@ class VanessaNavigationTest {
         composeRule.onNodeWithContentDescription("Settings navigation").performClick()
 
         composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
+        composeRule.onNodeWithText("Connection management").assertIsDisplayed()
+        composeRule.onNodeWithText("Manage Windows connection").assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL MODEL").assertIsDisplayed()
         composeRule.onNodeWithText("VOICE").assertIsDisplayed()
         composeRule.onNodeWithText("THIS DEVICE").performScrollTo()
