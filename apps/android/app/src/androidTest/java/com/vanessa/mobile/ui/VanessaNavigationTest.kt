@@ -95,7 +95,7 @@ class VanessaNavigationTest {
         val monitor = instrumentation.addMonitor(RemoteControlActivity::class.java.name, null, false)
 
         try {
-            composeRule.onNodeWithText("My PC").performClick()
+            composeRule.onAllNodesWithText("My PC")[0].performClick()
             composeRule.onNodeWithText("Pair with Windows").performClick()
             composeRule.onNodeWithText("Scan PC pairing code").performClick()
 
