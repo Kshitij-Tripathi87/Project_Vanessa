@@ -2,7 +2,7 @@ name: Agent Workflow CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -62,6 +62,14 @@ jobs:
       - name: Test verified spoken outcome summaries
         run: pnpm --filter @vanessa/orchestrator test:narrator
 
+      - name: Test authenticated v2 pairing, WebSocket gateway, task delivery, and idempotency
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/remotePairingRegistry.test.ts src/tests/remoteTaskService.test.ts src/tests/mobileTaskEngine.test.ts src/tests/remoteGatewayMode.test.ts src/remote/remoteV2Gateway.test.ts
+
+
+
+      - name: Test verified spoken outcome summaries
+        run: pnpm --filter @vanessa/orchestrator test:narrator
+
       - name: Test authenticated v2 pairing, task adapter, and idempotency
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/remotePairingRegistry.test.ts src/tests/remoteTaskService.test.ts src/tests/mobileTaskEngine.test.ts
 
@@ -89,8 +97,8 @@ jobs:
       - name: Build desktop renderer and Electron main process
         run: pnpm --filter @vanessa/desktop build
 
-      - name: Test desktop docking, preferences, identity vault, and runtime config
-        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts ../../apps/desktop/src/main/remotePcIdentityStore.test.ts ../../apps/desktop/src/main/runtimeConfig.test.ts
+      - name: Test desktop docking, preferences, identity vault, signer bridge, and runtime config
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts ../../apps/desktop/src/main/remotePcIdentityStore.test.ts ../../apps/desktop/src/main/remotePcSignerServer.test.ts ../../apps/desktop/src/main/runtimeConfig.test.ts
 
       - name: Test local wake-word routing and PCM framing
         run: pnpm --filter @vanessa/voice-agent exec tsx --test src/session/wakeWord.test.ts

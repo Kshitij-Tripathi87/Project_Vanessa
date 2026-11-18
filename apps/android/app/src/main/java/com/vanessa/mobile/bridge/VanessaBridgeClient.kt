@@ -1,7 +1,7 @@
 package com.vanessa.mobile.bridge
 
 import io.ktor.client.*
-import io.ktor.client.engine.android.*
+import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
@@ -62,7 +62,7 @@ data class PairingGrant(
 class VanessaBridgeClient @Inject constructor() {
     private val TAG = "VanessaBridge"
 
-    private val client = HttpClient(Android) {
+    private val client = HttpClient(CIO) {
         install(WebSockets) {
             pingInterval = 30_000 // 30 seconds
         }

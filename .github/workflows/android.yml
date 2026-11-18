@@ -2,6 +2,8 @@ name: Android foundation
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'apps/android/**'
       - 'scripts/fetch-llama-cpp.sh'
@@ -27,6 +29,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      # The emulator journeys are slow, so catch typo'd selectors and UI that is
+      # declared but never composed here instead of 20 minutes into the UI QA job.
+      - name: Check instrumented UI selectors match rendered semantics
+        run: node scripts/check-android-ui-contract.cjs
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -72,9 +79,27 @@ jobs:
             --no-daemon \
             -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp"
 
+      - name: Verify biometric approval uses the Keystore CryptoObject
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          store = Path("apps/android/app/src/main/java/com/vanessa/mobile/identity/AndroidRemoteApprovalKeyStore.kt").read_text()
+          activity = Path("apps/android/app/src/main/java/com/vanessa/mobile/ui/RemoteControlActivity.kt").read_text()
+          assert "BiometricPrompt.CryptoObject(signature)" in store
+          callback_start = store.index("override fun onAuthenticationSucceeded")
+          returned_signature = store.index("result.cryptoObject?.signature", callback_start)
+          assert returned_signature > callback_start
+          assert "result.cryptoObject?.signature" not in activity
+          assert "authenticatedSignature.update(" in activity
+          assert "authenticatedSignature.sign()" in activity
+          print("Biometric approval is cryptographically bound to the Android Keystore CryptoObject.")
+          PY
+
       - name: Upload verified development APK
         uses: actions/upload-artifact@v4
         with:
           name: vanessa-android-debug-arm64
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+

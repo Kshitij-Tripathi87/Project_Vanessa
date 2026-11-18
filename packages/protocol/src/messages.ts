@@ -464,6 +464,9 @@ const PairingClaimPayload = z
     code: z.string().min(10).max(64).regex(/^[A-Za-z0-9-]+$/),
     publicKey: Base64UrlSchema.min(46).max(400),
     keyId: z.string().min(16).max(64).regex(/^[A-Za-z0-9_-]+$/),
+    /** Optional separate Android Keystore identity protected by strong biometrics. */
+    approvalPublicKey: Base64UrlSchema.min(46).max(400).optional(),
+    approvalKeyId: z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
     deviceHint: DeviceHintSchema,
     platform: PlatformSchema,
     appVersion: z.string().min(1).max(40),
@@ -598,8 +601,12 @@ const TaskConfirmationResponsePayload = z
     actionHash: HexSha256Schema,
     decision: z.enum(["approved", "denied"]),
     approvedAt: EpochMsSchema,
-    /** Method used to authorize, e.g. `biometric_strong` or `pc_local`. */
+    /** Remote approval requires a separate biometric-bound signature. */
     method: z.string().min(3).max(40),
+    approvalProof: z.object({
+      keyId: z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/),
+      signature: Base64UrlSchema.min(80).max(200),
+    }).strict().optional(),
   })
   .strict();
 

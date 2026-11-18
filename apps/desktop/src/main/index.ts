@@ -4,8 +4,14 @@ import fs from "node:fs";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
+import { RemotePcIdentityStore } from "./remotePcIdentityStore.js";
+import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
+import { RemotePcSignerServer } from "./remotePcSignerServer.js";
+import { RemotePairingWindowController } from "./remotePairingWindowController.js";
 
 let mainWindow: BrowserWindow | null = null;
+let remotePcSignerServer: RemotePcSignerServer | null = null;
+let remotePairingWindowController: RemotePairingWindowController | null = null;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -83,8 +89,34 @@ app.disableHardwareAcceleration();
 
 app.whenReady().then(async () => {
   if (app.isPackaged && process.platform === "win32") {
+    loadUserEnvironment();
+    // Keep the long-lived PC identity inside Electron main. The orchestrator
+    // child receives only a random loopback signing capability and public key.
     try {
-      loadUserEnvironment();
+      const remoteStateDirectory = path.join(app.getPath("userData"), "remote-v2");
+      const identityStore = new RemotePcIdentityStore(
+        path.join(remoteStateDirectory, "pc-identity.json"),
+        new ElectronPcIdentityEncryption(),
+      );
+      remotePcSignerServer = new RemotePcSignerServer(identityStore);
+      const signer = await remotePcSignerServer.start();
+      process.env.VANESSA_PC_SIGNER_URL = signer.url;
+      process.env.VANESSA_PC_SIGNER_TOKEN = signer.token;
+      process.env.VANESSA_PC_KEY_ID = signer.keyId;
+      process.env.VANESSA_PC_PUBLIC_KEY_SPKI = signer.publicKeySpki;
+      process.env.VANESSA_PC_FINGERPRINT = signer.fingerprint;
+      process.env.VANESSA_REMOTE_STATE_DIR = remoteStateDirectory;
+      process.env.VANESSA_REMOTE_V2_ENABLED = "true";
+      process.env.VANESSA_REMOTE_V2_PORT = process.env.VANESSA_REMOTE_V2_PORT || "4321";
+    } catch (error) {
+      process.env.VANESSA_REMOTE_V2_ENABLED = "false";
+      console.error("[Vanessa Remote v2] OS-backed PC identity is unavailable; pairing is disabled:", error);
+    }
+
+    // Never switch back to the legacy HMAC/secret WebSocket gateway.
+    process.env.VANESSA_MOBILE_GATEWAY_ENABLED = "false";
+    process.env.VANESSA_MOBILE_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE = "false";
+    try {
       await startPackagedServices();
     } catch (error) {
       console.error("[Vanessa Runtime] Packaged backend startup failed:", error);
@@ -93,6 +125,23 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+  remotePairingWindowController = new RemotePairingWindowController();
+  const pairingShortcutRegistered = globalShortcut.register("CommandOrControl+Shift+P", () => {
+    void remotePairingWindowController?.open().catch((error) => {
+      console.error("[Vanessa Remote Pairing] Could not open pairing window:", error);
+    });
+  });
+  if (!pairingShortcutRegistered) {
+    console.warn("[Vanessa Remote Pairing] Could not register Ctrl/Cmd+Shift+P.");
+  }
+  const revokeShortcutRegistered = globalShortcut.register("CommandOrControl+Shift+R", () => {
+    void remotePairingWindowController?.manageTrustedDevices().catch((error) => {
+      console.error("[Vanessa Remote Pairing] Could not manage trusted devices:", error);
+    });
+  });
+  if (!revokeShortcutRegistered) {
+    console.warn("[Vanessa Remote Pairing] Could not register Ctrl/Cmd+Shift+R.");
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -106,6 +155,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  remotePairingWindowController?.close();
+  remotePairingWindowController = null;
   stopPackagedServices();
+  void remotePcSignerServer?.stop();
+  remotePcSignerServer = null;
   globalShortcut.unregisterAll();
 });

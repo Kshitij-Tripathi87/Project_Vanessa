@@ -1,0 +1,107 @@
+name: Android UI QA (emulator)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-ui-qa.yml'
+  pull_request:
+    branches:
+      - main
+      - feat/remote-v2-authenticated-gateway
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-ui-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ui-qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator-journeys:
+    name: Android emulator user journeys
+    # GitHub-hosted Ubuntu runners expose /dev/kvm, which the emulator action can
+    # use once the KVM udev rule below is applied. The previous macOS runner never
+    # booted the API 35 arm64 AVD (every run failed with "Timeout waiting for
+    # emulator to boot"), so the UI journeys never actually executed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+
+      # The runner user is not in the "kvm" group, so /dev/kvm is root:kvm 0660
+      # and the emulator would fall back to unaccelerated software emulation.
+      - name: Enable KVM group permissions
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is not present on this runner; hardware acceleration is unavailable."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm -a -w /dev/kvm
+
+      - name: Install Android test platform
+        run: |
+          sdkmanager --install \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'system-images;android-35;google_apis;x86_64'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run UI journeys on a clean Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          # Keep the fail-fast ceiling well under the job timeout so a broken
+          # image reports "timeout" instead of an ambiguous cancellation.
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          cores: 4
+          # A GPU mode is required even headless: without one the emulator cannot
+          # bring up the system UI and never reports boot_completed.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          # Keep directory change and Gradle invocation in one shell command:
+          # the emulator action executes separate script lines in separate shells.
+          script: |
+            cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Upload Android UI test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanessa-android-emulator-ui-test-reports
+          path: |
+            apps/android/app/build/reports/androidTests/connected/**
+            apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: warn
