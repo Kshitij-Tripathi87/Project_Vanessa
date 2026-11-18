@@ -26,8 +26,11 @@ concurrency:
 jobs:
   emulator-journeys:
     name: Android emulator user journeys
-    # Use a native Apple Silicon hypervisor; the hosted Ubuntu VM has no usable KVM.
-    runs-on: macos-15
+    # GitHub-hosted Ubuntu runners expose /dev/kvm, which the emulator action can
+    # use once the KVM udev rule below is applied. The previous macOS runner never
+    # booted the API 35 arm64 AVD (every run failed with "Timeout waiting for
+    # emulator to boot"), so the UI journeys never actually executed.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -47,12 +50,27 @@ jobs:
           accept-android-sdk-licenses: 'true'
           log-accepted-android-sdk-licenses: 'false'
 
+      # The runner user is not in the "kvm" group, so /dev/kvm is root:kvm 0660
+      # and the emulator would fall back to unaccelerated software emulation.
+      - name: Enable KVM group permissions
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is not present on this runner; hardware acceleration is unavailable."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm -a -w /dev/kvm
+
       - name: Install Android test platform
         run: |
           sdkmanager --install \
             'platforms;android-35' \
             'build-tools;35.0.0' \
-            'system-images;android-35;google_apis;arm64-v8a'
+            'system-images;android-35;google_apis;x86_64'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -62,12 +80,16 @@ jobs:
         with:
           api-level: 35
           target: google_apis
-          arch: arm64-v8a
+          arch: x86_64
           profile: pixel_2
-          emulator-boot-timeout: 1200
+          # Keep the fail-fast ceiling well under the job timeout so a broken
+          # image reports "timeout" instead of an ambiguous cancellation.
+          emulator-boot-timeout: 900
           ram-size: 4096M
           cores: 4
-          emulator-options: -no-snapshot -no-window -noaudio -no-boot-anim
+          # A GPU mode is required even headless: without one the emulator cannot
+          # bring up the system UI and never reports boot_completed.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           # Keep directory change and Gradle invocation in one shell command:
           # the emulator action executes separate script lines in separate shells.

@@ -49,6 +49,8 @@ class VanessaNavigationTest {
         composeRule.onNodeWithText("How can I help?").assertIsDisplayed()
         composeRule.onNodeWithText("MY DEVICES").assertIsDisplayed()
         composeRule.onNodeWithText("On device").assertIsDisplayed()
+        // Device row plus navigation tab. The closed "Open navigation menu"
+        // dropdown contributes no nodes until it is expanded.
         composeRule.onAllNodesWithText("My PC").assertCountEquals(2)
         composeRule.onNodeWithText("No local model detected").assertIsDisplayed()
 
@@ -111,6 +113,11 @@ class VanessaNavigationTest {
     fun settingsIsReachableAndScrollable() {
         waitForHome()
 
+        // Regression guard: the settings tab used to exist only as unreachable
+        // dead code, so this assertion is what keeps the navigation bar wired
+        // into the app shell. Pairing deliberately hides the bar, so Settings
+        // must be reachable from the other destinations.
+        composeRule.onNodeWithContentDescription("Settings navigation").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Settings navigation").performClick()
 
         composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
@@ -124,5 +131,9 @@ class VanessaNavigationTest {
         composeRule.onNodeWithText("ABOUT").performScrollTo()
         composeRule.onNodeWithText("Vanessa Android").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Development prototype").performScrollTo().assertIsDisplayed()
+
+        // The bar is persistent chrome, so it must survive every destination.
+        composeRule.onNodeWithContentDescription("Home navigation").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("My PC navigation").assertIsDisplayed()
     }
 }

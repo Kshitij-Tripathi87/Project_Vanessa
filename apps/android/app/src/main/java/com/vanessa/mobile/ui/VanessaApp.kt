@@ -167,6 +167,13 @@ internal fun VanessaApp(
                         )
                     }
                 }
+                // Settings is a first-class destination, so the shell (not an
+                // individual screen) owns the persistent navigation bar. Before
+                // this, BottomNavigation was never composed and the only way to
+                // Settings was the small icon on Home.
+                if (destination != "PAIRING") {
+                    BottomNavigation(destination, onNavigate)
+                }
             }
         }
     }
@@ -778,6 +785,9 @@ private fun NavigationItem(
             .semantics { contentDescription = "$label navigation" },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        // The descriptor only belongs to the icon; the visible label is a
+        // separate node so TalkBack announces both and UI tests can either
+        // target the labelled tab or match the visible text.
         Icon(icon, contentDescription = null, tint = if (selected) VanessaPalette.Brand else VanessaPalette.TextSecondary, modifier = Modifier.size(22.dp))
         Text(label, color = if (selected) VanessaPalette.TextPrimary else VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
     }

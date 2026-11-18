@@ -30,6 +30,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # The emulator journeys are slow, so catch typo'd selectors and UI that is
+      # declared but never composed here instead of 20 minutes into the UI QA job.
+      - name: Check instrumented UI selectors match rendered semantics
+        run: node scripts/check-android-ui-contract.cjs
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
