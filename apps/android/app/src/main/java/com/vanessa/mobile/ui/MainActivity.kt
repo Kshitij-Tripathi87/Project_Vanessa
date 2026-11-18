@@ -296,14 +296,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun chooseModel(expectedSha256: String) {
-        if (modelImportBusy) return
+        if (modelImportBusy || assistantBusy) {
+            modelImportMessage = "Finish the current local task before replacing the model."
+            return
+        }
         pendingModelChecksum = expectedSha256.trim().takeIf { it.isNotEmpty() }
         modelImportMessage = "Choose a GGUF file. The selected file is verified before installation."
         requestModelDocument.launch(arrayOf("*/*"))
     }
 
     private fun importModel(uri: Uri, expectedSha256: String?) {
-        if (modelImportBusy) return
+        if (modelImportBusy || assistantBusy) {
+            modelImportMessage = "Finish the current local task before replacing the model."
+            return
+        }
         modelImportBusy = true
         modelBusy = true
         modelImportMessage = "Copying and validating the selected GGUF file…"

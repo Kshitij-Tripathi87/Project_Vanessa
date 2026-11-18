@@ -115,9 +115,9 @@ class VanessaNavigationTest {
 
         composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL MODEL").assertIsDisplayed()
-        composeRule.onNodeWithText("Expected SHA-256 (optional)").assertIsDisplayed()
-        composeRule.onNodeWithText("Import GGUF").assertIsDisplayed()
-        composeRule.onNodeWithText("VOICE").assertIsDisplayed()
+        composeRule.onNodeWithText("Expected SHA-256 (optional)").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Import GGUF").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("VOICE").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Connection management").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Manage Windows connection").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("THIS DEVICE").performScrollTo()
