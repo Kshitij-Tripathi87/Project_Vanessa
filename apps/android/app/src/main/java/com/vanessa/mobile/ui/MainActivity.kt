@@ -334,29 +334,41 @@ class MainActivity : ComponentActivity() {
                             modelLoaded = false
                             modelStatus = "The GGUF was imported and validated, but the native inference runtime is unavailable on this device."
                             modelImportMessage = "Imported and validated. $checksumStatus SHA-256: ${imported.sha256}"
+                        } else if (result.alreadyInstalled && engine.isModelLoaded) {
+                            modelLoaded = true
+                            modelStatus = "The installed local model is already loaded."
+                            modelImportMessage = "This exact model was already installed and is loaded. $checksumStatus SHA-256: ${imported.sha256}"
                         } else {
-                            val device = withContext(Dispatchers.IO) { profiler.snapshot() }
-                            val modelSizeMb = imported.bytes / (1024L * 1024L)
-                            val requiredRamMb = maxOf(1024L, modelSizeMb + 512L)
-                            if (device.ramAvailableMb < requiredRamMb) {
-                                if (engine.isModelLoaded) {
-                                    withContext(Dispatchers.IO) { engine.close() }
-                                    inference = null
-                                }
+                            // Replacing a loaded model must release its memory before
+                            // the new model's conservative RAM gate is evaluated.
+                            if (engine.isModelLoaded) {
+                                withContext(Dispatchers.IO) { engine.close() }
+                                inference = null
                                 modelLoaded = false
-                                modelStatus = "The GGUF is installed, but loading was skipped because available memory is below the safe startup threshold ($requiredRamMb MB required)."
-                                modelImportMessage = "Imported and validated, but not loaded because available memory is too low. $checksumStatus SHA-256: ${imported.sha256}"
-                            } else if (result.alreadyInstalled && engine.isModelLoaded) {
-                                modelLoaded = true
-                                modelStatus = "The installed local model is already loaded."
-                                modelImportMessage = "This exact model was already installed and is loaded. $checksumStatus SHA-256: ${imported.sha256}"
+                            }
+
+                            val loadEngine = localInference()
+                            inferenceAvailable = loadEngine.isAvailable
+                            if (!loadEngine.isAvailable) {
+                                modelLoaded = false
+                                modelStatus = "The GGUF was imported, but the native inference runtime is unavailable on this device."
+                                modelImportMessage = "Imported and validated. The native runtime is unavailable. SHA-256: ${imported.sha256}"
                             } else {
-                                modelStatus = "Loading the imported local model…"
-                                withContext(Dispatchers.IO) { engine.loadModel(File(imported.path)) }
-                                modelLoaded = engine.isModelLoaded
-                                check(modelLoaded) { "The native runtime did not confirm that the imported model loaded." }
-                                modelStatus = "The imported local model is loaded and ready for inference."
-                                modelImportMessage = "Imported, validated, and loaded successfully. $checksumStatus SHA-256: ${imported.sha256}"
+                                val device = withContext(Dispatchers.IO) { profiler.snapshot() }
+                                val modelSizeMb = imported.bytes / (1024L * 1024L)
+                                val requiredRamMb = maxOf(1024L, modelSizeMb + 512L)
+                                if (device.ramAvailableMb < requiredRamMb) {
+                                    modelLoaded = false
+                                    modelStatus = "The GGUF is installed, but loading was skipped because available memory is below the safe startup threshold ($requiredRamMb MB required)."
+                                    modelImportMessage = "Imported and validated, but not loaded because available memory is too low. $checksumStatus SHA-256: ${imported.sha256}"
+                                } else {
+                                    modelStatus = "Loading the imported local model…"
+                                    withContext(Dispatchers.IO) { loadEngine.loadModel(File(imported.path)) }
+                                    modelLoaded = loadEngine.isModelLoaded
+                                    check(modelLoaded) { "The native runtime did not confirm that the imported model loaded." }
+                                    modelStatus = "The imported local model is loaded and ready for inference."
+                                    modelImportMessage = "Imported, validated, and loaded successfully. $checksumStatus SHA-256: ${imported.sha256}"
+                                }
                             }
                         }
 
