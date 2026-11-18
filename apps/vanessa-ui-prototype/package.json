@@ -1,0 +1,14 @@
+{
+  "name": "vanessa-ui-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vanessa UI — responsive, animated frontend prototype. No build step: static ES modules served as-is.",
+  "scripts": {
+    "start": "python3 -m http.server 8080 --bind 0.0.0.0",
+    "test": "node test/flow.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^31.0.1"
+  }
+}
