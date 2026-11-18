@@ -1,4 +1,4 @@
-# Vanessa Android — UI prototype
+# Vanessa Android — local-first companion
 
 The Android launcher uses a local-first Compose interface with a restrained dark visual system, a state-aware Vanessa orb, scrollable feature screens, and explicit runtime status. The UI is organized around the user's primary flow rather than a catalog of setup cards.
 
@@ -9,14 +9,14 @@ The Android launcher uses a local-first Compose interface with a restrained dark
 3. **Voice Interaction** — provides explicit on-device speech input and a typed fallback. Responses are shown as text; speech output is offered only when an offline TTS voice is available.
 4. **Windows Pairing** — presents the pairing requirements and current implementation boundary.
 5. **My PC** — shows the unpaired state until an authenticated companion connection is available.
-6. **Settings** — reports model, voice, permissions, device, and build state.
+6. **Settings** — reports model, voice, permissions, device, and build state; imports and validates local GGUF model files.
 
-There is no onboarding flow, model-import screen, capabilities catalog, or biometric-approval screen in this UI prototype. Settings is a separate destination. The home, voice, PC, pairing, and settings pages use vertical scrolling for narrow devices and large text.
+There is no onboarding flow or general capabilities catalogue in this initial release. Settings is a separate destination and includes the model-import workflow. The home, voice, PC, pairing, and settings pages use vertical scrolling for narrow devices and large text.
 
 ## Runtime truth and current boundaries
 
-- **Model detection:** the app checks the existing app-private `files/models/installed.gguf` location on startup. If the file is valid and the native runtime is present, Vanessa attempts to load it automatically when available memory is above the conservative startup threshold. The UI shows the detected filename, size, computed SHA-256 prefix, and actual runtime/load state.
-- **No import flow:** users are not prompted to browse for a GGUF file. Model weights are not embedded in the APK. If the expected app-private model file has not been provisioned, the app reports that no model is active and does not run an inference request.
+- **Model detection and import:** the app checks `files/models/installed.gguf` on startup. Settings lets the user select a GGUF through Android's document picker. Vanessa streams the selected file into app-private storage, enforces size and storage limits, validates the GGUF magic/header version, computes SHA-256, and atomically replaces the installed file only after validation succeeds. An optional expected SHA-256 must match the selected file. The validator does not inspect every tensor or establish model-publisher authenticity; use a checksum from a trusted source when one is available.
+- **Model activation:** after import, Vanessa loads the model only when the native runtime is available and the conservative memory check passes. The UI distinguishes imported, loaded, unavailable-runtime, and insufficient-memory states. A failed validation or interrupted copy does not replace the previous installed model. Model weights are not embedded in the APK.
 - **Local voice:** speech input uses Android's on-device recognizer only, after microphone permission is granted. If the system does not provide an on-device recognizer, typed input remains available. Speech output is enabled only for an installed TTS voice that reports no network requirement.
 - **Phone tools:** the local planner is restricted to the existing device-status and calendar adapters. Calendar permission is requested only when the planner requires it.
 - **Windows remote control:** the launcher opens the authenticated protocol-v2 remote-control screen. Scan the one-time QR payload displayed by Vanessa on the PC. The Android client pins the PC identity and uses signed P-256 messages; new phones require local approval on the PC. The app requires `INTERNET` and `ACCESS_NETWORK_STATE`, and the PC listener remains restricted to its verified Tailscale interface.

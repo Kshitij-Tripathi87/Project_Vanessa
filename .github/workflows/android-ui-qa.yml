@@ -27,7 +27,8 @@ concurrency:
 jobs:
   emulator-journeys:
     name: Android emulator user journeys
-    runs-on: ubuntu-latest
+    # Use a native Apple Silicon hypervisor; the hosted Ubuntu VM has no usable KVM.
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -52,7 +53,7 @@ jobs:
           sdkmanager --install \
             'platforms;android-35' \
             'build-tools;35.0.0' \
-            'system-images;android-35;google_apis;x86_64'
+            'system-images;android-35;google_apis;arm64-v8a'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -62,11 +63,12 @@ jobs:
         with:
           api-level: 35
           target: google_apis
-          arch: x86_64
+          arch: arm64-v8a
           profile: pixel_2
           emulator-boot-timeout: 1200
           ram-size: 4096M
           cores: 4
+          emulator-options: -no-snapshot -no-window -noaudio -no-boot-anim
           disable-animations: true
           # Keep directory change and Gradle invocation in one shell command:
           # the emulator action executes separate script lines in separate shells.

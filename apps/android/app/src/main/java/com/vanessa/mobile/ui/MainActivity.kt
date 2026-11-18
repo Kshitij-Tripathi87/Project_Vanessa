@@ -5,6 +5,7 @@ import ai.vanessa.agent.LocalPlanError
 import ai.vanessa.agent.LocalPlanOutcome
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -54,6 +55,9 @@ class MainActivity : ComponentActivity() {
     private var voiceListening by mutableStateOf(false)
     private var microphonePermissionGranted by mutableStateOf(false)
     private var pairingNotice by mutableStateOf<String?>(null)
+    private var modelImportBusy by mutableStateOf(false)
+    private var modelImportMessage by mutableStateOf("Models are stored privately on this device. Select a GGUF file to install it.")
+    private var pendingModelChecksum: String? = null
 
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
     private val calendarTool by lazy { CalendarSearchTool(applicationContext) }
@@ -83,6 +87,17 @@ class MainActivity : ComponentActivity() {
             else {
                 voiceListening = false
                 speechInputStatus = "Microphone permission denied. You can type your request instead."
+            }
+        }
+
+    private val requestModelDocument =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val expectedChecksum = pendingModelChecksum
+            pendingModelChecksum = null
+            if (uri == null) {
+                modelImportMessage = "Model selection cancelled."
+            } else {
+                importModel(uri, expectedChecksum)
             }
         }
 
@@ -127,6 +142,8 @@ class MainActivity : ComponentActivity() {
                     onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                     voiceListening = voiceListening,
                     microphonePermissionGranted = microphonePermissionGranted,
+                    modelImportBusy = modelImportBusy,
+                    modelImportMessage = modelImportMessage,
                     pairingNotice = pairingNotice,
                     onNavigate = { target ->
                         destination = runCatching { VanessaDestination.valueOf(target) }
@@ -139,6 +156,7 @@ class MainActivity : ComponentActivity() {
                     onStopSpeech = ::stopSpeechInput,
                     onSpeakResponse = ::speakAssistantResponse,
                     onRefresh = ::refreshProfile,
+                    onImportModel = ::chooseModel,
                     onStartPairing = {
                         pairingNotice = null
                         startActivity(Intent(this, RemoteControlActivity::class.java))
@@ -277,6 +295,94 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun chooseModel(expectedSha256: String) {
+        if (modelImportBusy) return
+        pendingModelChecksum = expectedSha256.trim().takeIf { it.isNotEmpty() }
+        modelImportMessage = "Choose a GGUF file. The selected file is verified before installation."
+        requestModelDocument.launch(arrayOf("*/*"))
+    }
+
+    private fun importModel(uri: Uri, expectedSha256: String?) {
+        if (modelImportBusy) return
+        modelImportBusy = true
+        modelBusy = true
+        modelImportMessage = "Copying and validating the selected GGUF file…"
+
+        lifecycleScope.launch {
+            try {
+                when (val result = withContext(Dispatchers.IO) {
+                    modelManager.importModel(uri, expectedSha256)
+                }) {
+                    is com.vanessa.mobile.model.ModelImportResult.Success -> {
+                        val imported = result.model
+                        installedModel = imported
+                        val engine = localInference()
+                        inferenceAvailable = engine.isAvailable
+                        val checksumStatus = if (!expectedSha256.isNullOrBlank()) {
+                            "Expected SHA-256 matched."
+                        } else {
+                            "SHA-256 calculated; no expected checksum was supplied."
+                        }
+
+                        if (!engine.isAvailable) {
+                            modelLoaded = false
+                            modelStatus = "The GGUF was imported and validated, but the native inference runtime is unavailable on this device."
+                            modelImportMessage = "Imported and validated. $checksumStatus SHA-256: ${imported.sha256}"
+                        } else {
+                            val device = withContext(Dispatchers.IO) { profiler.snapshot() }
+                            val modelSizeMb = imported.bytes / (1024L * 1024L)
+                            val requiredRamMb = maxOf(1024L, modelSizeMb + 512L)
+                            if (device.ramAvailableMb < requiredRamMb) {
+                                if (engine.isModelLoaded) {
+                                    withContext(Dispatchers.IO) { engine.close() }
+                                    inference = null
+                                }
+                                modelLoaded = false
+                                modelStatus = "The GGUF is installed, but loading was skipped because available memory is below the safe startup threshold ($requiredRamMb MB required)."
+                                modelImportMessage = "Imported and validated, but not loaded because available memory is too low. $checksumStatus SHA-256: ${imported.sha256}"
+                            } else if (result.alreadyInstalled && engine.isModelLoaded) {
+                                modelLoaded = true
+                                modelStatus = "The installed local model is already loaded."
+                                modelImportMessage = "This exact model was already installed and is loaded. $checksumStatus SHA-256: ${imported.sha256}"
+                            } else {
+                                modelStatus = "Loading the imported local model…"
+                                withContext(Dispatchers.IO) { engine.loadModel(File(imported.path)) }
+                                modelLoaded = engine.isModelLoaded
+                                check(modelLoaded) { "The native runtime did not confirm that the imported model loaded." }
+                                modelStatus = "The imported local model is loaded and ready for inference."
+                                modelImportMessage = "Imported, validated, and loaded successfully. $checksumStatus SHA-256: ${imported.sha256}"
+                            }
+                        }
+
+                        profile = withContext(Dispatchers.IO) {
+                            profiler.snapshot().copy(
+                                inferenceRuntimeInstalled = inferenceAvailable,
+                                modelLoadVerified = modelLoaded,
+                            )
+                        }
+                    }
+                    is com.vanessa.mobile.model.ModelImportResult.Failure -> {
+                        modelImportMessage = "Import failed: ${result.reason}. The previous installed model was not replaced."
+                    }
+                    com.vanessa.mobile.model.ModelImportResult.Cancelled -> {
+                        modelImportMessage = "Model import cancelled. The previous installed model was not replaced."
+                    }
+                }
+            } catch (error: Exception) {
+                modelLoaded = inference?.isModelLoaded == true
+                modelStatus = if (modelLoaded) {
+                    "The previously loaded model remains available."
+                } else {
+                    "The model is installed, but the native runtime could not load it."
+                }
+                modelImportMessage = "Model import/load failed: ${error.message ?: "unknown error"}"
+            } finally {
+                modelBusy = false
+                modelImportBusy = false
+            }
+        }
+    }
+
     private fun requestSpeechInput() {
         if (!onDeviceSpeechAvailable) {
             speechInputStatus = "No on-device recognizer is available. Type your request instead."
@@ -311,6 +417,10 @@ class MainActivity : ComponentActivity() {
         val task = request.trim()
         if (task.isEmpty()) {
             assistantResponse = "Enter a request or use the microphone."
+            return
+        }
+        if (modelBusy) {
+            assistantResponse = "The local model is being installed or loaded. Try again when that operation finishes."
             return
         }
         if (!modelLoaded) {

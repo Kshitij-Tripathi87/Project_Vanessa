@@ -48,11 +48,6 @@ class ModelManager(
                 return ModelImportResult.Failure("Select a content URI using the document picker")
             }
             val expected = expectedSha256?.let(GgufModelValidator::normalizeSha256)
-            if (expected != null) {
-                installedModel()?.takeIf { it.sha256 == expected }?.let {
-                    return ModelImportResult.Success(it, alreadyInstalled = true)
-                }
-            }
             val directory = modelDir
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Cannot create model directory")
             val declaredBytes = context.contentResolver.query(

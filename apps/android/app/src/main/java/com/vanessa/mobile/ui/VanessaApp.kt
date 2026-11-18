@@ -117,6 +117,8 @@ internal fun VanessaApp(
     onDeviceSpeechAvailable: Boolean,
     voiceListening: Boolean,
     microphonePermissionGranted: Boolean,
+    modelImportBusy: Boolean,
+    modelImportMessage: String,
     pairingNotice: String?,
     onNavigate: (String) -> Unit,
     onPromptChange: (String) -> Unit,
@@ -125,6 +127,7 @@ internal fun VanessaApp(
     onStopSpeech: () -> Unit,
     onSpeakResponse: () -> Unit,
     onRefresh: () -> Unit,
+    onImportModel: (String) -> Unit,
     onStartPairing: () -> Unit,
     onDismissPairingNotice: () -> Unit,
 ) {
@@ -154,7 +157,8 @@ internal fun VanessaApp(
                         "SETTINGS" -> SettingsScreen(
                             inset, profile, model, modelStatus, inferenceAvailable, modelLoaded,
                             speechReady, speechStatus, speechInputStatus, onDeviceSpeechAvailable,
-                            microphonePermissionGranted, onNavigate, onRefresh,
+                            microphonePermissionGranted, modelImportBusy, modelImportMessage,
+                            onNavigate, onRefresh, onImportModel,
                         )
                         else -> HomeScreen(
                             inset, profile, model, modelStatus, modelLoaded, modelBusy,
@@ -296,7 +300,7 @@ private fun HomeScreen(
             )
             Button(
                 onClick = { onNavigate("VOICE"); onRunAssistant() },
-                enabled = modelLoaded && !assistantBusy && prompt.isNotBlank(),
+                enabled = modelLoaded && !modelBusy && !assistantBusy && prompt.isNotBlank(),
                 modifier = Modifier.size(54.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
@@ -451,7 +455,7 @@ private fun VoiceScreen(
                     Text(if (voiceListening) "Stop listening" else "Speak")
                 }
                 Button(
-                    onClick = onRunAssistant, enabled = modelLoaded && !assistantBusy && prompt.isNotBlank(),
+                    onClick = onRunAssistant, enabled = modelLoaded && !modelBusy && !assistantBusy && prompt.isNotBlank(),
                     modifier = Modifier.size(54.dp), shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Send request") }
@@ -615,13 +619,17 @@ private fun SettingsScreen(
     speechInputStatus: String,
     onDeviceSpeechAvailable: Boolean,
     microphonePermissionGranted: Boolean,
+    modelImportBusy: Boolean,
+    modelImportMessage: String,
     onNavigate: (String) -> Unit,
     onRefresh: () -> Unit,
+    onImportModel: (String) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val versionName = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.1.0"
     }.getOrDefault("0.1.0")
+    var expectedModelSha256 by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -654,6 +662,35 @@ private fun SettingsScreen(
             Text(
                 "The installed model is detected and loaded automatically when the device has sufficient memory. Model weights are not bundled in the APK.",
                 color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall,
+            )
+            OutlinedTextField(
+                value = expectedModelSha256,
+                onValueChange = { if (it.length <= 64) expectedModelSha256 = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Expected SHA-256 (optional)") },
+                placeholder = { Text("64-character checksum") },
+                singleLine = true,
+                enabled = !modelImportBusy,
+                shape = RoundedCornerShape(12.dp),
+            )
+            Button(
+                onClick = { onImportModel(expectedModelSha256.trim()) },
+                enabled = !modelImportBusy,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
+            ) {
+                Text(if (modelImportBusy) "Importing model…" else "Import GGUF")
+            }
+            Text(
+                "Choose a .gguf file. Vanessa copies it to app-private storage, validates its GGUF header, computes SHA-256, and checks the optional expected checksum.",
+                color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall,
+            )
+            Text(
+                modelImportMessage,
+                color = if (modelImportMessage.startsWith("Import failed") || modelImportMessage.contains("failed", ignoreCase = true))
+                    VanessaPalette.Error else VanessaPalette.TextSecondary,
+                style = MaterialTheme.typography.labelSmall,
             )
         }
 
