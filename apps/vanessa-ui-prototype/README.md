@@ -5,10 +5,21 @@ A running, responsive frontend for Vanessa, built to the reference designs in
 dependencies: static ES modules served as-is.
 
 ```bash
-npm start          # serve on http://0.0.0.0:8080
-npm install        # only needed for `npm test`
-npm test           # headless flow test (jsdom)
+# serve the prototype
+python3 -m http.server 8080 --bind 0.0.0.0
+
+# headless flow test (jsdom)
+cd test && npm install jsdom && cd ..
+node test/flow.mjs
 ```
+
+There is deliberately **no `package.json` here.** The repo is a pnpm
+monorepo whose `pnpm-workspace.yaml` claims `apps/*`, so a `package.json` in
+this directory would make the prototype a workspace member and break
+`pnpm install --frozen-lockfile` in every CI job until the root lockfile was
+regenerated. Adding a dev-only dependency here is not worth invalidating the
+lockfile for the whole monorepo, so the test installs its one dependency
+directly.
 
 ## Screens
 
@@ -95,7 +106,7 @@ never runs, a composer that does not submit, and screens whose copy does not
 survive `textContent` (a real defect found this way — `<br />` joining words
 with no space breaks screen readers and copy/paste).
 
-Run it with `npm install && npm test`.
+Run it with `node test/flow.mjs`, after `npm install jsdom` in `test/`.
 
 `test/showcase.png` and `test/orb-render.png` are **rendered from the real
 `js/orb.js` and `js/waves.js`** through a Canvas 2D backend, not drawn by hand.
