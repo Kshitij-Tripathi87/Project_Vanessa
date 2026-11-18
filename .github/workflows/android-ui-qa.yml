@@ -3,8 +3,6 @@ name: Android UI QA (emulator)
 on:
   push:
     branches:
-      - feat/remote-v2-authenticated-gateway
-      - fix/android-ui-qa-compose-test-apis
       - main
     paths:
       - 'apps/android/**'
@@ -12,6 +10,7 @@ on:
   pull_request:
     branches:
       - main
+      - feat/remote-v2-authenticated-gateway
     paths:
       - 'apps/android/**'
       - '.github/workflows/android-ui-qa.yml'
