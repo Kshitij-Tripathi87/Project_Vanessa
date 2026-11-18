@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#03050A" />
+<meta name="description" content="Vanessa — voice and chat AI assistant interface prototype" />
+<title>Vanessa — UI Prototype</title>
+<link rel="stylesheet" href="css/tokens.css" />
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+<!-- Icon sprite: single source for every glyph in the UI -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4.2 2.9 7.7 7 9 4.1-1.3 7-4.8 7-9V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2c.7 0 1.4.3 1.9.8L12 7h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M7 10a5 5 0 0 1 10 0c0 4 1.5 5.5 1.5 5.5H5.5S7 14 7 10Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 19a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 3.5v4M16 3.5v4M3.5 10h17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-pc" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2 19h20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h13M12 5.5 18.5 12 12 18.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h13M12.5 6 18.5 12l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H6M11.5 6 5.5 12l6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.8v2.4M12 18.8v2.4M4.5 7.5l2 1.2M17.5 15.3l2 1.2M4.5 16.5l2-1.2M17.5 8.7l2-1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m4 7.5 8 5.5 8-5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+</svg>
+
+<div class="ambient" aria-hidden="true">
+  <canvas id="ambient-canvas"></canvas>
+</div>
+
+<div class="shell">
+  <main class="device" id="device">
+    <div class="statusbar" aria-hidden="true">
+      <span class="statusbar__time" id="clock">9:41</span>
+      <span class="statusbar__icons">
+        <svg viewBox="0 0 18 12" width="17" height="11"><path d="M1 9h2v2H1zM5 6.5h2V11H5zM9 4h2v7H9zM13 1.5h2V11h-2z" fill="currentColor"/></svg>
+        <svg viewBox="0 0 16 12" width="16" height="12"><path d="M8 10.2 5.6 7.8a3.4 3.4 0 0 1 4.8 0L8 10.2ZM8 5.4a6.6 6.6 0 0 0-4.7 1.9L1.6 5.6a9 9 0 0 1 12.8 0l-1.7 1.7A6.6 6.6 0 0 0 8 5.4Z" fill="currentColor"/></svg>
+        <svg viewBox="0 0 26 12" width="25" height="12"><rect x="0.6" y="0.6" width="21" height="10.8" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5"/><rect x="2.4" y="2.4" width="15" height="7.2" rx="1.8" fill="currentColor"/><path d="M23.4 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <!-- ══════════ 1 · WELCOME ══════════ -->
+    <section class="screen screen--welcome is-active" data-screen="welcome" aria-label="Welcome">
+      <canvas class="orb-canvas" data-orb="hero" data-size="0.62" aria-hidden="true"></canvas>
+      <canvas class="wave-canvas" data-waves="hero" aria-hidden="true"></canvas>
+      <div class="welcome__copy">
+        <h1 class="display">Vanessa</h1>
+        <p class="lede" id="greeting">Good evening</p>
+        <span class="hairline" aria-hidden="true"></span>
+      </div>
+      <div class="dock">
+        <button class="btn btn--primary" data-go="onboarding">
+          <svg class="btn__icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+          <span>Get Started</span>
+          <svg class="btn__icon" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+        </button>
+        <p class="hint">Swipe up to continue</p>
+      </div>
+    </section>
+
+    <!-- ══════════ 2 · ONBOARDING ══════════ -->
+    <section class="screen" data-screen="onboarding" aria-label="Introduction">
+      <header class="topbar">
+        <button class="iconbtn" data-go="welcome" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+        <button class="textbtn" data-go="permissions">Skip</button>
+      </header>
+      <div class="stack stack--tight">
+        <h2 class="title">Your Personal <br />AI Assistant</h2>
+        <p class="sub">Talk. Plan. Get it done.</p>
+      </div>
+      <canvas class="orb-canvas orb-canvas--mid" data-orb="onboard" data-size="0.42" aria-hidden="true"></canvas>
+      <canvas class="wave-canvas wave-canvas--band" data-waves="band" aria-hidden="true"></canvas>
+      <ul class="cards">
+        <li class="card card--row">
+          <span class="chip chip--glass"><svg><use href="#i-mic"/></svg></span>
+          <span class="card__text"><strong>Voice-first interaction</strong><em>Just speak naturally.</em></span>
+        </li>
+        <li class="card card--row">
+          <span class="chip chip--glass"><svg><use href="#i-bolt"/></svg></span>
+          <span class="card__text"><strong>Smart automation</strong><em>Let Vanessa handle it.</em></span>
+        </li>
+        <li class="card card--row">
+          <span class="chip chip--glass"><svg><use href="#i-shield"/></svg></span>
+          <span class="card__text"><strong>Your privacy, always</strong><em>On-device &amp; secure.</em></span>
+        </li>
+      </ul>
+      <div class="dots" data-dots="3" aria-hidden="true"></div>
+      <div class="dock">
+        <button class="btn btn--primary" data-go="permissions">
+          <span>Continue</span>
+          <svg class="btn__icon" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- ══════════ 3 · PERMISSIONS ══════════ -->
+    <section class="screen" data-screen="permissions" aria-label="Permissions">
+      <header class="topbar">
+        <button class="iconbtn" data-go="onboarding" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+        <span class="stepper" aria-hidden="true"><i></i></span>
+      </header>
+      <div class="stack stack--tight">
+        <h2 class="title">Allow Permissions</h2>
+        <p class="sub">To provide the best experience, <br />Vanessa needs a few permissions.</p>
+      </div>
+      <div class="orbit">
+        <canvas class="orb-canvas orb-canvas--orbit" data-orb="perm" data-size="0.42" aria-hidden="true"></canvas>
+        <span class="orbit__node orbit__node--tl"><svg><use href="#i-mic"/></svg></span>
+        <span class="orbit__node orbit__node--tr"><svg><use href="#i-folder"/></svg></span>
+        <span class="orbit__node orbit__node--bl"><svg><use href="#i-bell"/></svg></span>
+        <span class="orbit__node orbit__node--br"><svg><use href="#i-pin"/></svg></span>
+      </div>
+      <ul class="cards cards--tight" id="permission-list">
+        <li class="card card--row card--perm">
+          <span class="chip chip--glass"><svg><use href="#i-mic"/></svg></span>
+          <span class="card__text"><strong>Microphone</strong><em>For voice interaction</em></span>
+          <button class="toggle is-on" role="switch" aria-checked="true" aria-label="Microphone"><i></i></button>
+        </li>
+        <li class="card card--row card--perm">
+          <span class="chip chip--glass"><svg><use href="#i-folder"/></svg></span>
+          <span class="card__text"><strong>File Access</strong><em>To help with your files</em></span>
+          <button class="toggle is-on" role="switch" aria-checked="true" aria-label="File access"><i></i></button>
+        </li>
+        <li class="card card--row card--perm">
+          <span class="chip chip--glass"><svg><use href="#i-bell"/></svg></span>
+          <span class="card__text"><strong>Notifications</strong><em>For important updates</em></span>
+          <button class="toggle" role="switch" aria-checked="false" aria-label="Notifications"><i></i></button>
+        </li>
+      </ul>
+      <div class="dock">
+        <button class="btn btn--primary" data-go="chat"><span>Allow All</span></button>
+        <button class="btn btn--bare" data-go="chat">Not now</button>
+      </div>
+    </section>
+
+    <!-- ══════════ 4 · CHAT ══════════ -->
+    <section class="screen" data-screen="chat" aria-label="Assistant">
+      <header class="topbar topbar--chat">
+        <button class="iconbtn iconbtn--bare" data-go="settings" aria-label="Open menu"><svg><use href="#i-menu"/></svg></button>
+        <button class="eqbtn" data-listen aria-label="Start voice interaction">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 8v8M16 4v16M20 9v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="chat" id="chat-scroll">
+        <div class="chat__thread" id="thread" aria-live="polite"></div>
+      </div>
+      <canvas class="wave-canvas wave-canvas--ambient" data-waves="ambient" aria-hidden="true"></canvas>
+      <form class="composer" id="composer">
+        <button type="button" class="composer__grid" data-go="settings" aria-label="Apps"><svg><use href="#i-grid"/></svg></button>
+        <input id="message" name="message" type="text" placeholder="Type a message…" autocomplete="off" aria-label="Message Vanessa" />
+        <button type="button" class="composer__send" id="send" aria-label="Send message"><svg><use href="#i-send"/></svg></button>
+      </form>
+    </section>
+
+    <!-- ══════════ 5 · LISTENING ══════════ -->
+    <section class="screen screen--focus" data-screen="listening" aria-label="Listening">
+      <header class="topbar">
+        <span class="eqbtn is-live" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 8v8M16 4v16M20 9v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        <button class="iconbtn iconbtn--bare" data-go="chat" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <div class="stack stack--tight">
+        <h2 class="title">I’m listening…</h2>
+      </div>
+      <canvas class="orb-canvas" data-orb="listen" data-size="0.66" aria-hidden="true"></canvas>
+      <canvas class="wave-canvas wave-canvas--hero" data-waves="listen" aria-hidden="true"></canvas>
+      <div class="listen__foot">
+        <button class="stopbtn" data-go="chat" aria-label="Stop listening"><i></i></button>
+      </div>
+    </section>
+
+    <!-- ══════════ 6 · CONFIRM ══════════ -->
+    <section class="screen screen--focus" data-screen="confirm" aria-label="Confirm action">
+      <div class="shieldmark" aria-hidden="true">
+        <svg viewBox="0 0 48 48"><path d="M24 4 8 10v13c0 9 6.6 16.6 16 19 9.4-2.4 16-10 16-19V10L24 4Z" fill="none" stroke="url(#shieldg)" stroke-width="2" stroke-linejoin="round"/><path d="m17 24 5 5 10-11" fill="none" stroke="url(#shieldg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="shieldg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#35A5FF"/><stop offset="1" stop-color="#A8F443"/></linearGradient></defs></svg>
+      </div>
+      <div class="stack stack--tight">
+        <h2 class="title">Confirm Action</h2>
+        <p class="sub">Vanessa will delete 3 <br />incomplete project folders.</p>
+      </div>
+      <div class="folders" aria-hidden="true">
+        <svg viewBox="0 0 280 190">
+          <defs>
+            <filter id="glowb" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="glowg" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <g filter="url(#glowg)"><path d="M22 46h74l12 14h58a10 10 0 0 1 10 10v74a10 10 0 0 1-10 10H32a10 10 0 0 1-10-10V56a10 10 0 0 1 10-10Z" fill="rgba(30,60,40,.30)" stroke="#A8F443" stroke-width="2"/></g>
+          <g filter="url(#glowb)"><path d="M46 62h74l12 14h58a10 10 0 0 1 10 10v64a10 10 0 0 1-10 10H56a10 10 0 0 1-10-10V72a10 10 0 0 1 10-10Z" fill="rgba(20,40,80,.35)" stroke="#35A5FF" stroke-width="2"/></g>
+          <g filter="url(#glowb)"><path d="M70 78h74l12 14h58a10 10 0 0 1 10 10v56a10 10 0 0 1-10 10H80a10 10 0 0 1-10-10V88a10 10 0 0 1 10-10Z" fill="rgba(14,26,52,.75)" stroke="#0755FF" stroke-width="2.4"/></g>
+          <g>
+            <circle cx="212" cy="150" r="30" fill="rgba(168,244,67,.16)" filter="url(#glowg)"/>
+            <circle cx="212" cy="150" r="24" fill="#A8F443"/>
+            <path d="m201 150 8 8 15-16" fill="none" stroke="#0A1206" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+        </svg>
+      </div>
+      <div class="dock dock--split">
+        <button class="btn btn--primary" data-confirm="approve"><span>Approve</span></button>
+        <button class="btn btn--ghost" data-go="chat">Cancel</button>
+      </div>
+    </section>
+
+    <!-- ══════════ 7 · EXECUTING ══════════ -->
+    <section class="screen screen--focus" data-screen="executing" aria-label="Executing task">
+      <header class="topbar">
+        <span class="eqbtn is-live" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 8v8M16 4v16M20 9v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        <button class="iconbtn iconbtn--bare" data-go="chat" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <div class="stack stack--tight">
+        <h2 class="title">Executing Task…</h2>
+        <p class="sub">Organizing files and cleaning up <br />incomplete folders</p>
+      </div>
+      <div class="progress-orb">
+        <canvas class="orb-canvas orb-canvas--progress" data-orb="exec" data-size="0.46" aria-hidden="true"></canvas>
+        <canvas class="progress-arcs" id="progress-arcs" aria-hidden="true"></canvas>
+      </div>
+      <ol class="steps" id="steps">
+        <li class="step" data-state="done"><span class="step__dot"><svg><use href="#i-check"/></svg></span><span class="step__label">Scanning Documents</span></li>
+        <li class="step" data-state="done"><span class="step__dot"><svg><use href="#i-check"/></svg></span><span class="step__label">Removing incomplete folders</span></li>
+        <li class="step" data-state="active"><span class="step__dot"></span><span class="step__label">Updating records…</span></li>
+      </ol>
+      <canvas class="wave-canvas wave-canvas--foot" data-waves="foot" aria-hidden="true"></canvas>
+    </section>
+
+    <!-- ══════════ 8 · SUCCESS ══════════ -->
+    <section class="screen screen--focus" data-screen="success" aria-label="Task complete">
+      <div class="success-orb">
+        <canvas class="orb-canvas" data-orb="done" data-size="0.7" aria-hidden="true"></canvas>
+        <svg class="success-orb__check" viewBox="0 0 100 100" aria-hidden="true"><path d="M28 52 44 68 74 34" fill="none" stroke="#A8F443" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <canvas class="wave-canvas wave-canvas--celebrate" data-waves="celebrate" aria-hidden="true"></canvas>
+      <div class="stack stack--tight">
+        <h2 class="title title--xl">All set!</h2>
+        <p class="sub">Your request is complete.</p>
+      </div>
+      <div class="dock">
+        <button class="btn btn--primary" data-go="chat"><span>Great!</span></button>
+      </div>
+    </section>
+
+    <!-- ══════════ 9 · SETTINGS ══════════ -->
+    <section class="screen" data-screen="settings" aria-label="Settings">
+      <header class="topbar">
+        <button class="iconbtn iconbtn--bare" data-go="chat" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+        <button class="iconbtn iconbtn--bare" aria-label="Preferences"><svg><use href="#i-gear"/></svg></button>
+      </header>
+      <div class="stack stack--tight stack--left">
+        <h2 class="title">Vanessa</h2>
+        <p class="sub">Settings</p>
+      </div>
+      <div class="card card--device">
+        <div class="card--device__head">
+          <span class="chip chip--teal"><svg><use href="#i-pc"/></svg></span>
+          <span class="card__text"><strong>My Windows PC</strong><em>Paired · connected over Tailscale</em></span>
+          <span class="live"><i></i>live</span>
+        </div>
+        <div class="card--device__foot"><button class="linkbtn" data-go="chat">Manage connection</button></div>
+      </div>
+      <ul class="cards cards--tight">
+        <li class="card card--row card--nav"><span class="chip chip--glass"><svg><use href="#i-mic"/></svg></span><span class="card__text"><strong>Voice Settings</strong><em>Language: English · on-device</em></span><svg class="card__chev"><use href="#i-chevron"/></svg></li>
+        <li class="card card--row card--nav"><span class="chip chip--glass"><svg><use href="#i-folder"/></svg></span><span class="card__text"><strong>Memory</strong><em>Manage what Vanessa remembers</em></span><svg class="card__chev"><use href="#i-chevron"/></svg></li>
+        <li class="card card--row card--nav"><span class="chip chip--glass"><svg><use href="#i-pc"/></svg></span><span class="card__text"><strong>Devices</strong><em>1 connected</em></span><svg class="card__chev"><use href="#i-chevron"/></svg></li>
+        <li class="card card--row card--nav"><span class="chip chip--glass"><svg><use href="#i-shield"/></svg></span><span class="card__text"><strong>Security</strong><em>You’re in control</em></span><svg class="card__chev"><use href="#i-chevron"/></svg></li>
+      </ul>
+      <div class="card card--notice">
+        <span class="dot dot--amber" aria-hidden="true"></span>
+        <p>Remote approvals stay off until relay confidentiality is verified.</p>
+      </div>
+      <p class="footnote">Version 0.1.0 · Development prototype</p>
+    </section>
+
+    <div class="home-indicator" aria-hidden="true"></div>
+  </main>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

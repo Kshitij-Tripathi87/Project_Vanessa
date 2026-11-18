@@ -1,0 +1,82 @@
+/* ══════════════════════════════════════════════════════════════
+   Vanessa design tokens
+   Single source of truth for colour, type, space, radius, motion.
+   Values taken from the Android UI reconstruction specification.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  /* ── Colour ────────────────────────────────────────────── */
+  --obsidian: #03050A;
+  --navy: #080F22;
+  --navy-2: #0B1428;
+  --card: #151C2D;
+  --card-2: #101728;
+  --blue: #0755FF;
+  --blue-soft: #2E6BFF;
+  --cyan: #35A5FF;
+  --lime: #A8F443;
+  --lime-deep: #8FD92F;
+  --grey: #B9C5DA;
+  --grey-dim: #7C879B;
+  --white: #FFFFFF;
+  --amber: #FFB020;
+
+  /* Allowed bloom — the only place "glow" exists */
+  --bloom-blue: 0 0 22px rgba(7, 85, 255, 0.55);
+  --bloom-cyan: 0 0 18px rgba(53, 165, 255, 0.45);
+  --bloom-lime: 0 0 20px rgba(168, 244, 67, 0.40);
+
+  /* Lines & surfaces */
+  --line: rgba(53, 165, 255, 0.18);
+  --line-soft: rgba(185, 197, 218, 0.12);
+  --surface-glass: rgba(21, 28, 45, 0.72);
+  --surface-deep: rgba(8, 15, 34, 0.86);
+
+  /* ── Type scale (fluid, clamp-based) ───────────────────── */
+  --font: Inter, "SF Pro Display", Manrope, "Google Sans", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+  --fs-display: clamp(2.1rem, 8.4vw, 2.6rem);
+  --fs-title: clamp(1.28rem, 5.4vw, 1.5rem);
+  --fs-title-xl: clamp(1.55rem, 6.6vw, 1.9rem);
+  --fs-sub: clamp(0.82rem, 3.4vw, 0.95rem);
+  --fs-body: clamp(0.86rem, 3.5vw, 0.95rem);
+  --fs-card: clamp(0.83rem, 3.3vw, 0.92rem);
+  --fs-meta: clamp(0.68rem, 2.9vw, 0.78rem);
+  --fs-micro: clamp(0.62rem, 2.6vw, 0.7rem);
+
+  --lh-tight: 1.16;
+  --lh-body: 1.5;
+
+  /* ── Space ─────────────────────────────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --gutter: clamp(18px, 5.2vw, 26px);
+
+  /* ── Radius ────────────────────────────────────────────── */
+  --r-card: 20px;
+  --r-card-sm: 16px;
+  --r-pill: 999px;
+  --r-device: 44px;
+
+  /* ── Motion (from spec §8) ─────────────────────────────── */
+  --t-press: 180ms;
+  --t-screen: 380ms;
+  --ease-out: cubic-bezier(0.22, 0.8, 0.3, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-press: 1ms;
+    --t-screen: 1ms;
+  }
+}

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Vanessa — Android UI concept board (4 × 2)</title>
+<style>
+  :root {
+    --obsidian: #03050A;
+    --navy: #080F22;
+    --blue: #0755FF;
+    --cyan: #35A5FF;
+    --lime: #A8F443;
+    --grey: #B9C5DA;
+    --card: #151C2D;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--obsidian);
+    color: #fff;
+    font-family: Inter, "SF Pro Display", Manrope, "Google Sans", system-ui, -apple-system, sans-serif;
+  }
+
+  /* Board = the reference composition: portrait, 4 columns x 2 rows, no captions. */
+  .board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+    padding: 18px;
+    margin: 0 auto;
+    max-width: 1320px;
+  }
+
+  .phone {
+    position: relative;
+    border-radius: 40px;
+    padding: 3px;
+    background: linear-gradient(160deg, #1b2437 0%, #0a0f1c 45%, #141b2b 100%);
+    box-shadow:
+      0 0 0 1px rgba(53, 165, 255, 0.18),
+      0 0 26px rgba(7, 85, 255, 0.20),
+      0 18px 42px rgba(0, 0, 0, 0.85);
+  }
+
+  .phone::after {
+    /* subtle navy edge lighting on the inner bezel */
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 39px;
+    pointer-events: none;
+    box-shadow: inset 0 0 14px rgba(53, 165, 255, 0.14);
+  }
+
+  .phone img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 37px;
+    background: #000;
+  }
+
+  /* Hero orb asset shown separately, not part of the eight screens. */
+  .asset {
+    max-width: 1320px;
+    margin: 6px auto 34px;
+    padding: 0 18px;
+  }
+
+  .asset figure {
+    margin: 0;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(53, 165, 255, 0.14), 0 18px 42px rgba(0, 0, 0, 0.8);
+  }
+
+  .asset img { display: block; width: 100%; height: auto; }
+
+  @media (max-width: 900px) {
+    .board { grid-template-columns: repeat(2, 1fr); }
+    .phone { border-radius: 28px; }
+    .phone img { border-radius: 26px; }
+  }
+
+  @media (max-width: 520px) {
+    .board { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="board">
+    <div class="phone"><img src="01-welcome.png" alt="Welcome: floating black orb with cobalt and lime rim light above layered flowing waveforms, Vanessa, Good evening, Get Started" /></div>
+    <div class="phone"><img src="02-onboarding.png" alt="Onboarding: Your Personal AI Assistant, three feature cards, progress dots, Continue" /></div>
+    <div class="phone"><img src="03-permissions.png" alt="Permissions: orb with orbiting icon nodes and a three row permission card with lime checks, Allow All" /></div>
+    <div class="phone"><img src="04-listening.png" alt="Listening: large orb with orbital rings above a prominent blue to lime waveform and a circular stop control" /></div>
+    <div class="phone"><img src="05-chat.png" alt="Chat: user and assistant bubbles, Opening Outlook action card with spinner, waveform background, message input" /></div>
+    <div class="phone"><img src="06-confirm-action.png" alt="Confirm Action: neon folders with a lime check badge, Approve and Cancel buttons" /></div>
+    <div class="phone"><img src="07-executing.png" alt="Executing Task: orb inside blue and lime progress arcs above a three step checklist" /></div>
+    <div class="phone"><img src="08-success.png" alt="Success: orb with a lime check on its surface above glowing waves, All set, Great button" /></div>
+  </div>
+
+  <div class="asset">
+    <figure><img src="00-orb-asset.png" alt="Vanessa orb: standalone glossy black sphere with cobalt upper-left rim light, cyan specular highlight, lime lower-right spill and thin orbital rings" /></figure>
+  </div>
+</body>
+</html>
