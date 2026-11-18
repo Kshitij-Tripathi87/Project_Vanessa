@@ -169,7 +169,7 @@ internal fun VanessaApp(
                             onNavigate, onRefresh, onImportModel,
                         )
                         else -> HomeScreen(
-                            inset, model, modelStatus, modelLoaded, modelBusy, assistantBusy,
+                            inset, model, modelLoaded, modelBusy, assistantBusy,
                             prompt, onNavigate, onPromptChange, onRunAssistant, onSpeakRequest,
                         )
                     }
@@ -210,7 +210,6 @@ private fun SplashScreen(message: String) {
 private fun HomeScreen(
     inset: Dp,
     model: InstalledModel?,
-    modelStatus: String,
     modelLoaded: Boolean,
     modelBusy: Boolean,
     assistantBusy: Boolean,
@@ -347,15 +346,6 @@ private fun HomeScreen(
             }
         }
 
-        if (!modelLoaded && modelStatus.isNotBlank()) {
-            Text(
-                modelStatus,
-                color = VanessaPalette.TextSecondary,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
