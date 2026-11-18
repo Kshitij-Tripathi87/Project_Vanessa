@@ -38,24 +38,36 @@ class VanessaNavigationTest {
 
     private fun waitForHome() {
         composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText("How can I help?").fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+            val home = composeRule.onAllNodesWithText("How can I help?")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+            val onboarding = composeRule.onAllNodesWithText("An assistant that moves with you")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+            home || onboarding
+        }
+        val onboardingVisible = composeRule.onAllNodesWithText("An assistant that moves with you")
+            .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        if (onboardingVisible) {
+            composeRule.onNodeWithText("Continue").performClick()
+            composeRule.onNodeWithText("Continue").performClick()
+            composeRule.onNodeWithText("Enter Vanessa").performClick()
+        }
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            composeRule.onAllNodesWithText("How can I help?")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
         }
     }
 
     @Test
-    fun homeShowsLocalStateAndDeviceRowsWithoutSetupCatalogues() {
+    fun firstRunOnboardingLeadsToTheOrbFirstAssistantHome() {
         waitForHome()
 
         composeRule.onNodeWithText("How can I help?").assertIsDisplayed()
-        composeRule.onNodeWithText("MY DEVICES").assertIsDisplayed()
-        composeRule.onNodeWithText("On device").assertIsDisplayed()
-        composeRule.onAllNodesWithText("My PC").assertCountEquals(2)
-        composeRule.onNodeWithText("No local model detected").assertIsDisplayed()
-
-        // The simplified prototype intentionally removes setup/import and
-        // capabilities catalogue screens.
-        composeRule.onAllNodesWithText("Import GGUF").assertCountEquals(0)
-        composeRule.onAllNodesWithText("Capabilities").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Vanessa orb. Local model unavailable.").assertIsDisplayed()
+        composeRule.onNodeWithText("Plan my day").assertIsDisplayed()
+        composeRule.onNodeWithText("Connect your Windows PC").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("My PC navigation").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Settings navigation").assertIsDisplayed()
+        composeRule.onNodeWithText("Add a local model in Settings to enable responses").assertIsDisplayed()
     }
 
     @Test
@@ -79,7 +91,7 @@ class VanessaNavigationTest {
     fun pcDashboardShowsTheRealRemoteControlEntryPoint() {
         waitForHome()
 
-        composeRule.onAllNodesWithText("My PC")[0].performClick()
+        composeRule.onNodeWithContentDescription("My PC navigation").performClick()
         composeRule.onAllNodesWithText("Windows companion")[0].assertIsDisplayed()
         composeRule.onNodeWithText("Pair with Windows").performClick()
         composeRule.onNodeWithText("Scan PC pairing code").assertIsDisplayed()
@@ -95,7 +107,7 @@ class VanessaNavigationTest {
         val monitor = instrumentation.addMonitor(RemoteControlActivity::class.java.name, null, false)
 
         try {
-            composeRule.onAllNodesWithText("My PC")[0].performClick()
+            composeRule.onNodeWithContentDescription("My PC navigation").performClick()
             composeRule.onNodeWithText("Pair with Windows").performClick()
             composeRule.onNodeWithText("Scan PC pairing code").performClick()
 

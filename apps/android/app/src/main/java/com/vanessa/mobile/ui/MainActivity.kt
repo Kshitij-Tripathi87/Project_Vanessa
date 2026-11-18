@@ -32,10 +32,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 
-private enum class VanessaDestination { HOME, VOICE, PAIRING, PC, SETTINGS }
+private enum class VanessaDestination { ONBOARDING, HOME, VOICE, PAIRING, PC, SETTINGS }
 
 class MainActivity : ComponentActivity() {
-    private var destination by mutableStateOf(VanessaDestination.HOME)
+    private var destination by mutableStateOf(VanessaDestination.ONBOARDING)
+    private var onboardingStep by mutableStateOf(0)
     private var startupReady by mutableStateOf(false)
     private var startupMessage by mutableStateOf("Initializing Vanessa…")
     private var profile by mutableStateOf<DeviceProfile?>(null)
@@ -103,9 +104,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val onboardingComplete = getSharedPreferences("vanessa_first_run", MODE_PRIVATE)
+            .getBoolean("completed", false)
         destination = savedInstanceState?.getString("vanessa_destination")
             ?.let { runCatching { VanessaDestination.valueOf(it) }.getOrNull() }
-            ?: VanessaDestination.HOME
+            ?: if (onboardingComplete) VanessaDestination.HOME else VanessaDestination.ONBOARDING
+        onboardingStep = savedInstanceState?.getInt("vanessa_onboarding_step")?.coerceIn(0, 2) ?: 0
         prompt = savedInstanceState?.getString("vanessa_prompt").orEmpty()
         window.statusBarColor = android.graphics.Color.rgb(10, 11, 15)
         window.navigationBarColor = android.graphics.Color.rgb(10, 11, 15)
@@ -113,12 +117,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             VanessaTheme {
-                BackHandler(enabled = startupReady && destination != VanessaDestination.HOME) {
+                BackHandler(enabled = startupReady && destination != VanessaDestination.HOME && destination != VanessaDestination.ONBOARDING) {
                     destination = when (destination) {
                         VanessaDestination.VOICE -> VanessaDestination.HOME
                         VanessaDestination.PAIRING -> VanessaDestination.PC
                         VanessaDestination.PC, VanessaDestination.SETTINGS -> VanessaDestination.HOME
-                        VanessaDestination.HOME -> VanessaDestination.HOME
+                        VanessaDestination.ONBOARDING, VanessaDestination.HOME -> VanessaDestination.HOME
                     }
                 }
 
@@ -126,6 +130,11 @@ class MainActivity : ComponentActivity() {
                     startupReady = startupReady,
                     startupMessage = startupMessage,
                     destination = destination.name,
+                    onboardingStep = onboardingStep,
+                    onAdvanceOnboarding = {
+                        if (onboardingStep < 2) onboardingStep += 1 else completeOnboarding()
+                    },
+                    onFinishOnboarding = ::completeOnboarding,
                     profile = profile,
                     model = installedModel,
                     modelStatus = modelStatus,
@@ -204,6 +213,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("vanessa_destination", destination.name)
+        outState.putInt("vanessa_onboarding_step", onboardingStep)
         outState.putString("vanessa_prompt", prompt)
         super.onSaveInstanceState(outState)
     }
@@ -220,6 +230,15 @@ class MainActivity : ComponentActivity() {
         offlineTts = null
         onDeviceSpeechInput = null
         super.onDestroy()
+    }
+
+    private fun completeOnboarding() {
+        getSharedPreferences("vanessa_first_run", MODE_PRIVATE)
+            .edit()
+            .putBoolean("completed", true)
+            .apply()
+        onboardingStep = 0
+        destination = VanessaDestination.HOME
     }
 
     private fun initializeRuntime() {

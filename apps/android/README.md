@@ -1,17 +1,17 @@
 # Vanessa Android — local-first companion
 
-The Android launcher uses a local-first Compose interface with a restrained dark visual system, a state-aware Vanessa orb, scrollable feature screens, and explicit runtime status. The UI is organized around the user's primary flow rather than a catalog of setup cards.
+The Android app uses a local-first Jetpack Compose interface with a first-run onboarding flow, an orb-first assistant home, a unified voice/chat conversation screen, My PC, and Settings. The UI uses solid near-black surfaces, cobalt interaction accents, a restrained lime signal colour, and a floating near-black sphere as the assistant identity. It does not use gradient surfaces, glassmorphism, or a logo mark.
 
 ## Application navigation
 
-1. **Splash & boot** — reports real startup checks and waits for local model detection/loading. It does not use a timed fake progress bar.
-2. **Assistant Home** — shows the phone, local model state, and Windows pairing state. The primary action opens Voice Interaction.
-3. **Voice Interaction** — provides explicit on-device speech input and a typed fallback. Responses are shown as text; speech output is offered only when an offline TTS voice is available.
-4. **Windows Pairing** — presents the pairing requirements and current implementation boundary.
-5. **My PC** — shows the unpaired state until an authenticated companion connection is available.
+1. **Splash & boot** — reports real startup checks and waits for local model detection/loading; it does not use a timed fake progress bar.
+2. **First-run onboarding** — three short screens introduce Vanessa, explain the voice/chat interaction model, and clarify that local model import and Windows pairing can be completed later. The completion state is persisted on-device.
+3. **Assistant Home** — places the floating orb at the centre, with a compact text composer, microphone entry point, one planning shortcut, and a My PC shortcut.
+4. **Conversation** — keeps typed input, explicit on-device speech input, text responses, and optional offline speech output in one route.
+5. **My PC / Pairing** — exposes the authenticated PC pairing entry point and does not display fabricated live telemetry.
 6. **Settings** — reports model, voice, permissions, device, and build state; imports and validates local GGUF model files.
 
-There is no onboarding flow or general capabilities catalogue in this initial release. Settings is a separate destination and includes the model-import workflow. The home, voice, PC, pairing, and settings pages use vertical scrolling for narrow devices and large text.
+A persistent three-destination bottom navigation connects Assistant, My PC, and Settings. Onboarding is intentionally outside that navigation. Main destinations scroll on narrow devices and respect safe drawing and keyboard insets.
 
 ## Runtime truth and current boundaries
 
@@ -27,12 +27,12 @@ There is no onboarding flow or general capabilities catalogue in this initial re
 
 The UI uses the design tokens from the Vanessa specification:
 
-- Background `#0A0B0F`, surfaces `#111318` / `#171B22`, border `#23262D`.
-- Cobalt primary `#0B5FFF`, primary text `#F5F7FA`, secondary text `#9AA6B2`.
-- Green, amber, and red are reserved for semantic status.
-- Reusable state-aware orb, status pills, device rows, section headers, inline notices, and navigation items.
-- Minimum-height primary controls, accessible labels for icon-only controls, TalkBack orb descriptions, and responsive horizontal insets.
-- All main destinations use vertical scrolling; the voice route preserves typed input as a first-class fallback.
+- Background `#07090D`, surfaces `#10141B` / `#171E29`, border `#252E3B`.
+- Cobalt primary `#1B5FFF`, lime accent `#C8F23F`, primary text `#F2F5F8`, secondary text `#98A3B2`.
+- The orb is drawn from solid near-black layers with a cobalt upper-left rim, a small lime lower-right arc, and a restrained specular point. No gradient fills are used.
+- Reusable state-aware orb, status pills, section headers, inline notices, quick actions, and bottom navigation.
+- Minimum 48 dp navigation targets, accessible icon labels, TalkBack orb descriptions, and responsive horizontal insets.
+- Main destinations use vertical scrolling and apply safe-drawing plus IME insets; the conversation route keeps typed input available when speech is unavailable.
 
 ## Build
 
