@@ -50,6 +50,25 @@ jobs:
       - name: Build all workspace packages
         run: pnpm build
 
+      - name: Parse Tailscale-only Windows firewall setup script
+        shell: pwsh
+        run: |
+          $scriptPath = Join-Path $env:GITHUB_WORKSPACE 'scripts/setup-vanessa-tailscale.ps1'
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | Format-List
+            exit 1
+          }
+          $scriptText = Get-Content -LiteralPath $scriptPath -Raw
+          foreach ($required in @('-LocalAddress $tailscaleIpText', '-RemoteAddress $peerRange', '$peerRange = "100.64.0.0/10"', '[switch] $Remove')) {
+            if (-not $scriptText.Contains($required)) {
+              throw "Firewall setup script is missing required safety guard: $required"
+            }
+          }
+          Write-Host "Tailscale firewall script parses and retains its address/peer-range/removal guards."
+
       - name: Launch orchestrator, voice agent and Electron renderer together
         shell: pwsh
         env:

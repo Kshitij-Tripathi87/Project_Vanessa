@@ -72,6 +72,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
@@ -87,6 +88,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.biometric:biometric:1.1.0")
     // Generated protocol contract (single source of truth for the wire format)
     implementation(project(":core:protocol"))
     implementation(project(":core:agent"))
@@ -123,7 +125,7 @@ dependencies {
 
     // Ktor (WebSocket client)
     implementation("io.ktor:ktor-client-core:2.3.8")
-    implementation("io.ktor:ktor-client-android:2.3.8")
+    implementation("io.ktor:ktor-client-cio:2.3.8")
     implementation("io.ktor:ktor-client-websockets:2.3.8")
     implementation("io.ktor:ktor-client-logging:2.3.8")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.8")
@@ -144,6 +146,7 @@ dependencies {
     // Real org.json on the JVM test classpath; the android.jar stub only throws.
     testImplementation("org.json:json:20231013")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:rules:1.5.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

@@ -75,6 +75,12 @@ local.properties
 *.iml
 .opencode/
 
+# The Gauntlet task packs intentionally use a build/ namespace; keep these
+# benchmark specifications/templates tracked while ignoring application build outputs.
+!evals/vanessa-gauntlet/packs/
+!evals/vanessa-gauntlet/packs/build/
+!evals/vanessa-gauntlet/packs/build/**
+
 # OS & Editor
 .DS_Store
 Thumbs.db
