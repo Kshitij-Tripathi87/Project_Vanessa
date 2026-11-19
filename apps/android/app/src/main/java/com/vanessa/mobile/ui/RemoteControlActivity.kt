@@ -10,7 +10,34 @@ import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
+import com.vanessa.mobile.ui.components.EnergyWave
+import com.vanessa.mobile.ui.components.NeonButton
+import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.NeonSecondaryButton
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
+import com.vanessa.mobile.ui.theme.VanessaTheme
+import com.vanessa.mobile.ui.theme.VanessaType
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,23 +45,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.colorResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import com.vanessa.mobile.R
 import com.vanessa.mobile.remote.RemoteV2BridgeClient
 import com.vanessa.mobile.remote.RemoteV2Event
 import com.vanessa.mobile.ui.screens.TaskApprovalScreen
@@ -73,83 +93,165 @@ class RemoteControlActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = colorResource(R.color.vanessa_primary),
-                    secondary = colorResource(R.color.vanessa_secondary),
-                    background = colorResource(R.color.vanessa_background),
-                    surface = colorResource(R.color.vanessa_surface),
-                    onPrimary = colorResource(R.color.vanessa_on_primary),
-                    onSurface = colorResource(R.color.vanessa_on_surface),
-                    error = colorResource(R.color.vanessa_error),
-                )
-            ) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    // The lifecycle screens replace this list rather than floating
-                    // over it: a stacked screen would leave the task buttons
-                    // tappable underneath an approval that has not been given.
+            VanessaTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = VanessaPalette.Obsidian) {
                     if (taskPhase is RemoteTaskPhase.Idle || taskPhase is RemoteTaskPhase.Submitted) {
-                                        Column(
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text("REMOTE PC", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        Text("Authenticated Windows control", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                        Text("Both this phone and the Windows PC must be connected to the same Tailscale tailnet. Scan the QR shown on the PC and keep Tailscale active on this phone. Vanessa pins the PC's P-256 key before trusting signed server messages.")
-                        OutlinedTextField(
-                            value = qrPayload,
-                            onValueChange = { qrPayload = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("PC pairing data") },
-                            placeholder = { Text("Paste the JSON from the PC pairing window") },
-                            minLines = 4,
-                            maxLines = 8,
-                            enabled = bridgeJob?.isActive != true,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = { qrScanner.launch(Intent(this@RemoteControlActivity, RemotePairingQrScannerActivity::class.java)) },
-                                enabled = bridgeJob?.isActive != true,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Scan QR") }
-                            Button(
-                                onClick = ::connectWithQr,
-                                enabled = qrPayload.isNotBlank() && bridgeJob?.isActive != true,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Pair / Connect") }
-                            TextButton(
-                                onClick = ::connectSavedPc,
-                                enabled = bridgeJob?.isActive != true,
-                            ) { Text("Reconnect") }
-                        }
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("CONNECTION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                Text(connectionStatus)
-                                Text("A new phone must be approved locally on the PC before it can submit tasks.")
+                        androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
+                            EnergyWave(
+                                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(200.dp),
+                                intensity = if (connectionStatus.startsWith("Connected")) 0.72f else 0.38f,
+                            )
+                            Column(
+                                modifier = Modifier.fillMaxSize()
+                                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                                    .imePadding()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 22.dp)
+                                    .padding(top = 10.dp, bottom = 28.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    NeonIconButton(
+                                        icon = Icons.Outlined.ArrowBack,
+                                        contentDescription = "Back",
+                                        onClick = { finish() },
+                                        diameter = 44.dp,
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("MY PC", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
+                                        Text("Windows companion", color = VanessaPalette.TextPrimary, style = VanessaType.heading)
+                                    }
+                                    Text(
+                                        if (connectionStatus.startsWith("Connected")) "ONLINE" else "OFFLINE",
+                                        color = if (connectionStatus.startsWith("Connected")) VanessaPalette.Lime else VanessaPalette.TextDim,
+                                        style = VanessaType.eyebrow,
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    VanessaOrb(
+                                        size = 104.dp,
+                                        energy = if (connectionStatus.startsWith("Connected")) 0.6f else 0.18f,
+                                        offline = false,
+                                        ringCount = 2,
+                                        description = "Vanessa orb. PC connection screen.",
+                                    )
+                                    Text("Connect your Windows PC", color = VanessaPalette.TextPrimary, style = VanessaType.heading, textAlign = TextAlign.Center)
+                                    Text(
+                                        "Use a one-time pairing code to establish an authenticated connection.",
+                                        color = VanessaPalette.TextSecondary,
+                                        style = VanessaType.bodySmall,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                }
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = VanessaPalette.CardDeep,
+                                    shape = RoundedCornerShape(20.dp),
+                                    border = BorderStroke(1.dp, VanessaPalette.Border),
+                                ) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("PAIRING DATA", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
+                                        OutlinedTextField(
+                                            value = qrPayload,
+                                            onValueChange = { qrPayload = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("PC pairing data") },
+                                            placeholder = { Text("Paste the JSON from the PC pairing window") },
+                                            minLines = 3,
+                                            maxLines = 6,
+                                            enabled = bridgeJob?.isActive != true,
+                                            shape = RoundedCornerShape(14.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = VanessaPalette.Cyan,
+                                                unfocusedBorderColor = VanessaPalette.Border,
+                                                focusedTextColor = VanessaPalette.TextPrimary,
+                                                unfocusedTextColor = VanessaPalette.TextPrimary,
+                                                cursorColor = VanessaPalette.Cyan,
+                                                focusedContainerColor = VanessaPalette.Card,
+                                                unfocusedContainerColor = VanessaPalette.Card,
+                                            ),
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            NeonSecondaryButton(
+                                                text = "Scan QR",
+                                                leadingIcon = Icons.Outlined.QrCode2,
+                                                onClick = {
+                                                    qrScanner.launch(Intent(this@RemoteControlActivity, RemotePairingQrScannerActivity::class.java))
+                                                },
+                                                enabled = bridgeJob?.isActive != true,
+                                                modifier = Modifier.weight(1f),
+                                                height = 50.dp,
+                                            )
+                                            NeonButton(
+                                                text = "Pair / Connect",
+                                                onClick = ::connectWithQr,
+                                                enabled = qrPayload.isNotBlank() && bridgeJob?.isActive != true,
+                                                modifier = Modifier.weight(1f),
+                                                height = 50.dp,
+                                            )
+                                        }
+                                        TextButton(
+                                            onClick = ::connectSavedPc,
+                                            enabled = bridgeJob?.isActive != true,
+                                        ) {
+                                            Icon(Icons.Outlined.Refresh, contentDescription = null, tint = VanessaPalette.Cyan)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Reconnect to saved PC", color = VanessaPalette.Cyan)
+                                        }
+                                    }
+                                }
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = VanessaPalette.CardDeep,
+                                    shape = RoundedCornerShape(18.dp),
+                                    border = BorderStroke(1.dp, VanessaPalette.Border),
+                                ) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                        Text("CONNECTION", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
+                                        Text(connectionStatus, color = VanessaPalette.TextPrimary, style = VanessaType.cardTitle)
+                                        Text(
+                                            "A new phone must be approved locally on the PC before it can submit tasks.",
+                                            color = VanessaPalette.TextSecondary,
+                                            style = VanessaType.caption,
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = VanessaPalette.CardDeep,
+                                    shape = RoundedCornerShape(18.dp),
+                                    border = BorderStroke(1.dp, VanessaPalette.Border),
+                                ) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("AVAILABLE PC ACTIONS", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
+                                        NeonSecondaryButton(
+                                            text = "Read PC status",
+                                            onClick = { runRemoteTask("system_status") },
+                                            enabled = connectionStatus.startsWith("Connected") && !requestBusy,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        NeonButton(
+                                            text = "Open Chrome on PC",
+                                            onClick = {
+                                                runRemoteTask("open_app", buildJsonObject { put("app", "chrome") }, "Open Chrome on PC")
+                                            },
+                                            enabled = connectionStatus.startsWith("Connected") && !requestBusy,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        if (requestBusy) Text("Submitting task…", color = VanessaPalette.Cyan, style = VanessaType.caption)
+                                        Text(latestEvent, color = VanessaPalette.TextSecondary, style = VanessaType.caption)
+                                    }
+                                }
+                                TextButton(onClick = ::disconnect) {
+                                    Text("Disconnect", color = VanessaPalette.TextDim)
+                                }
                             }
                         }
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("PC TASKS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                Button(
-                                    onClick = { runRemoteTask("system_status") },
-                                    enabled = connectionStatus.startsWith("Connected") && !requestBusy,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) { Text("Read PC status") }
-                                Button(
-                                    onClick = {
-                                        runRemoteTask("open_app", buildJsonObject { put("app", "chrome") }, "Open Chrome on PC")
-                                    },
-                                    enabled = connectionStatus.startsWith("Connected") && !requestBusy,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) { Text("Open Chrome on PC") }
-                                if (requestBusy) Text("Sending task…")
-                                Text(latestEvent, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        TextButton(onClick = ::disconnect) { Text("Disconnect") }
-                    }
                     }
                     when (val phase = taskPhase) {
                         is RemoteTaskPhase.AwaitingApproval -> TaskApprovalScreen(
@@ -159,7 +261,6 @@ class RemoteControlActivity : FragmentActivity() {
                             onBack = { taskPhase = RemoteTaskPhase.Idle },
                             busy = approvalBusy,
                         )
-
                         is RemoteTaskPhase.Running -> TaskExecutionScreen(
                             phase = phase,
                             onStop = { requestTaskCancellation(phase) },
@@ -167,7 +268,6 @@ class RemoteControlActivity : FragmentActivity() {
                                 !phase.requestId.isNullOrBlank() &&
                                 phase.cancellationAck == null,
                         )
-
                         is RemoteTaskPhase.Finished -> TaskResultScreen(
                             outcome = phase.outcome,
                             onDone = { taskPhase = RemoteTaskPhase.Idle },
@@ -176,7 +276,6 @@ class RemoteControlActivity : FragmentActivity() {
                                 runRemoteTask("system_status")
                             },
                         )
-
                         is RemoteTaskPhase.Failed -> TaskErrorScreen(
                             message = phase.message,
                             retryable = phase.retryable,
@@ -186,7 +285,6 @@ class RemoteControlActivity : FragmentActivity() {
                                 runRemoteTask("system_status")
                             },
                         )
-
                         RemoteTaskPhase.Idle, is RemoteTaskPhase.Submitted -> Unit
                     }
                 }
