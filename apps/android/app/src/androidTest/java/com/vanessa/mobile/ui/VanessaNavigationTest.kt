@@ -145,7 +145,8 @@ class VanessaNavigationTest {
     fun pcDashboardKeepsTheRealRemoteControlEntryPoint() {
         enterAssistant()
 
-        composeRule.onNodeWithContentDescription("My PC navigation").performClick()
+        composeRule.onNodeWithContentDescription("Open navigation menu").performClick()
+        composeRule.onNodeWithText("My PC").performClick()
         composeRule.onAllNodesWithText("Windows companion")[0].assertIsDisplayed()
         composeRule.onNodeWithText("Pair with Windows").performClick()
         composeRule.onNodeWithText("Scan PC pairing code").assertIsDisplayed()
@@ -160,8 +161,8 @@ class VanessaNavigationTest {
 
         // Regression guard: Settings used to exist only as unreachable dead
         // code, so this assertion is what keeps the shell wired up.
-        composeRule.onNodeWithContentDescription("Settings navigation").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Settings navigation").performClick()
+        composeRule.onNodeWithContentDescription("Open navigation menu").performClick()
+        composeRule.onNodeWithText("Settings").performClick()
 
         composeRule.onNodeWithText("PREFERENCES").assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL MODEL").assertIsDisplayed()

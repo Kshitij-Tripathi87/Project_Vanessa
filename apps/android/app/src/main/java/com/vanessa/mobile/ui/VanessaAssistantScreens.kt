@@ -37,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +103,10 @@ internal fun ChatScreen(
     onNavigate: (String) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val messageScrollState = rememberScrollState()
+    LaunchedEffect(messages.size, assistantBusy) {
+        messageScrollState.animateScrollTo(messageScrollState.maxValue)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         EnergyWave(
@@ -154,7 +159,7 @@ internal fun ChatScreen(
             }
 
             Column(
-                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(messageScrollState),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (messages.isEmpty() && !assistantBusy) {

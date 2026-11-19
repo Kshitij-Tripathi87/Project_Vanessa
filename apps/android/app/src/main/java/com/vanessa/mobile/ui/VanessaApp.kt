@@ -218,7 +218,7 @@ internal fun VanessaApp(
                 // individual screen) owns the persistent navigation bar. Before
                 // this, BottomNavigation was never composed and the only way to
                 // Settings was the small icon on Home.
-                if (destination == "HOME" || destination == "PC" || destination == "SETTINGS") {
+                if (destination == "PC" || destination == "SETTINGS") {
                     BottomNavigation(destination, onNavigate)
                 }
             }
