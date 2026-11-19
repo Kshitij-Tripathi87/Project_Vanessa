@@ -2,11 +2,9 @@ package com.vanessa.mobile.ui
 
 import android.Manifest
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -82,10 +80,7 @@ class VanessaNavigationTest {
      * response is showing, so it is a stable "we are home" signal — unlike the
      * greeting, which the first answer replaces.
      */
-    private fun composerVisible(): Boolean = runCatching {
-        composeRule.onAllNodes(hasSetTextAction())
-            .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
-    }.getOrDefault(false)
+    private fun composerVisible(): Boolean = exists("Type a message…")
 
     @Test
     fun firstRunFlowReachesTheAssistantWithoutClaimingAModel() {
@@ -116,9 +111,7 @@ class VanessaNavigationTest {
         // the interface keeps saying so. The request must not appear to run.
         // Existence, not visibility: with the soft keyboard up the notice can
         // sit outside the visible area without being wrong.
-        composeRule.onNodeWithText(
-            "No local model is active. Vanessa will not run a request until a model is installed.",
-        ).assertExists()
+        check(exists("No local model is active. Vanessa will not run a request until a model is installed."))
         composeRule.onAllNodesWithText("All set!").assertCountEquals(0)
     }
 
