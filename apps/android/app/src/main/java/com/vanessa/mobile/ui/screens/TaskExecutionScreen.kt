@@ -124,14 +124,22 @@ internal fun TaskExecutionScreen(
         Spacer(Modifier.height(20.dp))
         if (canStop) {
             NeonSecondaryButton(
-                text = "Stop this task",
+                text = if (phase.cancellationRequested) "Requesting cancellation…" else "Stop this task",
                 onClick = onStop,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !phase.cancellationRequested && phase.cancellationAck == null,
             )
             Spacer(Modifier.height(10.dp))
+        }
+
+        val cancellationMessage = phase.cancellationAck?.message ?: phase.cancellationError
+            ?: if (phase.cancellationRequested) {
+                "Cancellation has been sent. Waiting for the PC to acknowledge it; the task is not marked stopped yet."
+            } else null
+        if (cancellationMessage != null) {
             Text(
-                text = "Stopping asks the PC to cancel. It reports back whether the cancel landed.",
-                color = VanessaPalette.TextDim,
+                text = cancellationMessage,
+                color = if (phase.cancellationError != null) VanessaPalette.Warning else VanessaPalette.TextSecondary,
                 style = VanessaType.caption,
                 textAlign = TextAlign.Center,
             )

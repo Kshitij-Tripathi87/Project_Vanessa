@@ -53,6 +53,22 @@ internal enum class ResultStatus {
  */
 internal enum class OutcomeTone { SUCCESS, PARTIAL, UNVERIFIED, FAILURE, UNKNOWN }
 
+internal data class CancellationAcknowledgement(
+    val outcome: String,
+    val state: String,
+    val detail: String?,
+) {
+    val message: String
+        get() = when (outcome) {
+            "cancelled" -> "The PC confirmed cancellation. Waiting for the final task result."
+            "completed" -> "The PC reports that the task completed before cancellation took effect."
+            "too_late" -> "The PC could not cancel the task because it had already advanced too far."
+            "partially_effective" -> detail
+                ?: "Cancellation was requested, but the task engine has not confirmed termination."
+            else -> detail ?: "The PC returned an unrecognised cancellation acknowledgement."
+        }
+}
+
 internal data class TaskOutcome(
     val status: ResultStatus,
     val verification: VerificationStatus,
@@ -80,7 +96,10 @@ internal sealed interface RemoteTaskPhase {
     data object Idle : RemoteTaskPhase
 
     /** Sent, no accepted/progress event back yet. No spinner claims progress. */
-    data class Submitted(val capability: String?) : RemoteTaskPhase
+    data class Submitted(
+        val capability: String?,
+        val requestId: String? = null,
+    ) : RemoteTaskPhase
 
     data class AwaitingApproval(val approval: PendingApproval) : RemoteTaskPhase
 
@@ -91,6 +110,12 @@ internal sealed interface RemoteTaskPhase {
         val percentComplete: Int?,
         /** Only summaries the PC actually sent, in order, de-duplicated. */
         val steps: List<String>,
+        /** Identifiers copied from the signed task.accepted event. */
+        val taskId: String? = null,
+        val requestId: String? = null,
+        val cancellationRequested: Boolean = false,
+        val cancellationAck: CancellationAcknowledgement? = null,
+        val cancellationError: String? = null,
     ) : RemoteTaskPhase
 
     data class Finished(val outcome: TaskOutcome) : RemoteTaskPhase
@@ -188,6 +213,15 @@ private fun appendStep(previous: List<String>, summary: String): List<String> {
     return (previous + summary).takeLast(8)
 }
 
+private fun parseCancellationAcknowledgement(payload: JsonObject): CancellationAcknowledgement? {
+    val taskId = payload.string("taskId") ?: return null
+    val outcome = payload.string("outcome") ?: return null
+    val state = payload.string("state") ?: return null
+    if (taskId.isBlank()) return null
+    if (outcome !in setOf("cancelled", "completed", "too_late", "partially_effective")) return null
+    return CancellationAcknowledgement(outcome, stateLabel(state), payload.string("detail"))
+}
+
 /**
  * Folds one bridge event into the current phase.
  *
@@ -206,12 +240,15 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                 summary = summary,
                 percentComplete = null,
                 steps = appendStep(emptyList(), summary),
+                taskId = payload.string("taskId"),
+                requestId = payload.string("requestId"),
             )
         }
 
         "task.progress" -> {
             val summary = payload.string("safeSummary").orEmpty()
-            val previousSteps = (phase as? RemoteTaskPhase.Running)?.steps.orEmpty()
+            val previous = phase as? RemoteTaskPhase.Running
+            val previousSteps = previous?.steps.orEmpty()
             val percent = (payload["percentComplete"] as? JsonPrimitive)
                 ?.intOrNull
                 ?.coerceIn(0, 100)
@@ -220,6 +257,11 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                 summary = summary.ifBlank { "The PC is working on it." },
                 percentComplete = percent,
                 steps = appendStep(previousSteps, summary),
+                taskId = payload.string("taskId") ?: previous?.taskId,
+                requestId = previous?.requestId,
+                cancellationRequested = previous?.cancellationRequested ?: false,
+                cancellationAck = previous?.cancellationAck,
+                cancellationError = previous?.cancellationError,
             )
         }
 
@@ -236,6 +278,17 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
             } else {
                 RemoteTaskPhase.AwaitingApproval(parsed)
             }
+        }
+
+        "task.cancel_ack" -> {
+            val previous = phase as? RemoteTaskPhase.Running ?: return phase
+            if (payload.string("taskId") != previous.taskId) return phase
+            val acknowledgement = parseCancellationAcknowledgement(payload) ?: return phase
+            previous.copy(
+                cancellationRequested = false,
+                cancellationAck = acknowledgement,
+                cancellationError = null,
+            )
         }
 
         "task.result" -> parseOutcome(payload)?.let { RemoteTaskPhase.Finished(it) } ?: phase

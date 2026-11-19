@@ -100,6 +100,7 @@ class RemoteTaskUiTest {
     fun acceptedStartsTheRunWithoutAPercentage() {
         val payload = buildJsonObject {
             put("taskId", "0f3d0c1e-0000-4000-8000-000000000001")
+            put("requestId", "9d3b6e17-0000-4000-8000-000000000002")
             put("state", "accepted")
             put("safeSummary", "Accepted: open chrome.")
             put("eventSeq", 2)
@@ -108,6 +109,58 @@ class RemoteTaskUiTest {
         assertEquals("Accepted", running.stateLabel)
         assertNull(running.percentComplete)
         assertEquals(listOf("Accepted: open chrome."), running.steps)
+        assertEquals("0f3d0c1e-0000-4000-8000-000000000001", running.taskId)
+        assertEquals("9d3b6e17-0000-4000-8000-000000000002", running.requestId)
+    }
+
+    @Test
+    fun cancelAcknowledgementIsNotMistakenForATerminalTaskResult() {
+        val accepted = buildJsonObject {
+            put("taskId", "0f3d0c1e-0000-4000-8000-000000000001")
+            put("requestId", "9d3b6e17-0000-4000-8000-000000000002")
+            put("state", "accepted")
+            put("taskVersion", 1)
+            put("eventSeq", 0)
+            put("acceptedAt", 1_700_000_000_000L)
+        }
+        val running = reduceRemoteTask(
+            RemoteTaskPhase.Submitted("system_status", "9d3b6e17-0000-4000-8000-000000000002"),
+            event("task.accepted", accepted),
+        ) as RemoteTaskPhase.Running
+
+        val ack = buildJsonObject {
+            put("taskId", "0f3d0c1e-0000-4000-8000-000000000001")
+            put("outcome", "cancelled")
+            put("state", "cancelled")
+        }
+        val afterAck = reduceRemoteTask(
+            running.copy(cancellationRequested = true),
+            event("task.cancel_ack", ack),
+        ) as RemoteTaskPhase.Running
+
+        assertEquals("0f3d0c1e-0000-4000-8000-000000000001", afterAck.taskId)
+        assertEquals("9d3b6e17-0000-4000-8000-000000000002", afterAck.requestId)
+        assertEquals(false, afterAck.cancellationRequested)
+        assertEquals("cancelled", afterAck.cancellationAck?.outcome)
+        assertEquals("Cancelled", afterAck.cancellationAck?.state)
+    }
+
+    @Test
+    fun cancelAcknowledgementForDifferentTaskIsIgnored() {
+        val running = RemoteTaskPhase.Running(
+            stateLabel = "Running",
+            summary = "Working",
+            percentComplete = null,
+            steps = listOf("Working"),
+            taskId = "0f3d0c1e-0000-4000-8000-000000000001",
+            requestId = "9d3b6e17-0000-4000-8000-000000000002",
+        )
+        val ack = buildJsonObject {
+            put("taskId", "aaaaaaaa-0000-4000-8000-000000000000")
+            put("outcome", "cancelled")
+            put("state", "cancelled")
+        }
+        assertEquals(running, reduceRemoteTask(running, event("task.cancel_ack", ack)))
     }
 
     @Test

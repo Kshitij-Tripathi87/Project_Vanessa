@@ -162,10 +162,10 @@ class RemoteControlActivity : FragmentActivity() {
 
                         is RemoteTaskPhase.Running -> TaskExecutionScreen(
                             phase = phase,
-                            onStop = {},
-                            // The bridge exposes no cancel path yet, so no stop
-                            // control is drawn rather than drawing a dead one.
-                            canStop = false,
+                            onStop = { requestTaskCancellation(phase) },
+                            canStop = !phase.taskId.isNullOrBlank() &&
+                                !phase.requestId.isNullOrBlank() &&
+                                phase.cancellationAck == null,
                         )
 
                         is RemoteTaskPhase.Finished -> TaskResultScreen(
@@ -230,11 +230,37 @@ class RemoteControlActivity : FragmentActivity() {
             try {
                 val requestId = bridge.submitTask(capability, arguments, intent)
                 latestEvent = "Task submitted: $requestId"
-                taskPhase = RemoteTaskPhase.Submitted(capability)
+                taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
             } catch (error: Exception) {
                 latestEvent = "Task was not submitted: ${error.message ?: "unknown error"}"
             } finally {
                 requestBusy = false
+            }
+        }
+    }
+
+    private fun requestTaskCancellation(phase: RemoteTaskPhase.Running) {
+        if (phase.cancellationRequested || phase.cancellationAck != null) return
+        val taskId = phase.taskId ?: return
+        val requestId = phase.requestId ?: return
+
+        // This is a pending request, not a local claim that execution stopped.
+        taskPhase = phase.copy(cancellationRequested = true, cancellationError = null)
+        lifecycleScope.launch {
+            try {
+                bridge.cancelTask(
+                    taskId = taskId,
+                    requestId = requestId,
+                    reason = "Cancelled from Vanessa Android",
+                )
+            } catch (error: Exception) {
+                val current = taskPhase as? RemoteTaskPhase.Running
+                if (current?.taskId == taskId) {
+                    taskPhase = current.copy(
+                        cancellationRequested = false,
+                        cancellationError = "Could not send cancellation: ${error.message ?: "connection unavailable"}",
+                    )
+                }
             }
         }
     }
