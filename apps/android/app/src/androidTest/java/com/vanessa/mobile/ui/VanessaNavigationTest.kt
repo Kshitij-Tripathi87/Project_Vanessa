@@ -92,7 +92,7 @@ class VanessaNavigationTest {
         enterAssistant()
 
         composeRule.onNodeWithText("How can I help?").assertIsDisplayed()
-        composeRule.onNodeWithText("No local model is active yet.").assertIsDisplayed()
+        composeRule.onNodeWithText("Add a local model in Settings to start a conversation.").assertIsDisplayed()
         composeRule.onNodeWithText(
             "No local model is active. Vanessa will not run a request until a model is installed.",
         ).assertIsDisplayed()
