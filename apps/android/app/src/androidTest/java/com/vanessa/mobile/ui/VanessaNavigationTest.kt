@@ -80,7 +80,13 @@ class VanessaNavigationTest {
      * response is showing, so it is a stable "we are home" signal — unlike the
      * greeting, which the first answer replaces.
      */
-    private fun composerVisible(): Boolean = exists("Type a message…")
+    private fun composerVisible(): Boolean = runCatching {
+        // OutlinedTextField merges placeholder semantics into the editable
+        // node; the placeholder is therefore not a standalone text node.
+        // Inspect the actual input action and require it to be visible.
+        composeRule.onNode(hasSetTextAction()).assertIsDisplayed()
+        true
+    }.getOrDefault(false)
 
     @Test
     fun firstRunFlowReachesTheAssistantWithoutClaimingAModel() {
