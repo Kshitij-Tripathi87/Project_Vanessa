@@ -53,8 +53,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -82,6 +80,7 @@ import androidx.compose.ui.unit.sp
 import com.vanessa.mobile.ui.components.EnergyWave
 import com.vanessa.mobile.ui.components.NeonButton
 import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.NeonTextField
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.model.InstalledModel
@@ -472,24 +471,15 @@ private fun SettingsScreen(
                 "The installed model is detected and loaded automatically when the device has sufficient memory. Model weights are not bundled in the APK.",
                 color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall,
             )
-            OutlinedTextField(
+            NeonTextField(
                 value = expectedModelSha256,
                 onValueChange = { if (it.length <= 64) expectedModelSha256 = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Expected SHA-256 (optional)") },
-                placeholder = { Text("64-character checksum") },
-                singleLine = true,
+                label = "Expected SHA-256 (optional)",
+                placeholder = "64-character checksum",
                 enabled = !modelImportBusy,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = VanessaPalette.Cyan,
-                    unfocusedBorderColor = VanessaPalette.Border,
-                    focusedTextColor = VanessaPalette.TextPrimary,
-                    unfocusedTextColor = VanessaPalette.TextPrimary,
-                    cursorColor = VanessaPalette.Cyan,
-                    focusedContainerColor = VanessaPalette.SurfaceStrong,
-                    unfocusedContainerColor = VanessaPalette.SurfaceStrong,
-                ),
+                singleLine = true,
+                minHeight = 54.dp,
             )
             NeonButton(
                 text = if (modelImportBusy) "Importing model…" else "Import GGUF",

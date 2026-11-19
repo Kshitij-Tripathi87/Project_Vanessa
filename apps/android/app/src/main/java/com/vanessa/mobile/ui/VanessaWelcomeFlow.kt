@@ -267,7 +267,7 @@ internal fun OnboardingScreen(
             }
 
             Spacer(Modifier.height(18.dp))
-            ProgressDots(total = 4, active = 0)
+            ProgressDots(total = 4, active = 1)
             Spacer(Modifier.height(20.dp))
             GlowPillButton(
                 text = "Continue",
@@ -283,7 +283,7 @@ internal fun OnboardingScreen(
 private fun FeatureCard(icon: ImageVector, title: String, subtitle: String) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = VanessaPalette.Surface.copy(alpha = 0.82f),
+        color = VanessaPalette.Surface,
         shape = RoundedCornerShape(18.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
     ) {
@@ -375,7 +375,9 @@ internal fun PermissionsScreen(
             modifier = Modifier.padding(horizontal = 18.dp),
         )
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
+        ProgressDots(total = 4, active = 2)
+        Spacer(Modifier.height(10.dp))
         Box(modifier = Modifier.size(228.dp), contentAlignment = Alignment.Center) {
             VanessaOrb(size = 132.dp, energy = 0.3f, offline = false, description = null)
             PermissionBubble(
@@ -407,7 +409,7 @@ internal fun PermissionsScreen(
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = VanessaPalette.Surface.copy(alpha = 0.9f),
+            color = VanessaPalette.Surface,
             shape = RoundedCornerShape(20.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
         ) {
@@ -471,7 +473,7 @@ private fun PermissionBubble(
         modifier = modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(VanessaPalette.SurfaceStrong.copy(alpha = 0.9f))
+            .background(VanessaPalette.SurfaceStrong)
             .background(
                 Brush.radialGradient(
                     listOf(
