@@ -277,13 +277,13 @@ private fun PairingScreen(
                 modifier = Modifier.padding(vertical = 24.dp, horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Box(
-                    modifier = Modifier.size(184.dp).border(1.dp, VanessaPalette.Border, RoundedCornerShape(22.dp))
-                        .background(VanessaPalette.SurfaceStrong, RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.QrCode2, contentDescription = "Pairing QR code placeholder", tint = VanessaPalette.TextSecondary, modifier = Modifier.size(82.dp))
-                }
+                VanessaOrb(
+                    size = 144.dp,
+                    energy = 0.24f,
+                    offline = false,
+                    ringCount = 2,
+                    description = "Vanessa orb. Ready to pair with Windows.",
+                )
                 Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Open Vanessa on your PC and display its one-time pairing code.",
@@ -341,7 +341,7 @@ private fun PcDashboardScreen(
                     Text("MY DEVICES", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
                     Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
                 }
-                StatusPill("NOT PAIRED", VanessaPalette.TextSecondary)
+                StatusPill("PC CONTROL", VanessaPalette.TextSecondary)
             }
 
             Column(
@@ -382,8 +382,8 @@ private fun PcDashboardScreen(
                         Box(Modifier.size(8.dp).clip(CircleShape).background(VanessaPalette.Warning))
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Not connected", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-                            Text("No live PC session is active.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                            Text("Connection status", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge)
+                            Text("Open remote control to check the live session.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     ThinDivider()
@@ -440,16 +440,22 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
-            }
+            NeonIconButton(
+                icon = Icons.Outlined.ArrowBack,
+                contentDescription = "Back to assistant home",
+                onClick = { onNavigate("HOME") },
+                diameter = 44.dp,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text("PREFERENCES", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
                 Text("Settings", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "Refresh device information", tint = VanessaPalette.TextSecondary)
-            }
+            NeonIconButton(
+                icon = Icons.Outlined.Refresh,
+                contentDescription = "Refresh device information",
+                onClick = onRefresh,
+                diameter = 44.dp,
+            )
         }
 
         SettingsSection("LOCAL MODEL") {
