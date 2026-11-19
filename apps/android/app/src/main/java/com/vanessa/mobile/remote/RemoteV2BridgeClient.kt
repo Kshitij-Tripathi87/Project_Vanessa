@@ -179,8 +179,9 @@ class RemoteV2BridgeClient(context: Context) {
         requestId: String,
         reason: String? = null,
     ) {
-        require(taskId.matches(Regex("^[0-9a-fA-F-]{36}$"))) { "Task ID is malformed." }
-        require(requestId.matches(Regex("^[0-9a-fA-F-]{36}$"))) { "Request ID is malformed." }
+        val uuidPattern = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+        require(taskId.matches(uuidPattern)) { "Task ID is malformed." }
+        require(requestId.matches(uuidPattern)) { "Request ID is malformed." }
         val payload = buildJsonObject {
             put("taskId", taskId)
             put("requestId", requestId)

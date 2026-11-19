@@ -101,7 +101,11 @@ internal sealed interface RemoteTaskPhase {
         val requestId: String? = null,
     ) : RemoteTaskPhase
 
-    data class AwaitingApproval(val approval: PendingApproval) : RemoteTaskPhase
+    data class AwaitingApproval(
+        val approval: PendingApproval,
+        /** Carried from task.submit/task.accepted so the task can still be stopped after approval. */
+        val requestId: String? = null,
+    ) : RemoteTaskPhase
 
     data class Running(
         val stateLabel: String,
@@ -276,7 +280,15 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                     retryable = false,
                 )
             } else {
-                RemoteTaskPhase.AwaitingApproval(parsed)
+                val submittedRequestId = when (phase) {
+                    is RemoteTaskPhase.Submitted -> phase.requestId
+                    is RemoteTaskPhase.Running -> phase.requestId
+                    else -> null
+                }
+                RemoteTaskPhase.AwaitingApproval(
+                    approval = parsed,
+                    requestId = submittedRequestId,
+                )
             }
         }
 

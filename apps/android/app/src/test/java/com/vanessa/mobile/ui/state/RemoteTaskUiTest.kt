@@ -204,6 +204,34 @@ class RemoteTaskUiTest {
     }
 
     @Test
+    fun protectedApprovalPreservesRequestIdForLaterCancellation() {
+        val requestId = "9d3b6e17-0000-4000-8000-000000000002"
+        val taskId = "0f3d0c1e-0000-4000-8000-000000000001"
+        val accepted = buildJsonObject {
+            put("requestId", requestId)
+            put("taskId", taskId)
+            put("state", "accepted")
+            put("safeSummary", "Accepted.")
+            put("eventSeq", 1)
+        }
+        val running = reduceRemoteTask(
+            RemoteTaskPhase.Submitted("delete_files", requestId),
+            event("task.accepted", accepted),
+        )
+        val confirmation = buildJsonObject {
+            put("approval", approval())
+            put("eventSeq", 2)
+        }
+        val awaiting = reduceRemoteTask(
+            running,
+            event("task.confirmation_required", confirmation),
+        ) as RemoteTaskPhase.AwaitingApproval
+
+        assertEquals(taskId, awaiting.approval.taskId)
+        assertEquals(requestId, awaiting.requestId)
+    }
+
+    @Test
     fun approvalParsesTheBindingAndTarget() {
         val payload = buildJsonObject {
             put("approval", approval())

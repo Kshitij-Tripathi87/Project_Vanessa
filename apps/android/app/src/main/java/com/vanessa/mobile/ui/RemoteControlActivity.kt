@@ -256,7 +256,7 @@ class RemoteControlActivity : FragmentActivity() {
                     when (val phase = taskPhase) {
                         is RemoteTaskPhase.AwaitingApproval -> TaskApprovalScreen(
                             approval = phase.approval,
-                            onApprove = { beginBiometricApproval(phase.approval) },
+                            onApprove = { beginBiometricApproval(phase.approval, phase.requestId) },
                             onDeny = { denyTask(phase.approval) },
                             onBack = { taskPhase = RemoteTaskPhase.Idle },
                             busy = approvalBusy,
@@ -388,7 +388,7 @@ class RemoteControlActivity : FragmentActivity() {
      * computed over the approval's own binding fields, so a signature harvested
      * for one request cannot be replayed against another.
      */
-    private fun beginBiometricApproval(approval: PendingApproval) {
+    private fun beginBiometricApproval(approval: PendingApproval, requestId: String?) {
         if (approvalBusy) return
         approvalBusy = true
         approvalKeyStore.authenticateForSignature(
@@ -428,6 +428,8 @@ class RemoteControlActivity : FragmentActivity() {
                             summary = "Waiting for the PC to verify your signature.",
                             percentComplete = null,
                             steps = listOf("You approved this action."),
+                            taskId = approval.taskId,
+                            requestId = requestId,
                         )
                     } catch (error: Exception) {
                         taskPhase = RemoteTaskPhase.Failed(
