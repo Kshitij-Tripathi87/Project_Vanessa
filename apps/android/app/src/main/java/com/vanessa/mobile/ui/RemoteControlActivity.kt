@@ -63,6 +63,10 @@ import com.vanessa.mobile.ui.screens.TaskExecutionScreen
 import com.vanessa.mobile.ui.screens.TaskResultScreen
 import com.vanessa.mobile.ui.state.PendingApproval
 import com.vanessa.mobile.ui.state.RemoteTaskPhase
+import com.vanessa.mobile.ui.screens.TaskRecoveryScreen
+import com.vanessa.mobile.ui.state.decodeRemoteTaskPhase
+import com.vanessa.mobile.ui.state.encodeRemoteTaskPhase
+import com.vanessa.mobile.ui.state.phaseOnConnectionChange
 import com.vanessa.mobile.ui.state.reduceRemoteTask
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -92,6 +96,9 @@ class RemoteControlActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Rotation must not destroy a pending approval or a running task, and
+        // must not resurrect one either: decoding rebuilds only what was saved.
+        taskPhase = decodeRemoteTaskPhase(savedInstanceState?.getString(KEY_TASK_PHASE))
         window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
         window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
         setContent {
@@ -278,6 +285,20 @@ class RemoteControlActivity : FragmentActivity() {
                                 runRemoteTask("system_status")
                             },
                         )
+                        is RemoteTaskPhase.Recovering -> TaskRecoveryScreen(
+                            title = "Reconnecting",
+                            message = phase.detail,
+                            working = true,
+                            onDismiss = { taskPhase = RemoteTaskPhase.Idle },
+                        )
+
+                        is RemoteTaskPhase.Unrecoverable -> TaskRecoveryScreen(
+                            title = phase.title,
+                            message = phase.message,
+                            working = false,
+                            onDismiss = { taskPhase = RemoteTaskPhase.Idle },
+                        )
+
                         is RemoteTaskPhase.Failed -> TaskErrorScreen(
                             message = phase.message,
                             retryable = phase.retryable,
@@ -294,9 +315,24 @@ class RemoteControlActivity : FragmentActivity() {
         }
         bridge.connectToSavedPc(
             scope = lifecycleScope,
-            onState = { state -> runOnUiThread { connectionStatus = state } },
+            onState = { state -> runOnUiThread { handleConnectionState(state) } },
             onEvent = ::handleRemoteEvent,
         )?.let { bridgeJob = it }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_TASK_PHASE, encodeRemoteTaskPhase(taskPhase))
+    }
+
+    /**
+     * One place where a connection change becomes a screen change. A dropped
+     * socket turns a running task into [RemoteTaskPhase.Recovering]; it never
+     * leaves the last summary sitting there pretending to be live.
+     */
+    private fun handleConnectionState(state: String) {
+        connectionStatus = state
+        taskPhase = phaseOnConnectionChange(taskPhase, state)
     }
 
     private fun connectWithQr() {
@@ -304,7 +340,7 @@ class RemoteControlActivity : FragmentActivity() {
         bridgeJob = bridge.connectWithQr(
             scope = lifecycleScope,
             qrPayload = qrPayload,
-            onState = { state -> runOnUiThread { connectionStatus = state } },
+            onState = { state -> runOnUiThread { handleConnectionState(state) } },
             onEvent = ::handleRemoteEvent,
         )
     }
@@ -313,7 +349,7 @@ class RemoteControlActivity : FragmentActivity() {
         bridgeJob?.cancel()
         bridgeJob = bridge.connectToSavedPc(
             scope = lifecycleScope,
-            onState = { state -> runOnUiThread { connectionStatus = state } },
+            onState = { state -> runOnUiThread { handleConnectionState(state) } },
             onEvent = ::handleRemoteEvent,
         )
         if (bridgeJob == null) connectionStatus = "No paired PC is saved. Paste a fresh PC pairing QR payload."
@@ -484,5 +520,8 @@ class RemoteControlActivity : FragmentActivity() {
         bridgeJob?.cancel()
         bridge.close()
         super.onDestroy()
+    }
+    private companion object {
+        const val KEY_TASK_PHASE = "vanessa.remote.task.phase"
     }
 }

@@ -1,9 +1,16 @@
 package com.vanessa.mobile.ui.state
 
 import com.vanessa.mobile.remote.RemoteV2Event
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /**
  * The remote task lifecycle, as the phone is allowed to describe it.
@@ -126,6 +133,25 @@ internal sealed interface RemoteTaskPhase {
 
     /** A protocol error or a lost connection — not a task outcome. */
     data class Failed(val message: String, val retryable: Boolean) : RemoteTaskPhase
+
+    /**
+     * A session is being re-established and the PC's snapshots are still
+     * arriving. Shown instead of the last known screen so a stale "Executing"
+     * never sits on screen while the phone has no idea what is happening.
+     */
+    data class Recovering(
+        val detail: String = "Checking what the PC is still working on…",
+    ) : RemoteTaskPhase
+
+    /**
+     * The PC answered, but not with enough to rebuild the screen.
+     *
+     * This exists so recovery can fail honestly. The temptation is to fill the
+     * gap with the last thing we saw on this device and present it as current
+     * state; that would be a fabricated status indicator, which is exactly what
+     * the design brief forbids.
+     */
+    data class Unrecoverable(val title: String, val message: String) : RemoteTaskPhase
 }
 
 /** Human label for a protocol state. Unknown values stay legible, never hidden. */
@@ -233,6 +259,214 @@ private fun parseCancellationAcknowledgement(payload: JsonObject): CancellationA
  * leave the phase untouched — the remote screen must not flash "Running" because
  * a manifest arrived.
  */
+/* ---------------------------- recovery ---------------------------------- */
+
+private val TERMINAL_STATES = setOf(
+    "succeeded", "partial", "failed", "cancelled", "timed_out", "interrupted",
+)
+
+private fun isTerminal(state: String): Boolean = state in TERMINAL_STATES
+
+/** One entry of `sync.snapshot.tasks` / `task.snapshot.task`. */
+private data class TaskSnapshotEntry(
+    val taskId: String,
+    val requestId: String?,
+    val state: String,
+    val updatedAt: Long,
+    val safeSummary: String,
+)
+
+private fun parseTaskSnapshot(json: JsonObject): TaskSnapshotEntry? {
+    val taskId = json.string("taskId") ?: return null
+    return TaskSnapshotEntry(
+        taskId = taskId,
+        requestId = json.string("requestId"),
+        state = json.string("state") ?: "unknown",
+        updatedAt = json.long("updatedAt") ?: 0L,
+        safeSummary = json.string("safeSummary").orEmpty(),
+    )
+}
+
+/**
+ * A sync event carries a flat `safePayload` and never raw tool output. If it
+ * holds a human line we use it; otherwise the state label is the honest thing
+ * to show, because it is what the PC actually said.
+ */
+private fun TaskEventLine(state: String, event: JsonObject): String {
+    val safe = event["safePayload"] as? JsonObject
+    val line = safe?.string("safeSummary")
+        ?: safe?.string("summary")
+        ?: safe?.string("detail")
+    return line?.takeIf { it.isNotBlank() } ?: stateLabel(state)
+}
+
+private fun eventsFor(payload: JsonObject, taskId: String): List<String> =
+    (payload["events"] as? JsonArray)
+        .orEmpty()
+        .mapNotNull { it as? JsonObject }
+        .filter { it.string("taskId") == taskId }
+        .sortedBy { (it["eventSeq"] as? JsonPrimitive)?.longOrNull ?: 0L }
+        .mapNotNull { event ->
+            val state = event.string("state") ?: return@mapNotNull null
+            TaskEventLine(state, event)
+        }
+        .fold(emptyList<String>()) { acc, line -> appendStep(acc, line) }
+        .takeLast(8)
+
+private fun statusFromState(state: String): ResultStatus = when (state) {
+    "succeeded" -> ResultStatus.SUCCEEDED
+    "partial" -> ResultStatus.PARTIAL
+    "failed" -> ResultStatus.FAILED
+    "cancelled" -> ResultStatus.CANCELLED
+    "timed_out" -> ResultStatus.TIMED_OUT
+    "interrupted" -> ResultStatus.INTERRUPTED
+    else -> ResultStatus.UNKNOWN
+}
+
+/** The task a phase is about, if it is about one. Used to refuse cross-task updates. */
+private fun phaseTaskId(phase: RemoteTaskPhase): String? = when (phase) {
+    is RemoteTaskPhase.Running -> phase.taskId
+    is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
+    else -> null
+}
+
+private fun lastReportedPercent(phase: RemoteTaskPhase, taskId: String): Int? =
+    (phase as? RemoteTaskPhase.Running)?.takeIf { it.taskId == taskId }?.percentComplete
+
+/**
+ * Rebuilds the screen from a `sync.snapshot`.
+ *
+ * Three refusals define this function, and each one is a place where a lesser
+ * implementation would invent state:
+ *
+ *  - `historyGap` means the PC discarded the events we missed. We cannot know
+ *    what happened, so we say so instead of guessing from the last summary.
+ *  - `awaiting_approval` cannot be restored: the snapshot has no approval
+ *    identifier, action hash or expiry, so there is nothing to sign and no
+ *    request we could honestly put an Approve button in front of.
+ *  - a terminal snapshot never carries a verification block, so a restored
+ *    "succeeded" is reported as unverified — never as a green tick.
+ */
+internal fun recoverFromSnapshot(payload: JsonObject): RemoteTaskPhase {
+    val tasks = (payload["tasks"] as? JsonArray)
+        .orEmpty()
+        .mapNotNull { (it as? JsonObject)?.let(::parseTaskSnapshot) }
+    if (tasks.isEmpty()) return RemoteTaskPhase.Idle
+
+    val chosen = tasks.filterNot { isTerminal(it.state) }.maxByOrNull { it.updatedAt }
+        ?: tasks.maxByOrNull { it.updatedAt }
+        ?: return RemoteTaskPhase.Idle
+
+    if (payload.bool("historyGap")) {
+        return RemoteTaskPhase.Unrecoverable(
+            title = "Can't rebuild this task",
+            message = "The PC no longer holds the updates for " +
+                "${chosen.safeSummary.ifBlank { "this task" }}, so Vanessa can't show " +
+                "what has happened since. Check the task on the PC.",
+        )
+    }
+
+    if (chosen.state == "awaiting_approval") {
+        return RemoteTaskPhase.Unrecoverable(
+            title = "Waiting for approval",
+            message = "The PC is waiting on an approval for this task. This phone can't " +
+                "rebuild the signed request, so approve or cancel it on the PC, or let it expire.",
+        )
+    }
+
+    if (isTerminal(chosen.state)) {
+        return RemoteTaskPhase.Finished(
+            TaskOutcome(
+                status = statusFromState(chosen.state),
+                verification = VerificationStatus.UNKNOWN,
+                verificationSummary = "",
+                safeSummary = chosen.safeSummary.ifBlank { stateLabel(chosen.state) },
+                completedAt = chosen.updatedAt,
+            ),
+        )
+    }
+
+    return RemoteTaskPhase.Running(
+        stateLabel = stateLabel(chosen.state),
+        summary = chosen.safeSummary.ifBlank { "The PC is still working on this task." },
+        // A snapshot has no percentComplete field. Null is the truth.
+        percentComplete = null,
+        steps = eventsFor(payload, chosen.taskId),
+        taskId = chosen.taskId,
+        requestId = chosen.requestId,
+    )
+}
+
+/** A single task refresh (`task.snapshot`), or one replayed event (`sync.event`). */
+internal fun applyTaskSnapshot(phase: RemoteTaskPhase, payload: JsonObject): RemoteTaskPhase {
+    val task = (payload["task"] as? JsonObject)?.let(::parseTaskSnapshot) ?: return phase
+    val current = phaseTaskId(phase)
+    if (current != null && current != task.taskId) return phase
+
+    if (isTerminal(task.state)) {
+        return RemoteTaskPhase.Finished(
+            TaskOutcome(
+                status = statusFromState(task.state),
+                verification = VerificationStatus.UNKNOWN,
+                verificationSummary = "",
+                safeSummary = task.safeSummary.ifBlank { stateLabel(task.state) },
+                completedAt = task.updatedAt,
+            ),
+        )
+    }
+    if (task.state == "awaiting_approval") {
+        return RemoteTaskPhase.Unrecoverable(
+            title = "Waiting for approval",
+            message = "The PC is waiting on an approval this phone can't rebuild. " +
+                "Approve or cancel it on the PC, or let it expire.",
+        )
+    }
+    return RemoteTaskPhase.Running(
+        stateLabel = stateLabel(task.state),
+        summary = task.safeSummary.ifBlank { "The PC is still working on this task." },
+        percentComplete = lastReportedPercent(phase, task.taskId),
+        steps = (phase as? RemoteTaskPhase.Running)?.steps.orEmpty(),
+        taskId = task.taskId,
+        requestId = task.requestId,
+    )
+}
+
+internal fun applySyncEvent(phase: RemoteTaskPhase, payload: JsonObject): RemoteTaskPhase {
+    val event = payload["event"] as? JsonObject ?: return phase
+    val taskId = event.string("taskId") ?: return phase
+    val state = event.string("state") ?: return phase
+    val current = phaseTaskId(phase)
+    if (current != null && current != taskId) return phase
+    val line = TaskEventLine(state, event)
+
+    if (isTerminal(state)) {
+        return RemoteTaskPhase.Finished(
+            TaskOutcome(
+                status = statusFromState(state),
+                verification = VerificationStatus.UNKNOWN,
+                verificationSummary = "",
+                safeSummary = line,
+                completedAt = (event["at"] as? JsonPrimitive)?.longOrNull ?: 0L,
+            ),
+        )
+    }
+    if (state == "awaiting_approval") {
+        return RemoteTaskPhase.Unrecoverable(
+            title = "Waiting for approval",
+            message = "The PC is waiting on an approval this phone can't rebuild. " +
+                "Approve or cancel it on the PC, or let it expire.",
+        )
+    }
+    return RemoteTaskPhase.Running(
+        stateLabel = stateLabel(state),
+        summary = line,
+        percentComplete = lastReportedPercent(phase, taskId),
+        steps = appendStep((phase as? RemoteTaskPhase.Running)?.steps.orEmpty(), line),
+        taskId = taskId,
+        requestId = (phase as? RemoteTaskPhase.Running)?.requestId,
+    )
+}
+
 internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): RemoteTaskPhase {
     val payload = event.payload
     return when (event.type) {
@@ -315,6 +549,198 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
             retryable = payload.bool("retryable"),
         )
 
+        // ---- reconnect / recovery ----------------------------------------
+        "sync.snapshot" -> recoverFromSnapshot(payload)
+        "sync.event" -> applySyncEvent(phase, payload)
+        "task.snapshot" -> applyTaskSnapshot(phase, payload)
+        "sync.complete" ->
+            if (phase is RemoteTaskPhase.Recovering) RemoteTaskPhase.Idle else phase
+
+        else -> phase
+    }
+}
+
+/* --------------------- surviving Activity recreation --------------------- */
+
+/**
+ * Serialises a phase for `onSaveInstanceState`.
+ *
+ * Rotation must not destroy a pending approval or a running task, and it must
+ * also not *recreate* one: decoding only rebuilds what was encoded, so a
+ * restored screen can never claim a state the app was not already showing.
+ * Deliberately a string rather than a `Parcelable` so the round trip is
+ * testable on the JVM without Robolectric.
+ */
+internal fun encodeRemoteTaskPhase(phase: RemoteTaskPhase): String = when (phase) {
+    RemoteTaskPhase.Idle -> buildJsonObject { put("kind", "idle") }
+
+    is RemoteTaskPhase.Submitted -> buildJsonObject {
+        put("kind", "submitted")
+        phase.capability?.let { put("capability", it) }
+        phase.requestId?.let { put("requestId", it) }
+    }
+
+    is RemoteTaskPhase.AwaitingApproval -> buildJsonObject {
+        put("kind", "awaiting")
+        put("approvalId", phase.approval.approvalId)
+        put("taskId", phase.approval.taskId)
+        put("actionHash", phase.approval.actionHash)
+        put("deviceId", phase.approval.deviceId)
+        put("capability", phase.approval.capability)
+        put("consequence", phase.approval.consequence)
+        put("targetKind", phase.approval.targetKind)
+        put("targetValue", phase.approval.targetValue)
+        put("expiresAt", phase.approval.expiresAt)
+        phase.requestId?.let { put("requestId", it) }
+    }
+
+    is RemoteTaskPhase.Running -> buildJsonObject {
+        put("kind", "running")
+        put("stateLabel", phase.stateLabel)
+        put("summary", phase.summary)
+        phase.percentComplete?.let { put("percentComplete", it) }
+        put("steps", JsonArray(phase.steps.map { JsonPrimitive(it) }))
+        phase.taskId?.let { put("taskId", it) }
+        phase.requestId?.let { put("requestId", it) }
+        put("cancellationRequested", phase.cancellationRequested)
+    }
+
+    is RemoteTaskPhase.Finished -> buildJsonObject {
+        put("kind", "finished")
+        put("status", phase.outcome.status.name)
+        put("verification", phase.outcome.verification.name)
+        put("verificationSummary", phase.outcome.verificationSummary)
+        put("safeSummary", phase.outcome.safeSummary)
+        put("completedAt", phase.outcome.completedAt)
+    }
+
+    is RemoteTaskPhase.Failed -> buildJsonObject {
+        put("kind", "failed")
+        put("message", phase.message)
+        put("retryable", phase.retryable)
+    }
+
+    is RemoteTaskPhase.Recovering -> buildJsonObject {
+        put("kind", "recovering")
+        put("detail", phase.detail)
+    }
+
+    is RemoteTaskPhase.Unrecoverable -> buildJsonObject {
+        put("kind", "unrecoverable")
+        put("title", phase.title)
+        put("message", phase.message)
+    }
+}.toString()
+
+/** Anything unreadable decodes to [RemoteTaskPhase.Idle]: no screen is safer than a wrong one. */
+internal fun decodeRemoteTaskPhase(raw: String?): RemoteTaskPhase {
+    if (raw.isNullOrBlank()) return RemoteTaskPhase.Idle
+    val json = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+        ?: return RemoteTaskPhase.Idle
+    fun text(key: String): String? = (json[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+    fun num(key: String): Long? = (json[key] as? JsonPrimitive)?.longOrNull
+    fun flag(key: String): Boolean =
+        (json[key] as? JsonPrimitive)?.let { runCatching { it.content.toBoolean() }.getOrDefault(false) }
+            ?: false
+
+    return when (text("kind")) {
+        "submitted" -> RemoteTaskPhase.Submitted(text("capability"), text("requestId"))
+
+        "awaiting" -> {
+            val approvalId = text("approvalId")
+            val taskId = text("taskId")
+            val actionHash = text("actionHash")
+            val deviceId = text("deviceId")
+            // A restored approval is only offered when the full binding survived.
+            if (approvalId == null || taskId == null || actionHash == null || deviceId == null) {
+                RemoteTaskPhase.Unrecoverable(
+                    title = "Approval lost",
+                    message = "Vanessa restarted while this approval was open and could not " +
+                        "rebuild the signed request. Approve or cancel it on the PC.",
+                )
+            } else {
+                RemoteTaskPhase.AwaitingApproval(
+                    approval = PendingApproval(
+                        approvalId = approvalId,
+                        taskId = taskId,
+                        actionHash = actionHash,
+                        deviceId = deviceId,
+                        capability = text("capability") ?: "PC action",
+                        consequence = text("consequence") ?: "The PC requested a protected operation.",
+                        targetKind = text("targetKind").orEmpty(),
+                        targetValue = text("targetValue").orEmpty(),
+                        expiresAt = num("expiresAt") ?: 0L,
+                    ),
+                    requestId = text("requestId"),
+                )
+            }
+        }
+
+        "running" -> RemoteTaskPhase.Running(
+            stateLabel = text("stateLabel") ?: "Working",
+            summary = text("summary").orEmpty(),
+            percentComplete = num("percentComplete")?.toInt()?.coerceIn(0, 100),
+            steps = (json["steps"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                .takeLast(8),
+            taskId = text("taskId"),
+            requestId = text("requestId"),
+            cancellationRequested = flag("cancellationRequested"),
+        )
+
+        "finished" -> {
+            val status = text("status")?.let { name ->
+                ResultStatus.entries.firstOrNull { it.name == name }
+            } ?: ResultStatus.UNKNOWN
+            val verification = text("verification")?.let { name ->
+                VerificationStatus.entries.firstOrNull { it.name == name }
+            } ?: VerificationStatus.UNKNOWN
+            RemoteTaskPhase.Finished(
+                TaskOutcome(
+                    status = status,
+                    verification = verification,
+                    verificationSummary = text("verificationSummary").orEmpty(),
+                    safeSummary = text("safeSummary").orEmpty(),
+                    completedAt = num("completedAt") ?: 0L,
+                ),
+            )
+        }
+
+        "failed" -> RemoteTaskPhase.Failed(text("message") ?: "Unknown error.", flag("retryable"))
+
+        "recovering" -> RemoteTaskPhase.Recovering(text("detail") ?: "Reconnecting to the PC…")
+
+        "unrecoverable" -> RemoteTaskPhase.Unrecoverable(
+            title = text("title") ?: "State unavailable",
+            message = text("message").orEmpty(),
+        )
+
+        else -> RemoteTaskPhase.Idle
+    }
+}
+
+/**
+ * What the screen should say when the connection changes under it.
+ *
+ * A running task whose PC connection dropped is not "still running" as far as
+ * this phone knows — it becomes [RemoteTaskPhase.Recovering] until the PC's
+ * snapshots say otherwise.
+ *
+ * A pending approval is deliberately left alone: the request is still a fact,
+ * it has its own expiry, and a decision made now fails closed through the
+ * signature path rather than being silently discarded by a connection blip.
+ */
+internal fun phaseOnConnectionChange(
+    phase: RemoteTaskPhase,
+    connectionState: String,
+): RemoteTaskPhase {
+    val stalled = connectionState.startsWith("Remote PC disconnected") ||
+        connectionState.startsWith("Reconnecting") ||
+        connectionState.startsWith("Connecting")
+    if (!stalled) return phase
+    return when (phase) {
+        is RemoteTaskPhase.Running,
+        is RemoteTaskPhase.Submitted -> RemoteTaskPhase.Recovering("Reconnecting to the PC…")
         else -> phase
     }
 }
