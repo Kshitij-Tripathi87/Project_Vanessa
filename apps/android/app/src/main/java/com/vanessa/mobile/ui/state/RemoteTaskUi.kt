@@ -272,7 +272,9 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
             )
         }
         "task.confirmation_required" -> {
-            if (phase !is RemoteTaskPhase.Submitted && phase !is RemoteTaskPhase.Running) return phase
+            // The protocol emits task.accepted before approval. Require the
+            // assigned task ID before showing a screen that can sign approval.
+            val running = phase as? RemoteTaskPhase.Running ?: return phase
             val approval = payload["approval"] as? JsonObject
             val parsed = approval?.let(::parsePendingApproval)
             if (parsed == null) {
@@ -281,14 +283,8 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                     retryable = false,
                 )
             } else {
-                val activeTaskId = (phase as? RemoteTaskPhase.Running)?.taskId
-                if (activeTaskId != null && parsed.taskId != activeTaskId) return phase
-                val requestId = when (phase) {
-                    is RemoteTaskPhase.Submitted -> phase.requestId
-                    is RemoteTaskPhase.Running -> phase.requestId
-                    else -> null
-                }
-                RemoteTaskPhase.AwaitingApproval(parsed, requestId)
+                if (parsed.taskId != running.taskId) return phase
+                RemoteTaskPhase.AwaitingApproval(parsed, running.requestId)
             }
         }
         "task.cancel_ack" -> {
@@ -315,8 +311,13 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                 is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
                 else -> null
             }
-            if (eventTaskId != null && activeTaskId != null && eventTaskId != activeTaskId) return phase
-            if (eventTaskId == null && phase !is RemoteTaskPhase.Submitted) return phase
+            if (phase is RemoteTaskPhase.Submitted) {
+                // Only an unassigned rejection can be correlated by ordering
+                // before task.accepted; a supplied taskId cannot be matched yet.
+                if (eventTaskId != null) return phase
+            } else if (eventTaskId == null || eventTaskId != activeTaskId) {
+                return phase
+            }
             RemoteTaskPhase.Failed(
                 message = payload.string("message") ?: "The PC reported an error.",
                 retryable = payload.bool("retryable"),
@@ -329,7 +330,7 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
                 is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
                 else -> null
             }
-            if (eventTaskId != null && activeTaskId != null && eventTaskId != activeTaskId) return phase
+            if (eventTaskId != null && (activeTaskId == null || eventTaskId != activeTaskId)) return phase
             RemoteTaskPhase.Failed(
                 message = payload.string("message") ?: payload.toString(),
                 retryable = payload.bool("retryable"),

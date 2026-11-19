@@ -279,6 +279,17 @@ class RemoteTaskUiTest {
         assertEquals(running, reduceRemoteTask(running, event("task.error", stale)))
     }
 
+    @Test fun taskErrorWithUnmatchedTaskIdIsIgnoredBeforeAcceptance() {
+        val submitted = RemoteTaskPhase.Submitted("open_app", REQUEST_ID)
+        val stale = buildJsonObject {
+            put("taskId", OTHER_TASK_ID)
+            put("code", "TASK_FAILED")
+            put("message", "Unmatched task error.")
+            put("retryable", false)
+        }
+        assertEquals(submitted, reduceRemoteTask(submitted, event("task.error", stale)))
+    }
+
     @Test fun taskErrorWithoutTaskIdIsIgnoredAfterAcceptance() {
         val running = runningPhase()
         val stale = buildJsonObject {

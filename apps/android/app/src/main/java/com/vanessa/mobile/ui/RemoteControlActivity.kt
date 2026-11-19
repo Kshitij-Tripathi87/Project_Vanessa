@@ -260,7 +260,6 @@ class RemoteControlActivity : FragmentActivity() {
                             approval = phase.approval,
                             onApprove = { beginBiometricApproval(phase.approval, phase.requestId) },
                             onDeny = { denyTask(phase.approval) },
-                            onBack = { taskPhase = RemoteTaskPhase.Idle },
                             busy = approvalBusy,
                         )
                         is RemoteTaskPhase.Running -> TaskExecutionScreen(
