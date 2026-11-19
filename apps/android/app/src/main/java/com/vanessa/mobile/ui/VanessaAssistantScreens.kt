@@ -56,6 +56,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.EnergyWave
+import com.vanessa.mobile.ui.components.ProgressRing
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
 
 /**
  * Screens 4–8 of the reconstruction brief, wired to Vanessa's real state.
@@ -91,7 +95,7 @@ internal fun ChatScreen(
     var menuExpanded by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -364,7 +368,7 @@ internal fun ListeningScreen(
     onTypeInstead: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()
@@ -661,7 +665,7 @@ internal fun ExecutingScreen(
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -714,7 +718,7 @@ internal fun ExecutingScreen(
 
             Spacer(Modifier.height(12.dp))
             Box(modifier = Modifier.size(228.dp), contentAlignment = Alignment.Center) {
-                VanessaProgressArcs(modifier = Modifier.fillMaxSize(), progress = 0.45f)
+                ProgressRing(modifier = Modifier.fillMaxSize(), progress = 0.45f)
                 VanessaOrb(
                     size = 132.dp,
                     energy = 0.55f,
@@ -783,7 +787,7 @@ internal fun SuccessScreen(
     onDone: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()

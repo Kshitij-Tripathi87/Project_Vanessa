@@ -1,4 +1,7 @@
-package com.vanessa.mobile.ui
+package com.vanessa.mobile.ui.components
+
+import com.vanessa.mobile.ui.rememberMotionClock
+import com.vanessa.mobile.ui.theme.VanessaPalette
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -20,7 +23,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * The flowing N-waveform (design spec §4).
+ * The flowing N-waveform: Vanessa's energy field.
  *
  * Deliberately not an equaliser. These are overlapping luminous ribbons on
  * smooth sine curves with differing amplitudes, frequencies and drift
@@ -33,7 +36,7 @@ import kotlin.math.sin
  * indication of state, not a claimed measurement of the microphone.
  */
 @Composable
-internal fun VanessaWaveform(
+internal fun EnergyWave(
     modifier: Modifier = Modifier,
     intensity: Float = 1f,
 ) {
@@ -152,7 +155,7 @@ private fun DrawScope.drawWaveform(time: Float, intensity: Float) {
  * one would be fake precision.
  */
 @Composable
-internal fun VanessaProgressArcs(
+internal fun ProgressRing(
     modifier: Modifier = Modifier,
     progress: Float = 0.42f,
 ) {
@@ -215,7 +218,7 @@ internal fun VanessaProgressArcs(
  * screen. Two gradients: a wide soft column and a narrow hot core.
  */
 @Composable
-internal fun VanessaLightBeam(modifier: Modifier = Modifier) {
+internal fun LightBeam(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
         val width = size.width
         val height = size.height

@@ -78,36 +78,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.model.InstalledModel
 import com.vanessa.mobile.profile.DeviceProfile
 import java.io.File
 import java.util.Locale
-
-internal object VanessaPalette {
-    // Design spec §2. These are the single source of truth for surface,
-    // glow and state colour across every screen.
-    val Obsidian = Color(0xFF03050A)
-    val Navy = Color(0xFF080F22)
-    val Card = Color(0xFF151C2D)
-    val CardDeep = Color(0xFF101728)
-    val Brand = Color(0xFF0755FF)
-    val BlueSoft = Color(0xFF2E6BFF)
-    val Cyan = Color(0xFF35A5FF)
-    val Lime = Color(0xFFA8F443)
-    val Border = Color(0xFF1E2A44)
-
-    val Background = Obsidian
-    val Surface = Card
-    val SurfaceStrong = CardDeep
-
-    val TextPrimary = Color(0xFFFFFFFF)
-    val TextSecondary = Color(0xFFB9C5DA)
-    val TextDim = Color(0xFF7C879B)
-
-    val Success = Lime
-    val Error = Color(0xFFEF4444)
-    val Warning = Color(0xFFFFB020)
-}
 
 @Composable
 internal fun VanessaApp(
