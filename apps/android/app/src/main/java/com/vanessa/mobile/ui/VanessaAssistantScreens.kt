@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +103,9 @@ internal fun ChatScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val messageScrollState = rememberScrollState()
     LaunchedEffect(messages.size, assistantBusy) {
+        // Wait until the newly-added message row has been measured before
+        // reading maxValue; otherwise the first scroll can stop one row short.
+        withFrameNanos { }
         messageScrollState.animateScrollTo(messageScrollState.maxValue)
     }
 
@@ -121,13 +125,12 @@ internal fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box {
-                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(44.dp)) {
-                        Icon(
-                            Icons.Outlined.Menu,
-                            contentDescription = "Open navigation menu",
-                            tint = VanessaPalette.TextSecondary,
-                        )
-                    }
+                    NeonIconButton(
+                        icon = Icons.Outlined.Menu,
+                        contentDescription = "Open navigation menu",
+                        onClick = { menuExpanded = true },
+                        diameter = 42.dp,
+                    )
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text("Assistant") },
@@ -146,13 +149,13 @@ internal fun ChatScreen(
                 Spacer(Modifier.weight(1f))
                 Text("Vanessa", color = VanessaPalette.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onListen, modifier = Modifier.size(44.dp)) {
-                    Icon(
-                        Icons.Outlined.GraphicEq,
-                        contentDescription = "Start voice interaction",
-                        tint = VanessaPalette.Cyan,
-                    )
-                }
+                NeonIconButton(
+                    icon = Icons.Outlined.GraphicEq,
+                    contentDescription = "Start voice interaction",
+                    onClick = onListen,
+                    diameter = 42.dp,
+                    highlighted = true,
+                )
             }
 
             Column(

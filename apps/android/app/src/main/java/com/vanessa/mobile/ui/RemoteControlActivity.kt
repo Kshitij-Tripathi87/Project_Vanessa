@@ -92,6 +92,8 @@ class RemoteControlActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
+        window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
         setContent {
             VanessaTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = VanessaPalette.Obsidian) {
