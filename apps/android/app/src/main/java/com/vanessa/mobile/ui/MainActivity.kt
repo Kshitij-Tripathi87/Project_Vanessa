@@ -105,9 +105,12 @@ class MainActivity : ComponentActivity() {
                 // The retry is a fresh run from the chat; it must not inherit
                 // the previous progress route as its origin.
                 destination = VanessaDestination.HOME
-                if (granted) runAssistant(retry, recordUserMessage = false)
-                else assistantResponse =
-                    "Calendar permission was denied. Vanessa did not read any calendar events."
+                if (granted) {
+                    runAssistant(retry, recordUserMessage = false)
+                } else {
+                    assistantResponse = "Calendar permission was denied. Vanessa did not read any calendar events."
+                    appendChatMessage(fromUser = false, text = assistantResponse)
+                }
             }
         }
 
@@ -656,6 +659,7 @@ class MainActivity : ComponentActivity() {
             } catch (error: Exception) {
                 assistantResponse =
                     "The local task could not be completed: ${error.message ?: "unknown error"}"
+                appendChatMessage(fromUser = false, text = assistantResponse)
             } finally {
                 if (!awaitingPermission) {
                     assistantBusy = false

@@ -73,14 +73,11 @@ internal data class VanessaChatMessage(
 /**
  * Screens 4–8 of the reconstruction brief, wired to Vanessa's real state.
  *
- * The visual composition is the specification's; the claims are the app's.
- * - Listening shows the actual on-device recogniser state and says so when
- *   no recogniser exists.
- * - Confirm Action only ever appears with a concrete [ApprovalRequest] the
- *   activity produced, so the copy cannot describe an action nobody queued.
- * - Executing lists only steps that were actually observed; there is no
- *   fabricated percentage.
- * - Success is reached only when work genuinely completed.
+ * The visual composition follows the reference; execution status is reported
+ * conservatively. Local work uses an indeterminate indicator because the
+ * local planner does not publish a percentage. Remote PC work uses the
+ * separate protocol-driven execution screen, which shows a percentage only
+ * when the PC reports one.
  */
 
 // ───────────────────────────── 5 · Chat ─────────────────────────────
@@ -694,10 +691,23 @@ internal fun ExecutingScreen(
                 lineHeight = 17.sp,
                 textAlign = TextAlign.Center,
             )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Working locally on this device. No remote progress percentage is available for this task.",
+                color = VanessaPalette.TextDim,
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                textAlign = TextAlign.Center,
+            )
 
             Spacer(Modifier.height(12.dp))
             Box(modifier = Modifier.size(228.dp), contentAlignment = Alignment.Center) {
-                ProgressRing(modifier = Modifier.fillMaxSize(), progress = 0.45f)
+                CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize().padding(22.dp),
+                    color = VanessaPalette.Cyan,
+                    trackColor = VanessaPalette.Border,
+                    strokeWidth = 2.5.dp,
+                )
                 VanessaOrb(
                     size = 132.dp,
                     energy = 0.55f,
