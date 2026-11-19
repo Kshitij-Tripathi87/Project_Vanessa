@@ -79,7 +79,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.EnergyWave
 import com.vanessa.mobile.ui.components.NeonButton
+import com.vanessa.mobile.ui.components.NeonIconButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.model.InstalledModel
@@ -317,68 +319,93 @@ private fun PcDashboardScreen(
     inset: Dp,
     onNavigate: (String) -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = inset).padding(top = 18.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("MY PC", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
-                Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
-            }
-            StatusPill("PC CONTROL", VanessaPalette.TextSecondary)
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-        ) {
-            Column(
-                modifier = Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Box(
-                    modifier = Modifier.size(92.dp).clip(CircleShape).background(VanessaPalette.SurfaceStrong),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.Computer, contentDescription = null, tint = VanessaPalette.TextSecondary, modifier = Modifier.size(42.dp))
-                }
-                Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "Open remote control to pair a Windows companion or resume a saved connection. Live state is shown in the remote control screen.",
-                    color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
-                )
-                NeonButton(
-                    text = "Pair with Windows",
-                    leadingIcon = Icons.Outlined.QrCode2,
-                    trailingIcon = Icons.Outlined.ChevronRight,
-                    onClick = { onNavigate("PAIRING") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-        SectionHeading("DEVICE STATUS", "No live telemetry")
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(18.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                DeviceMetricRow(Icons.Outlined.Memory, "Processor", "Open remote control to inspect")
-                ThinDivider()
-                DeviceMetricRow(Icons.Outlined.Storage, "Memory", "Unavailable until connected")
-                ThinDivider()
-                DeviceMetricRow(Icons.Outlined.WifiOff, "Network", "Not checked in this dashboard")
-            }
-        }
-        InlineNotice(
-            "Connection state and verified task results are shown in the remote control screen; this dashboard does not infer a live PC session.",
-            NoticeTone.INFO,
+    Box(modifier = Modifier.fillMaxSize()) {
+        EnergyWave(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(220.dp),
+            intensity = 0.46f,
         )
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(horizontal = inset).padding(top = 16.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                NeonIconButton(
+                    icon = Icons.Outlined.ArrowBack,
+                    contentDescription = "Back to assistant",
+                    onClick = { onNavigate("HOME") },
+                    diameter = 44.dp,
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("MY DEVICES", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
+                    Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
+                }
+                StatusPill("NOT PAIRED", VanessaPalette.TextSecondary)
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                VanessaOrb(
+                    size = 164.dp,
+                    energy = 0.20f,
+                    offline = false,
+                    ringCount = 3,
+                    description = "Vanessa orb. Windows PC is not paired.",
+                )
+                Text(
+                    "Your PC, in reach.",
+                    color = VanessaPalette.TextPrimary,
+                    style = MaterialTheme.typography.headlineMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    "Pair your Windows companion to access approved tasks from this phone.",
+                    color = VanessaPalette.TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = VanessaPalette.Surface,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                    Text("CONNECTION", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.2.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(VanessaPalette.Warning))
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Not connected", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge)
+                            Text("No live PC session is active.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    ThinDivider()
+                    DeviceMetricRow(Icons.Outlined.Lock, "Trust", "A new phone must be approved locally on Windows")
+                }
+            }
+
+            NeonButton(
+                text = "Pair with Windows",
+                leadingIcon = Icons.Outlined.QrCode2,
+                trailingIcon = Icons.Outlined.ChevronRight,
+                onClick = { onNavigate("PAIRING") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Connection details and live task results appear after the authenticated PC session is established.",
+                modifier = Modifier.fillMaxWidth(),
+                color = VanessaPalette.TextSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -523,11 +550,15 @@ private fun SettingsScreen(
 @Composable
 private fun ScreenHeader(title: String, eyebrow: String, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = VanessaPalette.TextPrimary)
-        }
+        NeonIconButton(
+            icon = Icons.Outlined.ArrowBack,
+            contentDescription = "Back",
+            onClick = onBack,
+            diameter = 44.dp,
+        )
+        Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(eyebrow, color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.3.sp)
+            Text(eyebrow, color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.3.sp)
             Text(title, color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
         }
     }
