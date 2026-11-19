@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.NeonButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.model.InstalledModel
@@ -97,6 +99,7 @@ internal fun VanessaApp(
     modelLoaded: Boolean,
     modelBusy: Boolean,
     prompt: String,
+    chatMessages: List<VanessaChatMessage>,
     assistantResponse: String,
     assistantMetrics: String,
     assistantBusy: Boolean,
@@ -136,7 +139,7 @@ internal fun VanessaApp(
             SplashScreen(startupMessage)
         } else {
             Column(
-                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding(),
             ) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     when (destination) {
@@ -199,6 +202,7 @@ internal fun VanessaApp(
                             modelBusy = modelBusy,
                             assistantBusy = assistantBusy,
                             prompt = prompt,
+                            messages = chatMessages,
                             response = assistantResponse,
                             metrics = assistantMetrics,
                             speechReady = speechReady,
@@ -283,15 +287,13 @@ private fun PairingScreen(
                     "Open Vanessa on your PC and display its one-time pairing code.",
                     color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
                 )
-                Button(
-                    onClick = onStartPairing, modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.SurfaceStrong, contentColor = VanessaPalette.TextPrimary),
-                ) {
-                    Icon(Icons.Outlined.Lock, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Scan PC pairing code")
-                }
+                NeonButton(
+                    text = "Scan PC pairing code",
+                    onClick = onStartPairing,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = Icons.Outlined.Lock,
+                    height = 52.dp,
+                )
                 Text(
                     "The remote control screen verifies the PC identity and completes authenticated v2 pairing. New phones require local approval on the PC.",
                     color = VanessaPalette.Warning, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
@@ -350,9 +352,10 @@ private fun PcDashboardScreen(
                     "Open remote control to pair a Windows companion or resume a saved connection. Live state is shown in the remote control screen.",
                     color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
                 )
-                PrimaryAction(
-                    "Pair with Windows",
-                    icon = { Icon(Icons.Outlined.QrCode2, contentDescription = null) },
+                NeonButton(
+                    text = "Pair with Windows",
+                    leadingIcon = Icons.Outlined.QrCode2,
+                    trailingIcon = Icons.Outlined.ChevronRight,
                     onClick = { onNavigate("PAIRING") },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -444,17 +447,23 @@ private fun SettingsScreen(
                 placeholder = { Text("64-character checksum") },
                 singleLine = true,
                 enabled = !modelImportBusy,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = VanessaPalette.Cyan,
+                    unfocusedBorderColor = VanessaPalette.Border,
+                    focusedTextColor = VanessaPalette.TextPrimary,
+                    unfocusedTextColor = VanessaPalette.TextPrimary,
+                    cursorColor = VanessaPalette.Cyan,
+                    focusedContainerColor = VanessaPalette.SurfaceStrong,
+                    unfocusedContainerColor = VanessaPalette.SurfaceStrong,
+                ),
             )
-            Button(
+            NeonButton(
+                text = if (modelImportBusy) "Importing model…" else "Import GGUF",
                 onClick = { onImportModel(expectedModelSha256.trim()) },
                 enabled = !modelImportBusy,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
-            ) {
-                Text(if (modelImportBusy) "Importing model…" else "Import GGUF")
-            }
+            )
             Text(
                 "Choose a .gguf file. Vanessa copies it to app-private storage, validates its GGUF header, computes SHA-256, and checks the optional expected checksum.",
                 color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall,

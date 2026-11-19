@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
     private var modelLoaded by mutableStateOf(false)
     private var modelBusy by mutableStateOf(false)
     private var prompt by mutableStateOf("")
+    private var chatMessages by mutableStateOf(emptyList<VanessaChatMessage>())
+    private var nextChatMessageId = 1L
     private var assistantResponse by mutableStateOf("")
     private var assistantMetrics by mutableStateOf("")
     private var assistantBusy by mutableStateOf(false)
@@ -103,7 +105,7 @@ class MainActivity : ComponentActivity() {
                 // The retry is a fresh run from the chat; it must not inherit
                 // the previous progress route as its origin.
                 destination = VanessaDestination.HOME
-                if (granted) runAssistant(retry)
+                if (granted) runAssistant(retry, recordUserMessage = false)
                 else assistantResponse =
                     "Calendar permission was denied. Vanessa did not read any calendar events."
             }
@@ -194,6 +196,7 @@ class MainActivity : ComponentActivity() {
                     modelLoaded = modelLoaded,
                     modelBusy = modelBusy,
                     prompt = prompt,
+                    chatMessages = chatMessages,
                     assistantResponse = assistantResponse,
                     assistantMetrics = assistantMetrics,
                     assistantBusy = assistantBusy,
@@ -212,7 +215,11 @@ class MainActivity : ComponentActivity() {
                         if (target == "PAIRING") pairingNotice = null
                     },
                     onPromptChange = { prompt = it },
-                    onRunAssistant = { runAssistant(prompt) },
+                    onRunAssistant = {
+                        val submitted = prompt.trim()
+                        prompt = ""
+                        runAssistant(submitted)
+                    },
                     onSpeakRequest = {
                         destination = VanessaDestination.LISTENING
                         requestSpeechInput()
@@ -251,7 +258,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onRequestPermissions = {
                         requestSetupPermissions(
-                            listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CALENDAR),
+                            listOf(Manifest.permission.RECORD_AUDIO),
                         )
                     },
                     onApprove = ::approvePendingAction,
@@ -278,7 +285,7 @@ class MainActivity : ComponentActivity() {
                     // The transcript lands in the chat, and runAssistant decides
                     // whether the request can actually run.
                     destination = VanessaDestination.HOME
-                    prompt = transcript
+                    prompt = ""
                     voiceListening = false
                     runAssistant(transcript)
                 }
@@ -561,22 +568,32 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun runAssistant(request: String) {
+    private fun appendChatMessage(fromUser: Boolean, text: String) {
+        if (text.isBlank()) return
+        chatMessages = (chatMessages + VanessaChatMessage(nextChatMessageId++, fromUser, text)).takeLast(100)
+    }
+
+    private fun runAssistant(request: String, recordUserMessage: Boolean = true) {
         val task = request.trim()
         if (task.isEmpty()) {
             assistantResponse = "Enter a request or use the microphone."
             return
         }
+        if (assistantBusy) return
+        if (recordUserMessage && chatMessages.lastOrNull()?.let { it.fromUser && it.text == task } != true) {
+            appendChatMessage(fromUser = true, text = task)
+        }
         if (modelBusy) {
             assistantResponse = "The local model is being installed or loaded. Try again when that operation finishes."
+            appendChatMessage(fromUser = false, text = assistantResponse)
             return
         }
         if (!modelLoaded) {
             assistantResponse =
                 "No local model is active. Vanessa has not run this request. Check the model and runtime status in Settings."
+            appendChatMessage(fromUser = false, text = assistantResponse)
             return
         }
-        if (assistantBusy) return
 
         assistantBusy = true
         assistantResponse = "Planning on this device…"
@@ -605,6 +622,7 @@ class MainActivity : ComponentActivity() {
                         assistantResponse = withContext(Dispatchers.Default) {
                             coordinator.respond(task, outcome.results)
                         }
+                        appendChatMessage(fromUser = false, text = assistantResponse)
                         engine.lastGenerationMetrics?.let {
                             assistantMetrics =
                                 "Last generation: ${it.ttftMs} ms TTFT · " +
@@ -624,12 +642,14 @@ class MainActivity : ComponentActivity() {
                             pendingAgentPrompt = task
                             assistantResponse =
                                 "Vanessa needs calendar access for this request. Android will ask for permission."
+                            appendChatMessage(fromUser = false, text = assistantResponse)
                             awaitingPermission = true
                             execution = null
                             destination = VanessaDestination.HOME
                             requestCalendar.launch(Manifest.permission.READ_CALENDAR)
                         } else {
                             assistantResponse = outcome.reason
+                            appendChatMessage(fromUser = false, text = assistantResponse)
                         }
                     }
                 }
