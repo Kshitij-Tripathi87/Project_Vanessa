@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -38,9 +37,15 @@ import androidx.lifecycle.lifecycleScope
 import com.vanessa.mobile.R
 import com.vanessa.mobile.remote.RemoteV2BridgeClient
 import com.vanessa.mobile.remote.RemoteV2Event
+import com.vanessa.mobile.ui.screens.TaskApprovalScreen
+import com.vanessa.mobile.ui.screens.TaskErrorScreen
+import com.vanessa.mobile.ui.screens.TaskExecutionScreen
+import com.vanessa.mobile.ui.screens.TaskResultScreen
+import com.vanessa.mobile.ui.state.PendingApproval
+import com.vanessa.mobile.ui.state.RemoteTaskPhase
+import com.vanessa.mobile.ui.state.reduceRemoteTask
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -62,7 +67,8 @@ class RemoteControlActivity : FragmentActivity() {
     private var latestEvent by mutableStateOf("No remote task has run.")
     private var bridgeJob: Job? by mutableStateOf(null)
     private var requestBusy by mutableStateOf(false)
-    private var pendingApproval by mutableStateOf<JsonObject?>(null)
+    private var taskPhase by mutableStateOf<RemoteTaskPhase>(RemoteTaskPhase.Idle)
+    private var approvalBusy by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,7 +85,11 @@ class RemoteControlActivity : FragmentActivity() {
                 )
             ) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Column(
+                    // The lifecycle screens replace this list rather than floating
+                    // over it: a stacked screen would leave the task buttons
+                    // tappable underneath an approval that has not been given.
+                    if (taskPhase is RemoteTaskPhase.Idle || taskPhase is RemoteTaskPhase.Submitted) {
+                                        Column(
                         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -140,20 +150,44 @@ class RemoteControlActivity : FragmentActivity() {
                         }
                         TextButton(onClick = ::disconnect) { Text("Disconnect") }
                     }
-                    pendingApproval?.let { approval ->
-                        AlertDialog(
-                            onDismissRequest = ::denyPendingTask,
-                            title = { Text("Approve action on Windows PC?") },
-                            text = { Text(approvalSummary(approval)) },
-                            confirmButton = {
-                                TextButton(onClick = ::beginBiometricApproval) {
-                                    Text("Approve with biometric")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = ::denyPendingTask) { Text("Deny") }
+                    }
+                    when (val phase = taskPhase) {
+                        is RemoteTaskPhase.AwaitingApproval -> TaskApprovalScreen(
+                            approval = phase.approval,
+                            onApprove = { beginBiometricApproval(phase.approval) },
+                            onDeny = { denyTask(phase.approval) },
+                            onBack = { taskPhase = RemoteTaskPhase.Idle },
+                            busy = approvalBusy,
+                        )
+
+                        is RemoteTaskPhase.Running -> TaskExecutionScreen(
+                            phase = phase,
+                            onStop = {},
+                            // The bridge exposes no cancel path yet, so no stop
+                            // control is drawn rather than drawing a dead one.
+                            canStop = false,
+                        )
+
+                        is RemoteTaskPhase.Finished -> TaskResultScreen(
+                            outcome = phase.outcome,
+                            onDone = { taskPhase = RemoteTaskPhase.Idle },
+                            onRetry = {
+                                taskPhase = RemoteTaskPhase.Idle
+                                runRemoteTask("system_status")
                             },
                         )
+
+                        is RemoteTaskPhase.Failed -> TaskErrorScreen(
+                            message = phase.message,
+                            retryable = phase.retryable,
+                            onBack = { taskPhase = RemoteTaskPhase.Idle },
+                            onRetry = {
+                                taskPhase = RemoteTaskPhase.Idle
+                                runRemoteTask("system_status")
+                            },
+                        )
+
+                        RemoteTaskPhase.Idle, is RemoteTaskPhase.Submitted -> Unit
                     }
                 }
             }
@@ -196,6 +230,7 @@ class RemoteControlActivity : FragmentActivity() {
             try {
                 val requestId = bridge.submitTask(capability, arguments, intent)
                 latestEvent = "Task submitted: $requestId"
+                taskPhase = RemoteTaskPhase.Submitted(capability)
             } catch (error: Exception) {
                 latestEvent = "Task was not submitted: ${error.message ?: "unknown error"}"
             } finally {
@@ -207,55 +242,45 @@ class RemoteControlActivity : FragmentActivity() {
     private fun handleRemoteEvent(event: RemoteV2Event) {
         runOnUiThread {
             when (event.type) {
-                "task.accepted" -> latestEvent = "PC accepted task ${event.payload["taskId"]?.toString() ?: ""}"
-                "task.progress" -> latestEvent = event.payload["safeSummary"]?.toString() ?: "PC task is running."
-                "task.result" -> latestEvent = "PC result: ${event.payload}"
-                "task.confirmation_required" -> {
-                    pendingApproval = event.payload["approval"] as? JsonObject
-                    latestEvent = "A protected action needs your explicit confirmation."
-                }
-                "task.error", "protocol.error" -> latestEvent = event.payload.toString()
-                "manifest.snapshot" -> latestEvent = "PC manifest loaded: ${event.payload["capabilities"]?.toString() ?: "no capabilities"}"
+                // Connection bookkeeping is not task state and must not push the
+                // lifecycle screens around.
                 "session.ready" -> connectionStatus = "Connected securely to PC."
-                else -> latestEvent = "${event.type}: ${event.payload}"
+                "manifest.snapshot" -> latestEvent =
+                    "PC manifest loaded: ${event.payload["capabilities"]?.toString() ?: "no capabilities"}"
+                else -> {
+                    taskPhase = reduceRemoteTask(taskPhase, event)
+                    if (taskPhase != RemoteTaskPhase.Idle) {
+                        latestEvent = (taskPhase as? RemoteTaskPhase.Running)?.summary
+                            ?: event.type
+                    }
+                }
             }
         }
     }
 
-    private fun approvalSummary(approval: JsonObject): String {
-        val capability = approval["capability"]?.toString() ?: "PC action"
-        val consequence = approval["consequence"]?.toString() ?: "The PC requested a protected operation."
-        val target = approval["target"]?.toString() ?: "Target not supplied"
-        val expiresAt = approval["expiresAt"]?.toString() ?: "unknown"
-        return "Capability: $capability\n\n$consequence\n\nTarget: $target\n\nExpires at: $expiresAt\n\nThe approval signature is bound to this exact request."
-    }
-
-    private fun beginBiometricApproval() {
-        val approval = pendingApproval ?: return
-        // Key availability and initialization are handled by the keystore
-        // wrapper so errors never escape the UI or trigger a weaker fallback.
+    /**
+     * Approval is the only place a protected action can proceed, and it only
+     * proceeds through the keystore's biometric-bound signature. The proof is
+     * computed over the approval's own binding fields, so a signature harvested
+     * for one request cannot be replayed against another.
+     */
+    private fun beginBiometricApproval(approval: PendingApproval) {
+        if (approvalBusy) return
+        approvalBusy = true
         approvalKeyStore.authenticateForSignature(
             activity = this,
             onSuccess = { approvalKeyId, authenticatedSignature ->
                 lifecycleScope.launch {
                     try {
                         val approvedAt = System.currentTimeMillis()
-                        val approvalId = approval["approvalId"]?.toString()?.trim('"')
-                            ?: error("Approval ID is missing.")
-                        val taskId = approval["taskId"]?.toString()?.trim('"')
-                            ?: error("Task ID is missing.")
-                        val actionHash = approval["actionHash"]?.toString()?.trim('"')
-                            ?: error("Action hash is missing.")
-                        val deviceId = approval["deviceId"]?.toString()?.trim('"')
-                            ?: error("Paired device ID is missing.")
                         val proofBinding = buildJsonObject {
-                            put("approvalId", approvalId)
-                            put("taskId", taskId)
-                            put("actionHash", actionHash)
+                            put("approvalId", approval.approvalId)
+                            put("taskId", approval.taskId)
+                            put("actionHash", approval.actionHash)
                             put("decision", "approved")
                             put("approvedAt", approvedAt)
                             put("method", "biometric_strong")
-                            put("deviceId", deviceId)
+                            put("deviceId", approval.deviceId)
                         }
                         authenticatedSignature.update(
                             JcsCanonicalizer.canonicalize(proofBinding).toByteArray(Charsets.UTF_8)
@@ -266,30 +291,55 @@ class RemoteControlActivity : FragmentActivity() {
                             put("keyId", approvalKeyId)
                             put("signature", encodedSignature)
                         }
-                        bridge.confirmTask(approvalId, taskId, actionHash, true, approvedAt, proof)
-                        pendingApproval = null
-                        latestEvent = "Biometric approval sent. Waiting for the PC verifier."
+                        bridge.confirmTask(
+                            approval.approvalId,
+                            approval.taskId,
+                            approval.actionHash,
+                            true,
+                            approvedAt,
+                            proof,
+                        )
+                        taskPhase = RemoteTaskPhase.Running(
+                            stateLabel = "Approval sent",
+                            summary = "Waiting for the PC to verify your signature.",
+                            percentComplete = null,
+                            steps = listOf("You approved this action."),
+                        )
                     } catch (error: Exception) {
-                        latestEvent = "Approval failed closed: ${error.message ?: "signature error"}"
+                        taskPhase = RemoteTaskPhase.Failed(
+                            message = "Approval failed closed: ${error.message ?: "signature error"}",
+                            retryable = false,
+                        )
+                    } finally {
+                        approvalBusy = false
                     }
                 }
             },
             onFailure = { reason ->
-                latestEvent = "Approval cancelled or failed: $reason. No approval was sent."
+                approvalBusy = false
+                taskPhase = RemoteTaskPhase.Failed(
+                    message = "Approval was not sent: $reason",
+                    retryable = true,
+                )
             },
         )
     }
 
-    private fun denyPendingTask() {
-        val approval = pendingApproval ?: return
-        val approvalId = approval["approvalId"]?.toString()?.trim('"') ?: return
-        val taskId = approval["taskId"]?.toString()?.trim('"') ?: return
-        val actionHash = approval["actionHash"]?.toString()?.trim('"') ?: return
-        pendingApproval = null
+    /** Cancelling sends a denial; nothing runs on the PC. */
+    private fun denyTask(approval: PendingApproval) {
+        taskPhase = RemoteTaskPhase.Failed(
+            message = "You denied the action. Nothing ran on the PC.",
+            retryable = false,
+        )
         lifecycleScope.launch {
             try {
-                bridge.confirmTask(approvalId, taskId, actionHash, false, System.currentTimeMillis())
-                latestEvent = "Action denied. No PC operation was executed."
+                bridge.confirmTask(
+                    approvalId = approval.approvalId,
+                    taskId = approval.taskId,
+                    actionHash = approval.actionHash,
+                    approved = false,
+                    approvedAt = System.currentTimeMillis(),
+                )
             } catch (error: Exception) {
                 latestEvent = "Denial could not be delivered: ${error.message ?: "connection lost"}"
             }
