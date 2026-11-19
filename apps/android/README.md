@@ -30,26 +30,62 @@ Onboarding is stored in `SharedPreferences` and shown once; every destination is
 
 ## Design implementation
 
-Colour and type come from the specification's §2 palette, declared once in
-`VanessaPalette` (`ui/VanessaApp.kt`):
+Colour and type come from the reference board, declared once and split by
+purpose:
+
+| File | Responsibility |
+|---|---|
+| `ui/theme/VanessaColors.kt` | Palette and the brushes built from it |
+| `ui/theme/VanessaTypography.kt` | The board's type scale, mapped onto Material's slots |
+| `ui/theme/VanessaDimensions.kt` | Radii, spacing, orb size fractions, motion timings |
+| `ui/theme/VanessaTheme.kt` | The Material theme (dark only, by design) |
 
 - Obsidian `#03050A` background, midnight navy `#080F22`, card surface `#151C2D`.
 - Electric blue `#0755FF`, cyan `#35A5FF`, lime `#A8F443` reserved for highlights, active states and completion.
 - Cool grey `#B9C5DA` secondary text, `#7C879B` dim labels, white primary text.
 
-Rendering is layered rather than baked:
+### The sphere is an asset; the light is not
+
+`res/drawable-nodpi/vanessa_sphere.png` is an original render: a black glass
+body, cobalt rim on the upper left, a lime spill on the lower right, on a black
+field. Its alpha is baked in and feathered just outside the silhouette, so it
+composites onto any background without a visible edge — no black pad, no
+clipping artefact.
+
+Everything that has to move is drawn in Compose on top of it:
 
 | File | Responsibility |
 |---|---|
-| `ui/VanessaOrb.kt` | Orb: bloom → rings behind → particles → black glass body → cobalt rim → cyan highlight → specular glint → lime spill → hot bottom rim → sheen → rings in front → completion check |
-| `ui/VanessaWaves.kt` | Ribbon waveform (four superposed sines), progress arcs, top light beam |
+| `ui/components/VanessaOrb.kt` | Bloom, orbits (behind and in front), particles, travelling rim light, cyan glint, lime spill, completion check |
+| `ui/components/OrbitalRings.kt` | Elliptical orbits split across the sphere's equator, with a light node per ring |
+| `ui/components/EnergyWave.kt` | Ribbon waveform (four superposed sines), progress ring, top light beam |
+| `ui/components/NeonButton.kt` | Primary sweep, secondary outline, circular icon control; 170 ms press response |
 | `ui/VanessaMotion.kt` | Per-element frame clock; honours the system animator duration scale |
-| `ui/VanessaWelcomeFlow.kt` | Welcome, onboarding, permissions |
-| `ui/VanessaAssistantScreens.kt` | Chat, listening, confirm, executing, success |
 
-The Compose canvas has no `shadowBlur`, so the reference's soft glow is rebuilt
-from stacked translucent strokes and gradients that fall to zero before their
-own edges — no hard seams and no card-like glow boxes.
+The division is deliberate. A still image carries sub-surface falloff and glass
+sheen better than a canvas can, but a still image cannot respond to the
+microphone, the model or the task runtime. Baked lighting plus animated overlays
+is the only arrangement that keeps both the depth and the *statefulness*.
+
+The Compose canvas has no `shadowBlur`, so soft glow is rebuilt from stacked
+translucent strokes and gradients that fall to zero before their own edges — no
+hard seams and no card-like glow boxes.
+
+### The task lifecycle
+
+`ui/state/RemoteTaskUi.kt` folds protocol-v2 events into the phase the screens
+render. It is pure, and unit-tested in `app/src/test/.../RemoteTaskUiTest.kt`:
+
+| File | Responsibility |
+|---|---|
+| `ui/screens/TaskApprovalScreen.kt` | Consequence, target and expiry as separate facts; biometric-only approval |
+| `ui/screens/TaskExecutionScreen.kt` | The PC's own state label and summaries; a ring only if a percentage was reported |
+| `ui/screens/TaskResultScreen.kt` | Five tones (success, partial, unverified, failure, unknown) and a protocol-error screen |
+
+The invariants it enforces, because they are the ones a polished UI is tempted
+to break: no percentage that the PC did not send; no green tick on a result the
+PC never verified; no approvable button for an approval that cannot be bound to
+an action hash; and no task outcome for a connection that simply went away.
 
 ### Deviations from the reference brief, and why
 
@@ -68,6 +104,18 @@ own edges — no hard seams and no card-like glow boxes.
 - **Waveform amplitude.** The recogniser does not expose an input level, so the
   waveform is driven by assistant state (idle, listening, working, complete).
   It is an indication of state, not a claimed measurement of the microphone.
+- **Stop control.** The protocol defines `task.cancel`, but the phone's bridge
+  client does not expose it yet. The execution screen therefore draws no stop
+  button instead of drawing one that does nothing. Wiring cancel — including
+  waiting for `task.cancel_ack` before claiming the task stopped — is the next
+  piece of work.
+- **Fonts.** The board asks for Inter / SF Pro Display / Manrope / Google Sans.
+  None is bundled: that means owning a licence and a download, and a
+  downloadable font silently falls back on a device with no network. The
+  platform sans is used with metrics tuned to the board's line heights.
+- **Pairing and settings screens.** Still on Material defaults in
+  `RemoteControlActivity`; they are migrated in the next pass. The lifecycle
+  screens that replace them for task work are fully on the new components.
 
 ## Build
 
