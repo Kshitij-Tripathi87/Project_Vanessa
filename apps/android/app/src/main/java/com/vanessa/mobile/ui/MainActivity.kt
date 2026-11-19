@@ -154,8 +154,8 @@ class MainActivity : ComponentActivity() {
             ?.let { runCatching { VanessaDestination.valueOf(it) }.getOrNull() }
             ?: if (onboardingComplete()) VanessaDestination.HOME else VanessaDestination.WELCOME
         prompt = savedInstanceState?.getString("vanessa_prompt").orEmpty()
-        window.statusBarColor = android.graphics.Color.rgb(10, 11, 15)
-        window.navigationBarColor = android.graphics.Color.rgb(10, 11, 15)
+        window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
+        window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
         microphonePermissionGranted = hasMicrophonePermission()
 
         setContent {
