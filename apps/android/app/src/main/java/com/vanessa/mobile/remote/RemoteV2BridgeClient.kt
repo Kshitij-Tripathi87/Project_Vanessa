@@ -155,9 +155,12 @@ class RemoteV2BridgeClient(context: Context) {
         capability: String,
         arguments: JsonObject = buildJsonObject {},
         intent: String? = null,
+        requestId: String = UUID.randomUUID().toString(),
     ): String {
         require(capability.matches(Regex("^[a-z][a-z0-9_]{1,63}$"))) { "Invalid capability name." }
-        val requestId = UUID.randomUUID().toString()
+        require(runCatching { UUID.fromString(requestId).toString() == requestId }.getOrDefault(false)) {
+            "Request ID must be a canonical UUID."
+        }
         val payload = buildJsonObject {
             put("requestId", requestId)
             put("idempotencyKey", "android-${UUID.randomUUID()}")

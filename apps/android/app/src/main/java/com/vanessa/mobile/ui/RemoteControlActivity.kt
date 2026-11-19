@@ -66,6 +66,7 @@ import com.vanessa.mobile.ui.state.RemoteTaskPhase
 import com.vanessa.mobile.ui.state.reduceRemoteTask
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.UUID
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -325,13 +326,28 @@ class RemoteControlActivity : FragmentActivity() {
     ) {
         if (requestBusy) return
         requestBusy = true
+        val requestId = UUID.randomUUID().toString()
+        // Publish the pending request before sending it. The PC can answer
+        // immediately after the signed frame is written; the reducer must
+        // already know which request ID is allowed to become active.
+        taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
         lifecycleScope.launch {
             try {
-                val requestId = bridge.submitTask(capability, arguments, intent)
+                bridge.submitTask(
+                    capability = capability,
+                    arguments = arguments,
+                    intent = intent,
+                    requestId = requestId,
+                )
                 latestEvent = "Task submitted: $requestId"
-                taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
             } catch (error: Exception) {
-                latestEvent = "Task was not submitted: ${error.message ?: "unknown error"}"
+                val current = taskPhase as? RemoteTaskPhase.Submitted
+                if (current?.requestId == requestId) {
+                    taskPhase = RemoteTaskPhase.Failed(
+                        message = "Task was not submitted: ${error.message ?: "unknown error"}",
+                        retryable = true,
+                    )
+                }
             } finally {
                 requestBusy = false
             }
