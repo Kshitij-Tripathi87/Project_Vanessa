@@ -167,6 +167,7 @@ internal fun parsePendingApproval(approval: JsonObject): PendingApproval? {
     val taskId = approval.string("taskId") ?: return null
     val actionHash = approval.string("actionHash") ?: return null
     val deviceId = approval.string("deviceId") ?: return null
+    val expiresAt = approval.long("expiresAt")?.takeIf { it > 0L } ?: return null
     val target = (approval["target"] as? JsonObject)
     return PendingApproval(
         approvalId = approvalId,
@@ -177,7 +178,7 @@ internal fun parsePendingApproval(approval: JsonObject): PendingApproval? {
         consequence = approval.string("consequence") ?: "The PC requested a protected operation.",
         targetKind = target?.string("kind").orEmpty(),
         targetValue = target?.string("value").orEmpty(),
-        expiresAt = approval.long("expiresAt") ?: 0L,
+        expiresAt = expiresAt,
     )
 }
 
@@ -237,84 +238,103 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
     val payload = event.payload
     return when (event.type) {
         "task.accepted" -> {
-            val summary = payload.string("safeSummary")
-                ?: "The PC accepted the task."
+            val submitted = phase as? RemoteTaskPhase.Submitted ?: return phase
+            val requestId = payload.string("requestId") ?: return phase
+            if (submitted.requestId != requestId) return phase
+            val taskId = payload.string("taskId") ?: return phase
+            val summary = payload.string("safeSummary") ?: "The PC accepted the task."
             RemoteTaskPhase.Running(
                 stateLabel = stateLabel(payload.string("state") ?: "accepted"),
                 summary = summary,
                 percentComplete = null,
                 steps = appendStep(emptyList(), summary),
-                taskId = payload.string("taskId"),
-                requestId = payload.string("requestId"),
+                taskId = taskId,
+                requestId = requestId,
             )
         }
-
         "task.progress" -> {
+            val previous = phase as? RemoteTaskPhase.Running ?: return phase
+            val incomingTaskId = payload.string("taskId") ?: return phase
+            if (previous.taskId != incomingTaskId) return phase
             val summary = payload.string("safeSummary").orEmpty()
-            val previous = phase as? RemoteTaskPhase.Running
-            val previousSteps = previous?.steps.orEmpty()
             val percent = (payload["percentComplete"] as? JsonPrimitive)
-                ?.intOrNull
-                ?.coerceIn(0, 100)
+                ?.intOrNull?.coerceIn(0, 100) ?: previous.percentComplete
             RemoteTaskPhase.Running(
                 stateLabel = stateLabel(payload.string("state") ?: "running"),
                 summary = summary.ifBlank { "The PC is working on it." },
                 percentComplete = percent,
-                steps = appendStep(previousSteps, summary),
-                taskId = payload.string("taskId") ?: previous?.taskId,
-                requestId = previous?.requestId,
-                cancellationRequested = previous?.cancellationRequested ?: false,
-                cancellationAck = previous?.cancellationAck,
-                cancellationError = previous?.cancellationError,
+                steps = appendStep(previous.steps, summary),
+                taskId = incomingTaskId,
+                requestId = previous.requestId,
+                cancellationRequested = previous.cancellationRequested,
+                cancellationAck = previous.cancellationAck,
+                cancellationError = previous.cancellationError,
             )
         }
-
         "task.confirmation_required" -> {
+            if (phase !is RemoteTaskPhase.Submitted && phase !is RemoteTaskPhase.Running) return phase
             val approval = payload["approval"] as? JsonObject
             val parsed = approval?.let(::parsePendingApproval)
             if (parsed == null) {
-                // An approval we cannot bind to an action hash is not approvable.
-                // Say so instead of offering a button that cannot work.
                 RemoteTaskPhase.Failed(
-                    message = "The PC asked for approval but did not send a complete request.",
+                    message = "The PC asked for approval but did not send a complete, time-limited request.",
                     retryable = false,
                 )
             } else {
-                val submittedRequestId = when (phase) {
+                val activeTaskId = (phase as? RemoteTaskPhase.Running)?.taskId
+                if (activeTaskId != null && parsed.taskId != activeTaskId) return phase
+                val requestId = when (phase) {
                     is RemoteTaskPhase.Submitted -> phase.requestId
                     is RemoteTaskPhase.Running -> phase.requestId
                     else -> null
                 }
-                RemoteTaskPhase.AwaitingApproval(
-                    approval = parsed,
-                    requestId = submittedRequestId,
-                )
+                RemoteTaskPhase.AwaitingApproval(parsed, requestId)
             }
         }
-
         "task.cancel_ack" -> {
             val previous = phase as? RemoteTaskPhase.Running ?: return phase
             if (payload.string("taskId") != previous.taskId) return phase
             val acknowledgement = parseCancellationAcknowledgement(payload) ?: return phase
-            previous.copy(
-                cancellationRequested = false,
-                cancellationAck = acknowledgement,
-                cancellationError = null,
+            previous.copy(cancellationRequested = false, cancellationAck = acknowledgement, cancellationError = null)
+        }
+        "task.result" -> {
+            val activeTaskId = when (phase) {
+                is RemoteTaskPhase.Running -> phase.taskId
+                is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
+                else -> null
+            } ?: return phase
+            if (payload.string("taskId") != activeTaskId) return phase
+            parseOutcome(payload)?.let { RemoteTaskPhase.Finished(it) } ?: phase
+        }
+        "task.error" -> {
+            if (phase !is RemoteTaskPhase.Submitted && phase !is RemoteTaskPhase.Running &&
+                phase !is RemoteTaskPhase.AwaitingApproval) return phase
+            val eventTaskId = payload.string("taskId")
+            val activeTaskId = when (phase) {
+                is RemoteTaskPhase.Running -> phase.taskId
+                is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
+                else -> null
+            }
+            if (eventTaskId != null && activeTaskId != null && eventTaskId != activeTaskId) return phase
+            if (eventTaskId == null && phase !is RemoteTaskPhase.Submitted) return phase
+            RemoteTaskPhase.Failed(
+                message = payload.string("message") ?: "The PC reported an error.",
+                retryable = payload.bool("retryable"),
             )
         }
-
-        "task.result" -> parseOutcome(payload)?.let { RemoteTaskPhase.Finished(it) } ?: phase
-
-        "task.error" -> RemoteTaskPhase.Failed(
-            message = payload.string("message") ?: "The PC reported an error.",
-            retryable = payload.bool("retryable"),
-        )
-
-        "protocol.error" -> RemoteTaskPhase.Failed(
-            message = payload.string("message") ?: payload.toString(),
-            retryable = payload.bool("retryable"),
-        )
-
+        "protocol.error" -> {
+            val eventTaskId = payload.string("taskId")
+            val activeTaskId = when (phase) {
+                is RemoteTaskPhase.Running -> phase.taskId
+                is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
+                else -> null
+            }
+            if (eventTaskId != null && activeTaskId != null && eventTaskId != activeTaskId) return phase
+            RemoteTaskPhase.Failed(
+                message = payload.string("message") ?: payload.toString(),
+                retryable = payload.bool("retryable"),
+            )
+        }
         else -> phase
     }
 }
