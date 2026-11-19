@@ -4,6 +4,7 @@ import ai.vanessa.agent.LocalPlanCoordinator
 import ai.vanessa.agent.LocalPlanError
 import ai.vanessa.agent.LocalPlanOutcome
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.content.pm.PackageManager
@@ -32,7 +33,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 
-private enum class VanessaDestination { HOME, VOICE, PAIRING, PC, SETTINGS }
+private enum class VanessaDestination {
+    WELCOME,
+    ONBOARDING,
+    PERMISSIONS,
+    HOME,
+    LISTENING,
+    CONFIRM,
+    EXECUTING,
+    SUCCESS,
+    PAIRING,
+    PC,
+    SETTINGS,
+}
 
 class MainActivity : ComponentActivity() {
     private var destination by mutableStateOf(VanessaDestination.HOME)
@@ -58,6 +71,18 @@ class MainActivity : ComponentActivity() {
     private var modelImportBusy by mutableStateOf(false)
     private var modelImportMessage by mutableStateOf("Models are stored privately on this device. Select a GGUF file to install it.")
     private var pendingModelChecksum: String? = null
+    private var approval by mutableStateOf<ApprovalRequest?>(null)
+    private var execution by mutableStateOf<ExecutionState?>(null)
+    private var completion by mutableStateOf(
+        CompletionState(title = "All set!", body = "Your request is complete.", detail = null),
+    )
+    /** Checksum the user typed, held while an approval is pending. */
+    private var pendingApprovalChecksum: String? = null
+    private val setupPermissionQueue = ArrayDeque<String>()
+
+    private val onboardingPreferences by lazy {
+        getSharedPreferences("vanessa_onboarding", Context.MODE_PRIVATE)
+    }
 
     private val profiler by lazy { AndroidDeviceProfiler(applicationContext) }
     private val calendarTool by lazy { CalendarSearchTool(applicationContext) }
@@ -74,6 +99,9 @@ class MainActivity : ComponentActivity() {
             pendingAgentPrompt = null
             if (retry != null) {
                 assistantBusy = false
+                // The retry is a fresh run from the chat; it must not inherit
+                // the previous progress route as its origin.
+                destination = VanessaDestination.HOME
                 if (granted) runAssistant(retry)
                 else assistantResponse =
                     "Calendar permission was denied. Vanessa did not read any calendar events."
@@ -90,12 +118,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val requestSetupPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+            // Refresh before continuing so the permissions screen reflects the
+            // answer it just received, then ask for the next one.
+            microphonePermissionGranted = hasMicrophonePermission()
+            refreshProfile()
+            runSetupPermissionQueue()
+        }
+
     private val requestModelDocument =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val expectedChecksum = pendingModelChecksum
             pendingModelChecksum = null
             if (uri == null) {
                 modelImportMessage = "Model selection cancelled."
+                if (destination == VanessaDestination.EXECUTING) {
+                    execution = null
+                    destination = VanessaDestination.SETTINGS
+                }
             } else {
                 importModel(uri, expectedChecksum)
             }
@@ -105,7 +146,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         destination = savedInstanceState?.getString("vanessa_destination")
             ?.let { runCatching { VanessaDestination.valueOf(it) }.getOrNull() }
-            ?: VanessaDestination.HOME
+            ?: if (onboardingComplete()) VanessaDestination.HOME else VanessaDestination.WELCOME
         prompt = savedInstanceState?.getString("vanessa_prompt").orEmpty()
         window.statusBarColor = android.graphics.Color.rgb(10, 11, 15)
         window.navigationBarColor = android.graphics.Color.rgb(10, 11, 15)
@@ -113,12 +154,31 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             VanessaTheme {
-                BackHandler(enabled = startupReady && destination != VanessaDestination.HOME) {
-                    destination = when (destination) {
-                        VanessaDestination.VOICE -> VanessaDestination.HOME
-                        VanessaDestination.PAIRING -> VanessaDestination.PC
-                        VanessaDestination.PC, VanessaDestination.SETTINGS -> VanessaDestination.HOME
-                        VanessaDestination.HOME -> VanessaDestination.HOME
+                // The welcome screen is the activity's first screen, so back
+                // there is left to the system (it exits) rather than trapped.
+                BackHandler(
+                    enabled = startupReady && destination != VanessaDestination.WELCOME &&
+                        destination != VanessaDestination.HOME,
+                ) {
+                    when (destination) {
+                        VanessaDestination.ONBOARDING -> destination = VanessaDestination.WELCOME
+                        VanessaDestination.PERMISSIONS -> destination = VanessaDestination.ONBOARDING
+                        VanessaDestination.LISTENING -> {
+                            stopSpeechInput()
+                            destination = VanessaDestination.HOME
+                        }
+                        VanessaDestination.CONFIRM -> {
+                            pendingApprovalChecksum = null
+                            approval = null
+                            destination = VanessaDestination.SETTINGS
+                        }
+                        // Work in progress is not cancellable from the route:
+                        // leaving mid-run would strand the result.
+                        VanessaDestination.EXECUTING -> Unit
+                        VanessaDestination.SUCCESS -> destination = VanessaDestination.HOME
+                        VanessaDestination.PAIRING -> destination = VanessaDestination.PC
+                        VanessaDestination.PC, VanessaDestination.SETTINGS -> destination = VanessaDestination.HOME
+                        else -> destination = VanessaDestination.HOME
                     }
                 }
 
@@ -152,16 +212,53 @@ class MainActivity : ComponentActivity() {
                     },
                     onPromptChange = { prompt = it },
                     onRunAssistant = { runAssistant(prompt) },
-                    onSpeakRequest = ::requestSpeechInput,
+                    onSpeakRequest = {
+                        destination = VanessaDestination.LISTENING
+                        requestSpeechInput()
+                    },
                     onStopSpeech = ::stopSpeechInput,
                     onSpeakResponse = ::speakAssistantResponse,
                     onRefresh = ::refreshProfile,
-                    onImportModel = ::chooseModel,
+                    onImportModel = { checksum ->
+                        val installed = installedModel
+                        if (installed == null) {
+                            // Nothing to destroy on a first install.
+                            chooseModel(checksum)
+                        } else {
+                            pendingApprovalChecksum = checksum
+                            approval = ApprovalRequest(
+                                title = "Confirm Action",
+                                body = "Vanessa will replace the installed local model. The current file is kept unless the selected one validates.",
+                                detail = "Current model: ${File(installed.path).name}",
+                                approveLabel = "Approve",
+                            )
+                            destination = VanessaDestination.CONFIRM
+                        }
+                    },
                     onStartPairing = {
                         pairingNotice = null
                         startActivity(Intent(this, RemoteControlActivity::class.java))
                     },
                     onDismissPairingNotice = { pairingNotice = null },
+                    approval = approval,
+                    execution = execution,
+                    completion = completion,
+                    onCompleteOnboarding = {
+                        markOnboardingComplete()
+                        approval = null
+                        destination = VanessaDestination.HOME
+                    },
+                    onRequestPermissions = {
+                        requestSetupPermissions(
+                            listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CALENDAR),
+                        )
+                    },
+                    onApprove = ::approvePendingAction,
+                    onCancelApproval = {
+                        pendingApprovalChecksum = null
+                        approval = null
+                        destination = VanessaDestination.SETTINGS
+                    },
                 )
             }
         }
@@ -177,7 +274,9 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             onTranscript = { transcript ->
                 runOnUiThread {
-                    destination = VanessaDestination.VOICE
+                    // The transcript lands in the chat, and runAssistant decides
+                    // whether the request can actually run.
+                    destination = VanessaDestination.HOME
                     prompt = transcript
                     voiceListening = false
                     runAssistant(transcript)
@@ -313,8 +412,15 @@ class MainActivity : ComponentActivity() {
         modelImportBusy = true
         modelBusy = true
         modelImportMessage = "Copying and validating the selected GGUF file…"
+        execution = ExecutionState(
+            title = "Replacing the local model",
+            subtitle = "Copying and validating the selected GGUF file",
+            steps = listOf(FlowStep("Copy and validate the selected GGUF", FlowStepState.ACTIVE)),
+        )
+        destination = VanessaDestination.EXECUTING
 
         lifecycleScope.launch {
+            var succeeded = false
             try {
                 when (val result = withContext(Dispatchers.IO) {
                     modelManager.importModel(uri, expectedSha256)
@@ -362,6 +468,14 @@ class MainActivity : ComponentActivity() {
                                     modelStatus = "The GGUF is installed, but loading was skipped because available memory is below the safe startup threshold ($requiredRamMb MB required)."
                                     modelImportMessage = "Imported and validated, but not loaded because available memory is too low. $checksumStatus SHA-256: ${imported.sha256}"
                                 } else {
+                                    execution = ExecutionState(
+                                        title = "Replacing the local model",
+                                        subtitle = "Loading the imported model on this device",
+                                        steps = listOf(
+                                            FlowStep("Copy and validate the selected GGUF", FlowStepState.DONE),
+                                            FlowStep("Load on this device", FlowStepState.ACTIVE),
+                                        ),
+                                    )
                                     modelStatus = "Loading the imported local model…"
                                     withContext(Dispatchers.IO) { loadEngine.loadModel(File(imported.path)) }
                                     modelLoaded = loadEngine.isModelLoaded
@@ -378,6 +492,17 @@ class MainActivity : ComponentActivity() {
                                 modelLoadVerified = modelLoaded,
                             )
                         }
+
+                        succeeded = true
+                        completion = CompletionState(
+                            title = "All set!",
+                            body = if (modelLoaded) {
+                                "The local model is installed and loaded on this device."
+                            } else {
+                                "The model is installed and validated, but it is not loaded."
+                            },
+                            detail = "SHA-256: " + imported.sha256.take(24) + "…",
+                        )
                     }
                     is com.vanessa.mobile.model.ModelImportResult.Failure -> {
                         modelImportMessage = "Import failed: ${result.reason}. The previous installed model was not replaced."
@@ -397,6 +522,10 @@ class MainActivity : ComponentActivity() {
             } finally {
                 modelBusy = false
                 modelImportBusy = false
+                execution = null
+                if (destination == VanessaDestination.EXECUTING) {
+                    destination = if (succeeded) VanessaDestination.SUCCESS else VanessaDestination.SETTINGS
+                }
             }
         }
     }
@@ -451,8 +580,19 @@ class MainActivity : ComponentActivity() {
         assistantBusy = true
         assistantResponse = "Planning on this device…"
         assistantMetrics = ""
+        val startedFromChat = destination == VanessaDestination.HOME ||
+            destination == VanessaDestination.LISTENING
+        if (startedFromChat) {
+            execution = ExecutionState(
+                title = "Executing Task…",
+                subtitle = "Running your request on this device",
+                steps = listOf(FlowStep("On-device model", FlowStepState.ACTIVE)),
+            )
+            destination = VanessaDestination.EXECUTING
+        }
         lifecycleScope.launch {
             var awaitingPermission = false
+            var succeeded = false
             try {
                 val engine = localInference()
                 val coordinator = LocalPlanCoordinator(
@@ -469,6 +609,12 @@ class MainActivity : ComponentActivity() {
                                 "Last generation: ${it.ttftMs} ms TTFT · " +
                                 String.format(Locale.ROOT, "%.1f", it.tokensPerSecond) + " tokens/s"
                         }
+                        succeeded = true
+                        completion = CompletionState(
+                            title = "All set!",
+                            body = "Your request is complete.",
+                            detail = assistantMetrics.ifBlank { null },
+                        )
                     }
                     is LocalPlanOutcome.Failure -> {
                         if (outcome.error == LocalPlanError.PERMISSION_REQUIRED &&
@@ -478,6 +624,8 @@ class MainActivity : ComponentActivity() {
                             assistantResponse =
                                 "Vanessa needs calendar access for this request. Android will ask for permission."
                             awaitingPermission = true
+                            execution = null
+                            destination = VanessaDestination.HOME
                             requestCalendar.launch(Manifest.permission.READ_CALENDAR)
                         } else {
                             assistantResponse = outcome.reason
@@ -488,9 +636,73 @@ class MainActivity : ComponentActivity() {
                 assistantResponse =
                     "The local task could not be completed: ${error.message ?: "unknown error"}"
             } finally {
-                if (!awaitingPermission) assistantBusy = false
+                if (!awaitingPermission) {
+                    assistantBusy = false
+                    execution = null
+                    // Only advance the route if the user is still watching this
+                    // run. If they closed it, the outcome stays in the chat and
+                    // is not pushed in front of them.
+                    if (startedFromChat && destination == VanessaDestination.EXECUTING) {
+                        destination = if (succeeded) VanessaDestination.SUCCESS else VanessaDestination.HOME
+                    }
+                }
             }
         }
+    }
+
+    private fun onboardingComplete(): Boolean =
+        onboardingPreferences.getBoolean("complete", false)
+
+    private fun markOnboardingComplete() {
+        onboardingPreferences.edit().putBoolean("complete", true).apply()
+    }
+
+    /**
+     * Asks for setup permissions one at a time. Launching two permission
+     * requests back to back would replace the first pending request, so the
+     * queue advances only from the launcher's callback.
+     */
+    private fun requestSetupPermissions(permissions: List<String>) {
+        setupPermissionQueue.clear()
+        setupPermissionQueue.addAll(permissions)
+        runSetupPermissionQueue()
+    }
+
+    private fun runSetupPermissionQueue() {
+        while (setupPermissionQueue.isNotEmpty()) {
+            val permission = setupPermissionQueue.removeFirst()
+            if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+                continue
+            }
+            requestSetupPermission.launch(permission)
+            return
+        }
+        microphonePermissionGranted = hasMicrophonePermission()
+        refreshProfile()
+    }
+
+    /**
+     * The user approved replacing the installed model. The checksum they typed
+     * is carried through the approval, so approving cannot silently drop it.
+     */
+    private fun approvePendingAction() {
+        val checksum = pendingApprovalChecksum.orEmpty()
+        pendingApprovalChecksum = null
+        approval = null
+
+        if (modelImportBusy || assistantBusy) {
+            modelImportMessage = "Finish the current local task before replacing the model."
+            destination = VanessaDestination.SETTINGS
+            return
+        }
+
+        execution = ExecutionState(
+            title = "Replacing the local model",
+            subtitle = "Waiting for you to choose a GGUF file",
+            steps = listOf(FlowStep("Copy and validate the selected GGUF", FlowStepState.ACTIVE)),
+        )
+        destination = VanessaDestination.EXECUTING
+        chooseModel(checksum)
     }
 
     private fun hasCalendarPermission(): Boolean =
