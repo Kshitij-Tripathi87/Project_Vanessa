@@ -1,17 +1,22 @@
 # Vanessa Android — local-first companion
 
-The Android launcher uses a local-first Compose interface with a restrained dark visual system, a state-aware Vanessa orb, scrollable feature screens, and explicit runtime status. The UI is organized around the user's primary flow rather than a catalog of setup cards.
+The Android launcher is a local-first Compose interface built to the Vanessa visual reconstruction specification: an obsidian-black surface, a glossy 3D orb as the only brand mark, electric-cobalt lighting with lime accents, and a flowing ribbon waveform. The orb, its orbital rings, the waveform and the progress arcs are separate animated elements rather than one baked illustration, so each can react to its own state.
 
 ## Application navigation
 
 1. **Splash & boot** — reports real startup checks and waits for local model detection/loading. It does not use a timed fake progress bar.
-2. **Assistant Home** — shows the phone, local model state, and Windows pairing state. The primary action opens Voice Interaction.
-3. **Voice Interaction** — provides explicit on-device speech input and a typed fallback. Responses are shown as text; speech output is offered only when an offline TTS voice is available.
-4. **Windows Pairing** — presents the pairing requirements and current implementation boundary.
-5. **My PC** — shows the unpaired state until an authenticated companion connection is available.
-6. **Settings** — reports model, voice, permissions, device, and build state; imports and validates local GGUF model files.
+2. **Welcome** — orb, greeting and the primary entry point. The greeting is derived from the device clock, so it is never wrong.
+3. **Onboarding** — three value propositions (voice-first, automation, on-device privacy) with a progress indicator.
+4. **Permissions** — microphone and calendar, each showing its live grant state. Vanessa asks for nothing else; the screen says so rather than implying notification or location access.
+5. **Assistant (chat)** — orb-first conversation surface: greeting state, transcript, composer and a listening entry point. Also reports local model state.
+6. **Listening** — dedicated voice surface: orb, ribbon waveform, stop control, and the recogniser's real status. "Type instead" returns to the composer.
+7. **Confirm Action** — approval gate. Appears only when an action actually needs approval: replacing an already-installed local model. The copy names the file at risk.
+8. **Executing Task** — progress arcs around the orb plus a checklist of steps **actually observed**, never a fabricated percentage.
+9. **Success** — reachable only when work genuinely completed; "Great!" returns to the chat.
+10. **Windows Pairing / My PC** — pairing requirements and the authenticated protocol-v2 remote control boundary.
+11. **Settings** — reports model, voice, permissions, device, and build state; imports and validates local GGUF model files.
 
-There is no onboarding flow or general capabilities catalogue in this initial release. Settings is a separate destination and includes the model-import workflow. The home, voice, PC, pairing, and settings pages use vertical scrolling for narrow devices and large text.
+Onboarding is stored in `SharedPreferences` and shown once; every destination is vertically scrollable for narrow devices and large text.
 
 ## Runtime truth and current boundaries
 
@@ -25,14 +30,44 @@ There is no onboarding flow or general capabilities catalogue in this initial re
 
 ## Design implementation
 
-The UI uses the design tokens from the Vanessa specification:
+Colour and type come from the specification's §2 palette, declared once in
+`VanessaPalette` (`ui/VanessaApp.kt`):
 
-- Background `#0A0B0F`, surfaces `#111318` / `#171B22`, border `#23262D`.
-- Cobalt primary `#0B5FFF`, primary text `#F5F7FA`, secondary text `#9AA6B2`.
-- Green, amber, and red are reserved for semantic status.
-- Reusable state-aware orb, status pills, device rows, section headers, inline notices, and navigation items.
-- Minimum-height primary controls, accessible labels for icon-only controls, TalkBack orb descriptions, and responsive horizontal insets.
-- All main destinations use vertical scrolling; the voice route preserves typed input as a first-class fallback.
+- Obsidian `#03050A` background, midnight navy `#080F22`, card surface `#151C2D`.
+- Electric blue `#0755FF`, cyan `#35A5FF`, lime `#A8F443` reserved for highlights, active states and completion.
+- Cool grey `#B9C5DA` secondary text, `#7C879B` dim labels, white primary text.
+
+Rendering is layered rather than baked:
+
+| File | Responsibility |
+|---|---|
+| `ui/VanessaOrb.kt` | Orb: bloom → rings behind → particles → black glass body → cobalt rim → cyan highlight → specular glint → lime spill → hot bottom rim → sheen → rings in front → completion check |
+| `ui/VanessaWaves.kt` | Ribbon waveform (four superposed sines), progress arcs, top light beam |
+| `ui/VanessaMotion.kt` | Per-element frame clock; honours the system animator duration scale |
+| `ui/VanessaWelcomeFlow.kt` | Welcome, onboarding, permissions |
+| `ui/VanessaAssistantScreens.kt` | Chat, listening, confirm, executing, success |
+
+The Compose canvas has no `shadowBlur`, so the reference's soft glow is rebuilt
+from stacked translucent strokes and gradients that fall to zero before their
+own edges — no hard seams and no card-like glow boxes.
+
+### Deviations from the reference brief, and why
+
+- **Permissions.** The brief lists Microphone / File Access / Notifications /
+  Location. This build requests only the microphone and the calendar. Files are
+  chosen through the system document picker, which needs no blanket storage
+  permission, and the app has no notification or location feature. The screen
+  shows the three rows it can honour and states the omission explicitly rather
+  than drawing four ticks for access that was never requested.
+- **Confirm Action.** The brief's copy describes deleting folders. Vanessa has
+  no folder-deletion capability, so the same gate guards the destructive action
+  it does have: replacing an installed model.
+- **Executing.** The brief shows a three-step checklist for a known task. The
+  checklist here lists only steps the app can actually observe (copy/validate,
+  then load).
+- **Waveform amplitude.** The recogniser does not expose an input level, so the
+  waveform is driven by assistant state (idle, listening, working, complete).
+  It is an indication of state, not a claimed measurement of the microphone.
 
 ## Build
 
