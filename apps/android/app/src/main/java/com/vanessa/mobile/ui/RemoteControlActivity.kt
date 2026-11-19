@@ -27,12 +27,12 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.style.TextAlign
 import com.vanessa.mobile.ui.components.EnergyWave
 import com.vanessa.mobile.ui.components.NeonButton
 import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.NeonTextField
 import com.vanessa.mobile.ui.components.NeonSecondaryButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
@@ -45,7 +45,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -158,25 +157,18 @@ class RemoteControlActivity : FragmentActivity() {
                                 ) {
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text("PAIRING DATA", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
-                                        OutlinedTextField(
+                                        NeonTextField(
                                             value = qrPayload,
                                             onValueChange = { qrPayload = it },
                                             modifier = Modifier.fillMaxWidth(),
-                                            label = { Text("PC pairing data") },
-                                            placeholder = { Text("Paste the JSON from the PC pairing window") },
-                                            minLines = 3,
-                                            maxLines = 6,
+                                            label = "PC pairing data",
+                                            placeholder = "Paste the JSON from the PC pairing window",
                                             enabled = bridgeJob?.isActive != true,
+                                            singleLine = false,
+                                            maxLines = 6,
+                                            minHeight = 126.dp,
+                                            containerColor = VanessaPalette.Card,
                                             shape = RoundedCornerShape(14.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = VanessaPalette.Cyan,
-                                                unfocusedBorderColor = VanessaPalette.Border,
-                                                focusedTextColor = VanessaPalette.TextPrimary,
-                                                unfocusedTextColor = VanessaPalette.TextPrimary,
-                                                cursorColor = VanessaPalette.Cyan,
-                                                focusedContainerColor = VanessaPalette.Card,
-                                                unfocusedContainerColor = VanessaPalette.Card,
-                                            ),
                                         )
                                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             NeonSecondaryButton(
