@@ -42,7 +42,10 @@ New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
 
 try {
     Invoke-GitChecked @('archive', '--format=zip', '--prefix=Vanessa/', "--output=$rawZip", 'HEAD') | Out-Null
-    Expand-Archive -LiteralPath $rawZip -DestinationPath $extractRoot -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    # Use the two-argument overload for Windows PowerShell/.NET Framework
+    # compatibility; the three-argument overload is not available on all runners.
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($rawZip, $extractRoot)
     $stageRoot = Join-Path $extractRoot "Vanessa"
     if (-not (Test-Path $stageRoot -PathType Container)) { throw "Git archive did not contain the expected Vanessa root." }
 

@@ -16,7 +16,9 @@ if (-not $bootstrap) { throw "No sanitized bootstrap ZIP found." }
 $payloadParent = Join-Path $Root 'artifacts/windows-installer-payload'
 if (Test-Path $payloadParent) { Remove-Item -LiteralPath $payloadParent -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $payloadParent | Out-Null
-Expand-Archive -LiteralPath $bootstrap.FullName -DestinationPath $payloadParent -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+# Extract into a newly-created empty directory using the broadly-supported overload.
+[System.IO.Compression.ZipFile]::ExtractToDirectory($bootstrap.FullName, $payloadParent)
 $payloadRoot = Join-Path $payloadParent 'Vanessa'
 if (-not (Test-Path (Join-Path $payloadRoot 'Launch-Vanessa.bat')) -or -not (Test-Path (Join-Path $payloadRoot 'scripts/Launch-Vanessa-Installed.vbs'))) { throw "Sanitized payload is missing launcher files." }
 Add-Type -AssemblyName System.Drawing
