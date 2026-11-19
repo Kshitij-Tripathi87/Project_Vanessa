@@ -21,8 +21,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Folder
@@ -49,6 +50,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalTime
+import com.vanessa.mobile.ui.components.EnergyWave
+import com.vanessa.mobile.ui.components.LightBeam
+import com.vanessa.mobile.ui.components.NeonButton
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
 
 /**
  * Screens 1–3 of the reconstruction brief: Welcome, Onboarding, Permissions.
@@ -70,47 +76,17 @@ internal fun GlowPillButton(
     leadingIcon: ImageVector? = null,
     trailingIcon: ImageVector? = null,
 ) {
-    val background = if (enabled) {
-        Brush.horizontalGradient(
-            listOf(Color(0xFF2E6BFF), VanessaPalette.Cyan, VanessaPalette.Lime),
-        )
-    } else {
-        Brush.horizontalGradient(listOf(VanessaPalette.SurfaceStrong, VanessaPalette.SurfaceStrong))
-    }
-    // Dark lettering, as in the reference. The gradient starts at a lighter
-    // cobalt than #0755FF so the label keeps a readable contrast ratio across
-    // the whole sweep instead of only on the lime end.
-    val contentColor = if (enabled) Color(0xFF04101C) else VanessaPalette.TextSecondary
-
-    Box(
-        modifier = modifier
-            .height(56.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(background)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (leadingIcon != null) {
-                    Icon(leadingIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-                }
-                Text(
-                    text,
-                    color = contentColor,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (trailingIcon != null) {
-                    Icon(trailingIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-    }
+    // The gradient sweep now lives in one component. Screens keep calling this
+    // name until they are migrated one by one, so a restyle never lands as a
+    // rename sweep in the same change as a behaviour change.
+    NeonButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+    )
 }
 
 @Composable
@@ -146,13 +122,13 @@ internal fun WelcomeScreen(
     onStart: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaLightBeam(
+        LightBeam(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth(0.6f)
                 .height(320.dp),
         )
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -211,7 +187,7 @@ internal fun OnboardingScreen(
     onContinue: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
@@ -274,19 +250,19 @@ internal fun OnboardingScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 FeatureCard(
-                    icon = Icons.Outlined.Mic,
-                    title = "Voice-first interaction",
-                    subtitle = "Just speak naturally",
+                    icon = Icons.Outlined.GraphicEq,
+                    title = "Voice + chat, your choice",
+                    subtitle = "Speak or type whenever it suits you",
                 )
                 FeatureCard(
-                    icon = Icons.Outlined.Bolt,
-                    title = "Smart automation",
-                    subtitle = "Let Vanessa handle it",
+                    icon = Icons.Outlined.Computer,
+                    title = "Across your devices",
+                    subtitle = "Start on your phone; pair Windows when ready",
                 )
                 FeatureCard(
                     icon = Icons.Outlined.Shield,
-                    title = "Your privacy, always",
-                    subtitle = "On-device & secure",
+                    title = "Your approval comes first",
+                    subtitle = "Protected actions wait for your decision",
                 )
             }
 
@@ -360,7 +336,9 @@ internal fun PermissionsScreen(
     onRequestAll: () -> Unit,
     onFinish: () -> Unit,
 ) {
-    val allGranted = microphoneGranted && calendarGranted
+    // Calendar is requested only when the user asks for a calendar action.
+    // First-run setup asks only for the microphone used by voice input.
+    val requiredSetupGranted = microphoneGranted
 
     Column(
         modifier = Modifier
@@ -389,7 +367,7 @@ internal fun PermissionsScreen(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "To provide the best experience, Vanessa needs a few permissions.",
+            text = "Microphone access enables voice input. Calendar and file access are requested only when you use those features.",
             color = VanessaPalette.TextSecondary,
             fontSize = 13.sp,
             lineHeight = 19.sp,
@@ -453,8 +431,8 @@ internal fun PermissionsScreen(
                 PermissionRow(
                     icon = Icons.Outlined.DateRange,
                     title = "Calendar",
-                    subtitle = "Only when a request needs it",
-                    state = if (calendarGranted) "Granted" else "Not granted",
+                    subtitle = "Requested only for calendar tasks",
+                    state = if (calendarGranted) "Granted" else "On request",
                     granted = calendarGranted,
                 )
             }
@@ -462,7 +440,7 @@ internal fun PermissionsScreen(
 
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Vanessa does not ask for notification or location access, because it does not use them.",
+            text = "Files are selected one at a time. Vanessa does not request blanket storage, notification or location access during setup.",
             color = VanessaPalette.TextDim,
             fontSize = 11.sp,
             lineHeight = 16.sp,
@@ -472,8 +450,8 @@ internal fun PermissionsScreen(
 
         Spacer(Modifier.height(20.dp))
         GlowPillButton(
-            text = if (allGranted) "Continue" else "Allow All",
-            onClick = { if (allGranted) onFinish() else onRequestAll() },
+            text = if (requiredSetupGranted) "Continue" else "Allow microphone",
+            onClick = { if (requiredSetupGranted) onFinish() else onRequestAll() },
             modifier = Modifier.fillMaxWidth(),
         )
         TextButton(onClick = onFinish) {

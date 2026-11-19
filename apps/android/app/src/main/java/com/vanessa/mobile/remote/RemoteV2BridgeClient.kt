@@ -169,6 +169,27 @@ class RemoteV2BridgeClient(context: Context) {
         return requestId
     }
 
+    /**
+     * Requests cancellation of a task already accepted by the PC.
+     * Sending this message is not proof that the task stopped; wait for
+     * task.cancel_ack and, where available, the terminal task result.
+     */
+    suspend fun cancelTask(
+        taskId: String,
+        requestId: String,
+        reason: String? = null,
+    ) {
+        val uuidPattern = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+        require(taskId.matches(uuidPattern)) { "Task ID is malformed." }
+        require(requestId.matches(uuidPattern)) { "Request ID is malformed." }
+        val payload = buildJsonObject {
+            put("taskId", taskId)
+            put("requestId", requestId)
+            if (!reason.isNullOrBlank()) put("reason", reason.take(120))
+        }
+        sendAuthenticated("task.cancel", payload)
+    }
+
     suspend fun getManifest() {
         sendAuthenticated("manifest.get", buildJsonObject {})
     }

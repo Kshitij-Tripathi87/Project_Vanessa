@@ -37,6 +37,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,18 +58,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.EnergyWave
+import com.vanessa.mobile.ui.components.ProgressRing
+import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.NeonSecondaryButton
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
+
+internal data class VanessaChatMessage(
+    val id: Long,
+    val fromUser: Boolean,
+    val text: String,
+)
 
 /**
  * Screens 4–8 of the reconstruction brief, wired to Vanessa's real state.
  *
- * The visual composition is the specification's; the claims are the app's.
- * - Listening shows the actual on-device recogniser state and says so when
- *   no recogniser exists.
- * - Confirm Action only ever appears with a concrete [ApprovalRequest] the
- *   activity produced, so the copy cannot describe an action nobody queued.
- * - Executing lists only steps that were actually observed; there is no
- *   fabricated percentage.
- * - Success is reached only when work genuinely completed.
+ * The visual composition follows the reference; execution status is reported
+ * conservatively. Local work uses an indeterminate indicator because the
+ * local planner does not publish a percentage. Remote PC work uses the
+ * separate protocol-driven execution screen, which shows a percentage only
+ * when the PC reports one.
  */
 
 // ───────────────────────────── 5 · Chat ─────────────────────────────
@@ -79,6 +90,7 @@ internal fun ChatScreen(
     modelBusy: Boolean,
     assistantBusy: Boolean,
     prompt: String,
+    messages: List<VanessaChatMessage>,
     response: String,
     metrics: String,
     speechReady: Boolean,
@@ -89,9 +101,16 @@ internal fun ChatScreen(
     onNavigate: (String) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val messageScrollState = rememberScrollState()
+    LaunchedEffect(messages.size, assistantBusy) {
+        // Wait until the newly-added message row has been measured before
+        // reading maxValue; otherwise the first scroll can stop one row short.
+        withFrameNanos { }
+        messageScrollState.animateScrollTo(messageScrollState.maxValue)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -106,13 +125,12 @@ internal fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box {
-                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(44.dp)) {
-                        Icon(
-                            Icons.Outlined.Menu,
-                            contentDescription = "Open navigation menu",
-                            tint = VanessaPalette.TextSecondary,
-                        )
-                    }
+                    NeonIconButton(
+                        icon = Icons.Outlined.Menu,
+                        contentDescription = "Open navigation menu",
+                        onClick = { menuExpanded = true },
+                        diameter = 42.dp,
+                    )
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text("Assistant") },
@@ -131,26 +149,26 @@ internal fun ChatScreen(
                 Spacer(Modifier.weight(1f))
                 Text("Vanessa", color = VanessaPalette.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onListen, modifier = Modifier.size(44.dp)) {
-                    Icon(
-                        Icons.Outlined.GraphicEq,
-                        contentDescription = "Start voice interaction",
-                        tint = VanessaPalette.Cyan,
-                    )
-                }
+                NeonIconButton(
+                    icon = Icons.Outlined.GraphicEq,
+                    contentDescription = "Start voice interaction",
+                    onClick = onListen,
+                    diameter = 42.dp,
+                    highlighted = true,
+                )
             }
 
             Column(
-                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(messageScrollState),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (response.isBlank() && !assistantBusy) {
+                if (messages.isEmpty() && !assistantBusy) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        VanessaOrb(size = 132.dp, energy = 0.15f, offline = !modelLoaded, description = "Vanessa orb, idle")
+                        VanessaOrb(size = 148.dp, energy = 0.18f, offline = !modelLoaded, description = "Vanessa orb, idle")
                         Text(
                             "How can I help?",
                             color = VanessaPalette.TextPrimary,
@@ -159,8 +177,8 @@ internal fun ChatScreen(
                             textAlign = TextAlign.Center,
                         )
                         Text(
-                            if (modelLoaded) "Talk or type. Everything runs on this device."
-                            else "No local model is active yet.",
+                            if (modelLoaded) "Talk or type. Switch between them anytime."
+                            else "Add a local model in Settings to start a conversation.",
                             color = VanessaPalette.TextSecondary,
                             fontSize = 12.sp,
                             textAlign = TextAlign.Center,
@@ -168,19 +186,54 @@ internal fun ChatScreen(
                     }
                 }
 
-                if (prompt.isNotBlank()) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Surface(
-                            color = VanessaPalette.SurfaceStrong,
-                            shape = RoundedCornerShape(18.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-                        ) {
-                            Text(
-                                prompt,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                color = VanessaPalette.TextPrimary,
-                                fontSize = 14.sp,
-                            )
+                messages.forEach { message ->
+                    if (message.fromUser) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(0.86f),
+                                color = VanessaPalette.SurfaceStrong,
+                                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 5.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
+                            ) {
+                                Text(
+                                    message.text,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    color = VanessaPalette.TextPrimary,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                )
+                            }
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            VanessaOrb(size = 30.dp, energy = 0.2f, offline = false, ringCount = 1, showParticles = false, description = "Vanessa response")
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                color = VanessaPalette.Surface.copy(alpha = 0.94f),
+                                shape = RoundedCornerShape(topStart = 5.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 18.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(message.text, color = VanessaPalette.TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
+                                    if (message.text == response && (metrics.isNotBlank() || speechReady)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (metrics.isNotBlank()) {
+                                                Text(metrics, modifier = Modifier.weight(1f), color = VanessaPalette.TextSecondary, fontSize = 10.sp)
+                                            } else {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                            if (speechReady) {
+                                                IconButton(onClick = onSpeakResponse, modifier = Modifier.size(34.dp)) {
+                                                    Icon(Icons.Outlined.VolumeUp, contentDescription = "Read response aloud", tint = VanessaPalette.TextSecondary, modifier = Modifier.size(18.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -196,64 +249,10 @@ internal fun ChatScreen(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Outlined.GraphicEq,
-                                contentDescription = null,
-                                tint = VanessaPalette.Cyan,
-                                modifier = Modifier.size(20.dp),
-                            )
+                            Icon(Icons.Outlined.GraphicEq, contentDescription = null, tint = VanessaPalette.Cyan, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(12.dp))
-                            Text(
-                                "Running on this device…",
-                                modifier = Modifier.weight(1f),
-                                color = VanessaPalette.TextPrimary,
-                                fontSize = 13.sp,
-                            )
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = VanessaPalette.Cyan,
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                    }
-                }
-
-                if (response.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        VanessaOrb(size = 30.dp, energy = 0.2f, offline = false, ringCount = 1, showParticles = false, description = null)
-                        Spacer(Modifier.width(10.dp))
-                        Surface(
-                            modifier = Modifier.weight(1f),
-                            color = VanessaPalette.Surface.copy(alpha = 0.92f),
-                            shape = RoundedCornerShape(18.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(response, color = VanessaPalette.TextPrimary, fontSize = 14.sp, lineHeight = 20.sp)
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (metrics.isNotBlank()) {
-                                        Text(
-                                            metrics,
-                                            modifier = Modifier.weight(1f),
-                                            color = VanessaPalette.TextSecondary,
-                                            fontSize = 10.sp,
-                                        )
-                                    }
-                                    if (speechReady) {
-                                        IconButton(onClick = onSpeakResponse, modifier = Modifier.size(34.dp)) {
-                                            Icon(
-                                                Icons.Outlined.VolumeUp,
-                                                contentDescription = "Read response aloud",
-                                                tint = VanessaPalette.TextSecondary,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                            Text("Thinking on this device…", modifier = Modifier.weight(1f), color = VanessaPalette.TextPrimary, fontSize = 13.sp)
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = VanessaPalette.Cyan, strokeWidth = 2.dp)
                         }
                     }
                 }
@@ -364,7 +363,7 @@ internal fun ListeningScreen(
     onTypeInstead: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()
@@ -382,21 +381,15 @@ internal fun ListeningScreen(
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.weight(1f))
-                IconButton(
+                NeonIconButton(
+                    icon = Icons.Outlined.Close,
+                    contentDescription = "Close voice input",
                     onClick = {
-                        // Dismissing the screen must not leave the microphone
-                        // listening in the background.
                         onStop()
                         onClose()
                     },
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        contentDescription = "Close voice input",
-                        tint = VanessaPalette.TextPrimary,
-                    )
-                }
+                    diameter = 44.dp,
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -425,21 +418,14 @@ internal fun ListeningScreen(
 
             Spacer(Modifier.weight(1f))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(VanessaPalette.SurfaceStrong.copy(alpha = 0.7f))
-                        .clickable(enabled = listening, role = Role.Button, onClick = onStop),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Stop,
-                        contentDescription = "Stop listening",
-                        tint = VanessaPalette.TextPrimary,
-                        modifier = Modifier.size(26.dp),
-                    )
-                }
+                NeonIconButton(
+                    icon = Icons.Outlined.Stop,
+                    contentDescription = "Stop listening",
+                    onClick = onStop,
+                    diameter = 66.dp,
+                    highlighted = true,
+                    enabled = listening,
+                )
             }
             Spacer(Modifier.height(14.dp))
             Text(
@@ -452,18 +438,15 @@ internal fun ListeningScreen(
             )
             Spacer(Modifier.height(6.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                TextButton(
+                NeonSecondaryButton(
+                    text = if (speechAvailable) "Type instead" else "Type your request instead",
                     onClick = {
                         onStop()
                         onTypeInstead()
                     },
-                ) {
-                    Text(
-                        if (speechAvailable) "Type instead" else "Type your request instead",
-                        color = VanessaPalette.Cyan,
-                        fontSize = 13.sp,
-                    )
-                }
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 46.dp,
+                )
             }
         }
     }
@@ -661,7 +644,7 @@ internal fun ExecutingScreen(
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -711,10 +694,23 @@ internal fun ExecutingScreen(
                 lineHeight = 17.sp,
                 textAlign = TextAlign.Center,
             )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Working locally on this device. No remote progress percentage is available for this task.",
+                color = VanessaPalette.TextDim,
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                textAlign = TextAlign.Center,
+            )
 
             Spacer(Modifier.height(12.dp))
             Box(modifier = Modifier.size(228.dp), contentAlignment = Alignment.Center) {
-                VanessaProgressArcs(modifier = Modifier.fillMaxSize(), progress = 0.45f)
+                CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize().padding(22.dp),
+                    color = VanessaPalette.Cyan,
+                    trackColor = VanessaPalette.Border,
+                    strokeWidth = 2.5.dp,
+                )
                 VanessaOrb(
                     size = 132.dp,
                     energy = 0.55f,
@@ -783,7 +779,7 @@ internal fun SuccessScreen(
     onDone: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        VanessaWaveform(
+        EnergyWave(
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()

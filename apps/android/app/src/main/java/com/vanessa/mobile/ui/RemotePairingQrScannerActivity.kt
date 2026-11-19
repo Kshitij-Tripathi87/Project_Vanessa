@@ -1,10 +1,18 @@
 package com.vanessa.mobile.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -31,22 +39,72 @@ class RemotePairingQrScannerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val container = FrameLayout(this)
+        window.statusBarColor = Color.rgb(3, 5, 10)
+        window.navigationBarColor = Color.rgb(3, 5, 10)
+
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(3, 5, 10))
+        }
         previewView = PreviewView(this).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
             scaleType = PreviewView.ScaleType.FILL_CENTER
-        }
-        val instruction = TextView(this).apply {
-            text = "Align the Vanessa pairing QR code inside the camera view"
-            setTextColor(android.graphics.Color.WHITE)
-            setBackgroundColor(0x99000000.toInt())
-            setPadding(24, 20, 24, 20)
-            gravity = Gravity.CENTER
         }
         container.addView(previewView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
         ))
+        container.addView(ScanFrameOverlay(this), FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+
+        val header = TextView(this).apply {
+            text = "VANESSA  /  PC PAIRING"
+            setTextColor(Color.rgb(53, 165, 255))
+            textSize = 11f
+            letterSpacing = 0.14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setPadding(dp(24), dp(22), dp(72), dp(12))
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = "Vanessa PC pairing scanner"
+        }
+        container.addView(header, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP,
+        ))
+
+        val close = TextView(this).apply {
+            text = "×"
+            textSize = 27f
+            setTextColor(Color.rgb(242, 245, 248))
+            gravity = Gravity.CENTER
+            contentDescription = "Close scanner"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(16, 23, 39))
+                setStroke(dp(1), Color.rgb(37, 46, 59))
+            }
+            setOnClickListener {
+                setResult(RESULT_CANCELED)
+                finish()
+            }
+        }
+        container.addView(close, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(10)
+            marginEnd = dp(16)
+        })
+
+        val instruction = TextView(this).apply {
+            text = "Scan the one-time code shown on Windows.\nPairing data is read locally on this phone."
+            setTextColor(Color.rgb(242, 245, 248))
+            textSize = 13f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setBackgroundColor(0xE607090D.toInt())
+            setPadding(dp(22), dp(18), dp(22), dp(22))
+            gravity = Gravity.CENTER
+            contentDescription = "Scan the one-time code shown on Windows"
+        }
         container.addView(instruction, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -122,6 +180,62 @@ class RemotePairingQrScannerActivity : ComponentActivity() {
         runCatching { scanner.close() }
         cameraExecutor.shutdown()
         super.onDestroy()
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    /**
+     * Draws a quiet scanner target over the live camera preview. The frame is
+     * decorative guidance only; ML Kit remains the authority for QR detection.
+     */
+    private class ScanFrameOverlay(context: Context) : View(context) {
+        private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(90, 53, 165, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = context.resources.displayMetrics.density
+        }
+        private val cobalt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(53, 165, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * context.resources.displayMetrics.density
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val lime = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(168, 244, 67)
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * context.resources.displayMetrics.density
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        init {
+            contentDescription = "QR scanning frame"
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val widthF = width.toFloat()
+            val heightF = height.toFloat()
+            val side = minOf(widthF * 0.72f, heightF * 0.34f)
+            val left = (widthF - side) / 2f
+            val top = heightF * 0.34f
+            val rect = RectF(left, top, left + side, top + side)
+            val radius = 22f * resources.displayMetrics.density
+            canvas.drawRoundRect(rect, radius, radius, outline)
+
+            val corner = side * 0.20f
+            val inset = 2f * resources.displayMetrics.density
+            // Cobalt on the upper-left and lower-left; lime on the right edge.
+            canvas.drawLine(rect.left + inset, rect.top + corner, rect.left + inset, rect.top + radius, cobalt)
+            canvas.drawLine(rect.left + radius, rect.top + inset, rect.left + corner, rect.top + inset, cobalt)
+            canvas.drawLine(rect.left + inset, rect.bottom - corner, rect.left + inset, rect.bottom - radius, cobalt)
+            canvas.drawLine(rect.left + radius, rect.bottom - inset, rect.left + corner, rect.bottom - inset, cobalt)
+            canvas.drawLine(rect.right - inset, rect.top + corner, rect.right - inset, rect.top + radius, lime)
+            canvas.drawLine(rect.right - radius, rect.top + inset, rect.right - corner, rect.top + inset, lime)
+            canvas.drawLine(rect.right - inset, rect.bottom - corner, rect.right - inset, rect.bottom - radius, lime)
+            canvas.drawLine(rect.right - radius, rect.bottom - inset, rect.right - corner, rect.bottom - inset, lime)
+        }
     }
 
     companion object {

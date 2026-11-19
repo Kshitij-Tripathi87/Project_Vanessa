@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -78,36 +79,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vanessa.mobile.ui.components.EnergyWave
+import com.vanessa.mobile.ui.components.NeonButton
+import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.VanessaOrb
+import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.model.InstalledModel
 import com.vanessa.mobile.profile.DeviceProfile
 import java.io.File
 import java.util.Locale
-
-internal object VanessaPalette {
-    // Design spec §2. These are the single source of truth for surface,
-    // glow and state colour across every screen.
-    val Obsidian = Color(0xFF03050A)
-    val Navy = Color(0xFF080F22)
-    val Card = Color(0xFF151C2D)
-    val CardDeep = Color(0xFF101728)
-    val Brand = Color(0xFF0755FF)
-    val BlueSoft = Color(0xFF2E6BFF)
-    val Cyan = Color(0xFF35A5FF)
-    val Lime = Color(0xFFA8F443)
-    val Border = Color(0xFF1E2A44)
-
-    val Background = Obsidian
-    val Surface = Card
-    val SurfaceStrong = CardDeep
-
-    val TextPrimary = Color(0xFFFFFFFF)
-    val TextSecondary = Color(0xFFB9C5DA)
-    val TextDim = Color(0xFF7C879B)
-
-    val Success = Lime
-    val Error = Color(0xFFEF4444)
-    val Warning = Color(0xFFFFB020)
-}
 
 @Composable
 internal fun VanessaApp(
@@ -121,6 +101,7 @@ internal fun VanessaApp(
     modelLoaded: Boolean,
     modelBusy: Boolean,
     prompt: String,
+    chatMessages: List<VanessaChatMessage>,
     assistantResponse: String,
     assistantMetrics: String,
     assistantBusy: Boolean,
@@ -160,7 +141,7 @@ internal fun VanessaApp(
             SplashScreen(startupMessage)
         } else {
             Column(
-                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding(),
             ) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     when (destination) {
@@ -223,6 +204,7 @@ internal fun VanessaApp(
                             modelBusy = modelBusy,
                             assistantBusy = assistantBusy,
                             prompt = prompt,
+                            messages = chatMessages,
                             response = assistantResponse,
                             metrics = assistantMetrics,
                             speechReady = speechReady,
@@ -238,7 +220,7 @@ internal fun VanessaApp(
                 // individual screen) owns the persistent navigation bar. Before
                 // this, BottomNavigation was never composed and the only way to
                 // Settings was the small icon on Home.
-                if (destination == "HOME" || destination == "PC" || destination == "SETTINGS") {
+                if (destination == "PC" || destination == "SETTINGS") {
                     BottomNavigation(destination, onNavigate)
                 }
             }
@@ -295,27 +277,25 @@ private fun PairingScreen(
                 modifier = Modifier.padding(vertical = 24.dp, horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Box(
-                    modifier = Modifier.size(184.dp).border(1.dp, VanessaPalette.Border, RoundedCornerShape(22.dp))
-                        .background(VanessaPalette.SurfaceStrong, RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.QrCode2, contentDescription = "Pairing QR code placeholder", tint = VanessaPalette.TextSecondary, modifier = Modifier.size(82.dp))
-                }
+                VanessaOrb(
+                    size = 144.dp,
+                    energy = 0.24f,
+                    offline = false,
+                    ringCount = 2,
+                    description = "Vanessa orb. Ready to pair with Windows.",
+                )
                 Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Open Vanessa on your PC and display its one-time pairing code.",
                     color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
                 )
-                Button(
-                    onClick = onStartPairing, modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.SurfaceStrong, contentColor = VanessaPalette.TextPrimary),
-                ) {
-                    Icon(Icons.Outlined.Lock, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Scan PC pairing code")
-                }
+                NeonButton(
+                    text = "Scan PC pairing code",
+                    onClick = onStartPairing,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = Icons.Outlined.Lock,
+                    height = 52.dp,
+                )
                 Text(
                     "The remote control screen verifies the PC identity and completes authenticated v2 pairing. New phones require local approval on the PC.",
                     color = VanessaPalette.Warning, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
@@ -339,67 +319,93 @@ private fun PcDashboardScreen(
     inset: Dp,
     onNavigate: (String) -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = inset).padding(top = 18.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("MY PC", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
-                Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
-            }
-            StatusPill("PC CONTROL", VanessaPalette.TextSecondary)
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-        ) {
-            Column(
-                modifier = Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Box(
-                    modifier = Modifier.size(92.dp).clip(CircleShape).background(VanessaPalette.SurfaceStrong),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.Computer, contentDescription = null, tint = VanessaPalette.TextSecondary, modifier = Modifier.size(42.dp))
-                }
-                Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "Open remote control to pair a Windows companion or resume a saved connection. Live state is shown in the remote control screen.",
-                    color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
-                )
-                PrimaryAction(
-                    "Pair with Windows",
-                    icon = { Icon(Icons.Outlined.QrCode2, contentDescription = null) },
-                    onClick = { onNavigate("PAIRING") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-        SectionHeading("DEVICE STATUS", "No live telemetry")
-        Surface(
-            modifier = Modifier.fillMaxWidth(), color = VanessaPalette.Surface,
-            shape = RoundedCornerShape(18.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                DeviceMetricRow(Icons.Outlined.Memory, "Processor", "Open remote control to inspect")
-                ThinDivider()
-                DeviceMetricRow(Icons.Outlined.Storage, "Memory", "Unavailable until connected")
-                ThinDivider()
-                DeviceMetricRow(Icons.Outlined.WifiOff, "Network", "Not checked in this dashboard")
-            }
-        }
-        InlineNotice(
-            "Connection state and verified task results are shown in the remote control screen; this dashboard does not infer a live PC session.",
-            NoticeTone.INFO,
+    Box(modifier = Modifier.fillMaxSize()) {
+        EnergyWave(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(220.dp),
+            intensity = 0.46f,
         )
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(horizontal = inset).padding(top = 16.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                NeonIconButton(
+                    icon = Icons.Outlined.ArrowBack,
+                    contentDescription = "Back to assistant",
+                    onClick = { onNavigate("HOME") },
+                    diameter = 44.dp,
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("MY DEVICES", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
+                    Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
+                }
+                StatusPill("PC CONTROL", VanessaPalette.TextSecondary)
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                VanessaOrb(
+                    size = 164.dp,
+                    energy = 0.20f,
+                    offline = false,
+                    ringCount = 3,
+                    description = "Vanessa orb. Windows PC is not paired.",
+                )
+                Text(
+                    "Your PC, in reach.",
+                    color = VanessaPalette.TextPrimary,
+                    style = MaterialTheme.typography.headlineMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    "Pair your Windows companion to access approved tasks from this phone.",
+                    color = VanessaPalette.TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = VanessaPalette.Surface,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                    Text("CONNECTION", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.2.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(VanessaPalette.Warning))
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Connection status", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge)
+                            Text("Open remote control to check the live session.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    ThinDivider()
+                    DeviceMetricRow(Icons.Outlined.Lock, "Trust", "A new phone must be approved locally on Windows")
+                }
+            }
+
+            NeonButton(
+                text = "Pair with Windows",
+                leadingIcon = Icons.Outlined.QrCode2,
+                trailingIcon = Icons.Outlined.ChevronRight,
+                onClick = { onNavigate("PAIRING") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Connection details and live task results appear after the authenticated PC session is established.",
+                modifier = Modifier.fillMaxWidth(),
+                color = VanessaPalette.TextSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -434,16 +440,22 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onNavigate("HOME") }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to assistant home", tint = VanessaPalette.TextPrimary)
-            }
+            NeonIconButton(
+                icon = Icons.Outlined.ArrowBack,
+                contentDescription = "Back to assistant home",
+                onClick = { onNavigate("HOME") },
+                diameter = 44.dp,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text("PREFERENCES", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
                 Text("Settings", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "Refresh device information", tint = VanessaPalette.TextSecondary)
-            }
+            NeonIconButton(
+                icon = Icons.Outlined.Refresh,
+                contentDescription = "Refresh device information",
+                onClick = onRefresh,
+                diameter = 44.dp,
+            )
         }
 
         SettingsSection("LOCAL MODEL") {
@@ -468,17 +480,23 @@ private fun SettingsScreen(
                 placeholder = { Text("64-character checksum") },
                 singleLine = true,
                 enabled = !modelImportBusy,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = VanessaPalette.Cyan,
+                    unfocusedBorderColor = VanessaPalette.Border,
+                    focusedTextColor = VanessaPalette.TextPrimary,
+                    unfocusedTextColor = VanessaPalette.TextPrimary,
+                    cursorColor = VanessaPalette.Cyan,
+                    focusedContainerColor = VanessaPalette.SurfaceStrong,
+                    unfocusedContainerColor = VanessaPalette.SurfaceStrong,
+                ),
             )
-            Button(
+            NeonButton(
+                text = if (modelImportBusy) "Importing model…" else "Import GGUF",
                 onClick = { onImportModel(expectedModelSha256.trim()) },
                 enabled = !modelImportBusy,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = VanessaPalette.Brand),
-            ) {
-                Text(if (modelImportBusy) "Importing model…" else "Import GGUF")
-            }
+            )
             Text(
                 "Choose a .gguf file. Vanessa copies it to app-private storage, validates its GGUF header, computes SHA-256, and checks the optional expected checksum.",
                 color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall,
@@ -538,11 +556,15 @@ private fun SettingsScreen(
 @Composable
 private fun ScreenHeader(title: String, eyebrow: String, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = VanessaPalette.TextPrimary)
-        }
+        NeonIconButton(
+            icon = Icons.Outlined.ArrowBack,
+            contentDescription = "Back",
+            onClick = onBack,
+            diameter = 44.dp,
+        )
+        Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(eyebrow, color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.3.sp)
+            Text(eyebrow, color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.3.sp)
             Text(title, color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.titleLarge)
         }
     }
