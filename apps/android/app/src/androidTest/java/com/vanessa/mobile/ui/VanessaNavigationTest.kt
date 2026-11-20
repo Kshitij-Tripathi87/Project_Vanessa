@@ -67,9 +67,9 @@ class VanessaNavigationTest {
         composeRule.onAllNodes(hasText("", substring = true))
             .fetchSemanticsNodes()
             .mapNotNull { node ->
-                node.config.getOrNull(SemanticsProperties.Text)
+                val text: String? = node.config.getOrNull(SemanticsProperties.Text)
                     ?.joinToString(" ") { span -> span.text }
-                    ?.takeIf { it.isNotBlank() }
+                text?.takeIf { joined -> joined.isNotBlank() }
             }
             .distinct()
             .take(12)
