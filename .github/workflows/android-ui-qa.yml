@@ -191,8 +191,12 @@ jobs:
           status=$?
           tail -n 60 /tmp/emu/tests.log
           if [ $status -ne 0 ]; then
-            excerpt=$(grep -nE "FAILURE:|Execution failed|error:|e: |No connected devices|Caused by|What went wrong" -A 3 /tmp/emu/tests.log | tail -c 2600 | tr '\n' '~')
-            echo "::error::connectedDebugAndroidTest exit ${status}: ${excerpt:-no matching lines}"
+            # `|| true` is load-bearing: with pipefail and `bash -e`, a grep that
+            # matches nothing aborts the step before this line can run, which is
+            # why earlier versions of this diagnostic printed nothing at all.
+            excerpt=$(grep -nE "FAILURE:|Execution failed|error:|e: |No connected devices|Caused by|What went wrong" -A 3 /tmp/emu/tests.log | tail -c 2200 | tr '\n' '~' || true)
+            tailnote=$(tail -c 1200 /tmp/emu/tests.log | tr '\n' '~' || true)
+            echo "::error::connectedDebugAndroidTest exit ${status}: ${excerpt:-no matching lines} || log tail: ${tailnote}"
             exit 1
           fi
           echo "::warning::connectedDebugAndroidTest exited 0"
@@ -200,8 +204,9 @@ jobs:
           if [ ! -d "$results" ]; then
             # Exit 0 with no results means the task was skipped. Report why here,
             # where the Gradle output still exists, rather than one step later.
-            why=$(grep -nE "> Task :app:connected|SKIPPED|NO-SOURCE|UP-TO-DATE|Installing|Starting|tests? on|No connected" /tmp/emu/tests.log | tail -c 2200 | tr '\n' '~')
-            echo "::error::connectedDebugAndroidTest wrote no results despite exit 0. Task lines: ${why:-none captured}"
+            why=$(grep -nE "> Task :app:connected|SKIPPED|NO-SOURCE|UP-TO-DATE|Installing|Starting|tests? on|No connected" /tmp/emu/tests.log | tail -c 2000 | tr '\n' '~' || true)
+            tailnote=$(tail -c 1200 /tmp/emu/tests.log | tr '\n' '~' || true)
+            echo "::error::connectedDebugAndroidTest wrote no results despite exit 0. Task lines: ${why:-none captured} || log tail: ${tailnote}"
             exit 1
           fi
 
