@@ -79,21 +79,24 @@ jobs:
       # status of its last element, so "command not found" looked like success and
       # the absence of the binary was never noticed anywhere. The binary is
       # located once here and exported for every later step.
-      - name: Locate the emulator and adb
+      # Warn-only. This step exists to *report* the SDK layout, never to fail:
+      # a diagnostic that can fail is a diagnostic that hides its own output.
+      - name: Report SDK layout
         run: |
-          set -o pipefail
-          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          echo "sdk=$sdk"
-          ls "$sdk" || true
-          if [ ! -x "$sdk/emulator/emulator" ]; then
-            echo "::error::the emulator binary is missing at $sdk/emulator/emulator"
-            ls "$sdk/emulator" || true
-            exit 1
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-unset}}"
+          emu="$(command -v emulator || echo none)"
+          adb="$(command -v adb || echo none)"
+          avd="$(command -v avdmanager || echo none)"
+          sdm="$(command -v sdkmanager || echo none)"
+          listing="$(ls "$sdk" 2>&1 | tr '\n' ' ')"
+          found="$(find "$sdk" -maxdepth 3 -name emulator -type f 2>/dev/null | tr '\n' ' ')"
+          echo "::warning::sdk=${sdk} | emulator-on-path=${emu} | adb=${adb} | avdmanager=${avd} | sdkmanager=${sdm} | sdk-listing=${listing} | emulator-binary-found=${found:-none}"
+          if [ "$emu" != "none" ]; then
+            echo "EMULATOR_BIN=$emu" >> "$GITHUB_ENV"
+          elif [ -n "$found" ]; then
+            echo "EMULATOR_BIN=$(echo "$found" | awk '{print $1}')" >> "$GITHUB_ENV"
           fi
-          echo "EMULATOR_BIN=$sdk/emulator/emulator" >> "$GITHUB_ENV"
-          echo "ADB_BIN=$sdk/platform-tools/adb" >> "$GITHUB_ENV"
-          "$sdk/emulator/emulator" -version 2>&1 | head -3
-          "$sdk/platform-tools/adb" version
+          echo "ADB_BIN=${adb}" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -106,6 +109,10 @@ jobs:
       # run page, which stays readable when the log does not.
       - name: Check emulator acceleration and disk
         run: |
+          if [ -z "${EMULATOR_BIN:-}" ] || [ ! -x "$EMULATOR_BIN" ]; then
+            echo "::error::no usable emulator binary (EMULATOR_BIN='${EMULATOR_BIN:-unset}'). Read the 'Report SDK layout' annotation for what this runner actually has."
+            exit 1
+          fi
           "$EMULATOR_BIN" -accel-check || true
           df -h / /home /dev/shm || true
           accel=$("$EMULATOR_BIN" -accel-check 2>&1 | tr '\n' ' ')
@@ -128,6 +135,10 @@ jobs:
       - name: Boot the emulator
         run: |
           mkdir -p /tmp/emu
+          if [ -z "${EMULATOR_BIN:-}" ] || [ ! -x "$EMULATOR_BIN" ]; then
+            echo "::error::no usable emulator binary (EMULATOR_BIN='${EMULATOR_BIN:-unset}'). Read the 'Report SDK layout' annotation for what this runner actually has."
+            exit 1
+          fi
           "$EMULATOR_BIN" -avd vanessa \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
             > /tmp/emu/emulator.log 2>&1 &
