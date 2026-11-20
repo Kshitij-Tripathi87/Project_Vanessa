@@ -6,7 +6,6 @@ import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -83,8 +82,14 @@ class VanessaNavigationTest {
      * greeting, which the first answer replaces.
      */
     private fun composerVisible(): Boolean = runCatching {
-        composeRule.onAllNodes(hasSetTextAction())
-            .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        // Anchored on the composer's own menu button rather than on
+        // `onAllNodes(hasSetTextAction())`: that call did not resolve against this
+        // Compose version, so the whole instrumented source set failed to compile
+        // and every emulator run for months reported "no tests" instead of a
+        // compile error. A content description that exists only in the composer is
+        // a narrower signal anyway.
+        composeRule.onNodeWithContentDescription("Open actions").assertExists()
+        true
     }.getOrDefault(false)
 
     @Test
