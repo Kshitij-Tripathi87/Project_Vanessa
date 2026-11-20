@@ -211,17 +211,16 @@ jobs:
             exit 1
           fi
           echo "::warning::connectedDebugAndroidTest exited 0"
-          # A path relative to this step's working directory, which is the
-          # repository root - not the app module. The previous value escaped the
-          # checkout entirely, so the check reported "no results" on a run whose
-          # five tests had all passed.
-          results="apps/android/app/build/outputs/androidTest-results/connected"
-          if [ ! -d "$results" ]; then
-            # Exit 0 with no results means the task was skipped. Report why here,
-            # where the Gradle output still exists, rather than one step later.
+          # Two guesses at this path were wrong in different ways, so stop
+          # guessing: search the build tree for the XML the next step parses, and
+          # print what was found either way.
+          found=$(find apps/android/app/build -name '*.xml' -path '*androidTest-results*' 2>/dev/null | head -5 || true)
+          if [ -n "$found" ]; then
+            echo "::warning::instrumented results: $(echo "$found" | tr '\n' ' ')"
+          else
             why=$(grep -nE "> Task :app:connected|SKIPPED|NO-SOURCE|UP-TO-DATE|Installing|Starting|tests? on|No connected" /tmp/emu/tests.log | tail -c 2000 | tr '\n' '~' || true)
             tailnote=$(tail -c 1200 /tmp/emu/tests.log | tr '\n' '~' || true)
-            echo "::error::connectedDebugAndroidTest wrote no results despite exit 0. Task lines: ${why:-none captured} || log tail: ${tailnote}"
+            echo "::error::connectedDebugAndroidTest exited 0 but wrote no instrumented result XML anywhere under apps/android/app/build. Task lines: ${why:-none captured} || log tail: ${tailnote}"
             exit 1
           fi
 
