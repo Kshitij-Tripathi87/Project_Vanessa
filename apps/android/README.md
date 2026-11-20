@@ -91,6 +91,29 @@ sends the signed `task.cancel` message using the PC-issued task ID and original
 request ID, then waits for `task.cancel_ack`. The approval phase preserves the
 original request ID so cancellation remains available after biometric approval.
 
+### My PC
+
+`ui/state/PcUiState.kt` keeps three facts apart, because they are true at
+different times and the earlier dashboard merged them into one wrong sentence:
+
+| Fact | Source | Survives being offline |
+|---|---|---|
+| Paired PC (name, endpoint, key fingerprint) | The stored pairing | Yes |
+| Link (connected, connecting, reconnecting, disconnected, problem) | The bridge's own status line | No |
+| Capabilities | The PC's `manifest.snapshot`, for this session only | No — cleared when the session ends |
+
+`screens/MyPcScreen.kt` renders them and draws nothing the state does not
+support: no "connected" pill without a session, no capability list before the
+manifest arrives, and no task button for a capability the PC has not advertised.
+Capabilities are read-only unless the phone knows how to invoke them
+(`system_status`, `open_app`); the rest say "Listed".
+
+Dashboard reads go through `SavedPcReader`, which touches preferences only.
+`RemoteV2BridgeClient` allocates an HTTP client when constructed, so a screen
+that just needs to answer "is a PC paired?" must not build one. When the PC
+sends `manifest.changed`, the app asks for a fresh manifest instead of showing
+the old capability list.
+
 ### Deviations from the reference brief, and why
 
 - **Permissions.** The reference lists Microphone / File Access / Notifications /

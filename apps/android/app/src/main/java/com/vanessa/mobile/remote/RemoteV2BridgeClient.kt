@@ -601,6 +601,37 @@ class RemoteV2BridgeClient(context: Context) {
         }
     }
 
+    /**
+     * The stored pairing, for screens that must describe it before any socket
+     * exists. Reads preferences only — it neither connects nor opens the
+     * keystore, so it is safe to call while building a dashboard.
+     */
+    /**
+     * Removes the stored pairing and the recovery bookkeeping that belonged to
+     * it, so the PC has to approve this phone again. Local only — the PC is
+     * told nothing, and nothing is sent.
+     */
+    fun forgetSavedPc() {
+        preferences.edit()
+            .remove(KEY_PAIRED_PC_KEY_ID)
+            .remove("endpoint")
+            .remove("pcId")
+            .remove("pcName")
+            .remove("publicKeySpki")
+            .remove("fingerprint")
+            .remove(KEY_ACTIVE_TASK_IDS)
+            .remove(KEY_LAST_EVENT_SEQ)
+            .apply()
+    }
+
+    fun savedPcSummary(): SavedPcSummary? = loadSavedConfig()?.let { saved ->
+        SavedPcSummary(
+            name = saved.pcName,
+            endpoint = saved.endpoint,
+            fingerprint = saved.fingerprint,
+        )
+    }
+
     private fun loadSavedConfig(): RemotePcConnection? {
         val endpoint = preferences.getString("endpoint", null) ?: return null
         val publicKey = preferences.getString("publicKeySpki", null) ?: return null
@@ -674,6 +705,37 @@ data class RemotePcConnection internal constructor(
     val fingerprint: String,
     val pairingId: String?,
     val code: String?,
+)
+
+/**
+ * Reads the stored pairing without constructing the transport.
+ *
+ * [RemoteV2BridgeClient] allocates an HTTP client on construction, so a screen
+ * that only needs to answer "is a PC paired?" must not create one. This reads
+ * the same preferences the transport writes.
+ */
+object SavedPcReader {
+    private const val PREFERENCES = "vanessa_remote_v2"
+
+    fun read(context: Context): SavedPcSummary? {
+        val prefs = context.applicationContext
+            .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        if (prefs.getString("paired_pc_key_id", null) == null) return null
+        if (prefs.getString("publicKeySpki", null) == null) return null
+        val endpoint = prefs.getString("endpoint", null) ?: return null
+        return SavedPcSummary(
+            name = prefs.getString("pcName", null) ?: "Windows PC",
+            endpoint = endpoint,
+            fingerprint = prefs.getString("fingerprint", null).orEmpty(),
+        )
+    }
+}
+
+/** What this phone remembers about a paired PC, independent of any session. */
+data class SavedPcSummary(
+    val name: String,
+    val endpoint: String,
+    val fingerprint: String,
 )
 
 data class RemoteV2Event(

@@ -61,12 +61,18 @@ import com.vanessa.mobile.ui.screens.TaskApprovalScreen
 import com.vanessa.mobile.ui.screens.TaskErrorScreen
 import com.vanessa.mobile.ui.screens.TaskExecutionScreen
 import com.vanessa.mobile.ui.screens.TaskResultScreen
+import com.vanessa.mobile.ui.state.PcIdentity
+import com.vanessa.mobile.ui.state.PcLink
+import com.vanessa.mobile.ui.state.PcUiState
 import com.vanessa.mobile.ui.state.PendingApproval
 import com.vanessa.mobile.ui.state.RemoteTaskPhase
+import com.vanessa.mobile.ui.screens.MyPcScreen
 import com.vanessa.mobile.ui.screens.TaskRecoveryScreen
+import com.vanessa.mobile.ui.state.applyManifest
 import com.vanessa.mobile.ui.state.decodeRemoteTaskPhase
 import com.vanessa.mobile.ui.state.encodeRemoteTaskPhase
 import com.vanessa.mobile.ui.state.phaseOnConnectionChange
+import com.vanessa.mobile.ui.state.reducePcConnection
 import com.vanessa.mobile.ui.state.reduceRemoteTask
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -83,12 +89,11 @@ class RemoteControlActivity : FragmentActivity() {
             if (qrPayload.isNotBlank()) connectWithQr()
         } else {
             val reason = result.data?.getStringExtra(RemotePairingQrScannerActivity.EXTRA_ERROR)
-            if (!reason.isNullOrBlank()) connectionStatus = reason
+            if (!reason.isNullOrBlank()) pcState = reducePcConnection(pcState, reason)
         }
     }
     private var qrPayload by mutableStateOf("")
-    private var connectionStatus by mutableStateOf("Not connected")
-    private var latestEvent by mutableStateOf("No remote task has run.")
+    private var pcState by mutableStateOf(PcUiState())
     private var bridgeJob: Job? by mutableStateOf(null)
     private var requestBusy by mutableStateOf(false)
     private var taskPhase by mutableStateOf<RemoteTaskPhase>(RemoteTaskPhase.Idle)
@@ -99,6 +104,14 @@ class RemoteControlActivity : FragmentActivity() {
         // Rotation must not destroy a pending approval or a running task, and
         // must not resurrect one either: decoding rebuilds only what was saved.
         taskPhase = decodeRemoteTaskPhase(savedInstanceState?.getString(KEY_TASK_PHASE))
+        // What is stored is known before any socket exists; the link is not.
+        bridge.savedPcSummary()?.let { saved ->
+            pcState = pcState.copy(
+                identity = PcIdentity(saved.name, saved.endpoint, saved.fingerprint),
+                link = PcLink.DISCONNECTED,
+                detail = "Not connected to ${saved.name}.",
+            )
+        }
         window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
         window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
         setContent {
@@ -108,158 +121,24 @@ class RemoteControlActivity : FragmentActivity() {
                         androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
                             EnergyWave(
                                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(200.dp),
-                                intensity = if (connectionStatus.startsWith("Connected")) 0.72f else 0.38f,
+                                intensity = if (pcState.link == PcLink.CONNECTED) 0.72f else 0.32f,
                             )
-                            Column(
-                                modifier = Modifier.fillMaxSize()
-                                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                                    .imePadding()
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(horizontal = 22.dp)
-                                    .padding(top = 10.dp, bottom = 28.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    NeonIconButton(
-                                        icon = Icons.Outlined.ArrowBack,
-                                        contentDescription = "Back",
-                                        onClick = { finish() },
-                                        diameter = 44.dp,
+                            MyPcScreen(
+                                state = pcState,
+                                qrPayload = qrPayload,
+                                onQrPayloadChange = { qrPayload = it },
+                                onScanQr = {
+                                    qrScanner.launch(
+                                        Intent(this@RemoteControlActivity, RemotePairingQrScannerActivity::class.java),
                                     )
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text("MY PC", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
-                                        Text("Windows companion", color = VanessaPalette.TextPrimary, style = VanessaType.heading)
-                                    }
-                                    Text(
-                                        if (connectionStatus.startsWith("Connected")) "ONLINE" else "OFFLINE",
-                                        color = if (connectionStatus.startsWith("Connected")) VanessaPalette.Lime else VanessaPalette.TextDim,
-                                        style = VanessaType.eyebrow,
-                                    )
-                                }
-                                Column(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    VanessaOrb(
-                                        size = 104.dp,
-                                        energy = if (connectionStatus.startsWith("Connected")) 0.6f else 0.18f,
-                                        offline = false,
-                                        ringCount = 2,
-                                        description = "Vanessa orb. PC connection screen.",
-                                    )
-                                    Text("Connect your Windows PC", color = VanessaPalette.TextPrimary, style = VanessaType.heading, textAlign = TextAlign.Center)
-                                    Text(
-                                        "Use a one-time pairing code to establish an authenticated connection.",
-                                        color = VanessaPalette.TextSecondary,
-                                        style = VanessaType.bodySmall,
-                                        textAlign = TextAlign.Center,
-                                    )
-                                }
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = VanessaPalette.CardDeep,
-                                    shape = RoundedCornerShape(20.dp),
-                                    border = BorderStroke(1.dp, VanessaPalette.Border),
-                                ) {
-                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("PAIRING DATA", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
-                                        OutlinedTextField(
-                                            value = qrPayload,
-                                            onValueChange = { qrPayload = it },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            label = { Text("PC pairing data") },
-                                            placeholder = { Text("Paste the JSON from the PC pairing window") },
-                                            minLines = 3,
-                                            maxLines = 6,
-                                            enabled = bridgeJob?.isActive != true,
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = VanessaPalette.Cyan,
-                                                unfocusedBorderColor = VanessaPalette.Border,
-                                                focusedTextColor = VanessaPalette.TextPrimary,
-                                                unfocusedTextColor = VanessaPalette.TextPrimary,
-                                                cursorColor = VanessaPalette.Cyan,
-                                                focusedContainerColor = VanessaPalette.Card,
-                                                unfocusedContainerColor = VanessaPalette.Card,
-                                            ),
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            NeonSecondaryButton(
-                                                text = "Scan QR",
-                                                leadingIcon = Icons.Outlined.QrCode2,
-                                                onClick = {
-                                                    qrScanner.launch(Intent(this@RemoteControlActivity, RemotePairingQrScannerActivity::class.java))
-                                                },
-                                                enabled = bridgeJob?.isActive != true,
-                                                modifier = Modifier.weight(1f),
-                                                height = 50.dp,
-                                            )
-                                            NeonButton(
-                                                text = "Pair / Connect",
-                                                onClick = ::connectWithQr,
-                                                enabled = qrPayload.isNotBlank() && bridgeJob?.isActive != true,
-                                                modifier = Modifier.weight(1f),
-                                                height = 50.dp,
-                                            )
-                                        }
-                                        TextButton(
-                                            onClick = ::connectSavedPc,
-                                            enabled = bridgeJob?.isActive != true,
-                                        ) {
-                                            Icon(Icons.Outlined.Refresh, contentDescription = null, tint = VanessaPalette.Cyan)
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("Reconnect to saved PC", color = VanessaPalette.Cyan)
-                                        }
-                                    }
-                                }
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = VanessaPalette.CardDeep,
-                                    shape = RoundedCornerShape(18.dp),
-                                    border = BorderStroke(1.dp, VanessaPalette.Border),
-                                ) {
-                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                        Text("CONNECTION", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
-                                        Text(connectionStatus, color = VanessaPalette.TextPrimary, style = VanessaType.cardTitle)
-                                        Text(
-                                            "A new phone must be approved locally on the PC before it can submit tasks.",
-                                            color = VanessaPalette.TextSecondary,
-                                            style = VanessaType.caption,
-                                        )
-                                    }
-                                }
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = VanessaPalette.CardDeep,
-                                    shape = RoundedCornerShape(18.dp),
-                                    border = BorderStroke(1.dp, VanessaPalette.Border),
-                                ) {
-                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("AVAILABLE PC ACTIONS", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
-                                        NeonSecondaryButton(
-                                            text = "Read PC status",
-                                            onClick = { runRemoteTask("system_status") },
-                                            enabled = connectionStatus.startsWith("Connected") && !requestBusy,
-                                            modifier = Modifier.fillMaxWidth(),
-                                        )
-                                        NeonButton(
-                                            text = "Open Chrome on PC",
-                                            onClick = {
-                                                runRemoteTask("open_app", buildJsonObject { put("app", "chrome") }, "Open Chrome on PC")
-                                            },
-                                            enabled = connectionStatus.startsWith("Connected") && !requestBusy,
-                                            modifier = Modifier.fillMaxWidth(),
-                                        )
-                                        if (requestBusy) Text("Submitting task…", color = VanessaPalette.Cyan, style = VanessaType.caption)
-                                        Text(latestEvent, color = VanessaPalette.TextSecondary, style = VanessaType.caption)
-                                    }
-                                }
-                                TextButton(onClick = ::disconnect) {
-                                    Text("Disconnect", color = VanessaPalette.TextDim)
-                                }
-                            }
+                                },
+                                onPairWithPastedData = ::connectWithQr,
+                                onReconnect = ::connectSavedPc,
+                                onDisconnect = ::forgetPc,
+                                onRunCapability = { capability -> runCapability(capability.name) },
+                                busy = bridgeJob?.isActive == true || requestBusy,
+                                onBack = { finish() },
+                            )
                         }
                     }
                     when (val phase = taskPhase) {
@@ -331,7 +210,7 @@ class RemoteControlActivity : FragmentActivity() {
      * leaves the last summary sitting there pretending to be live.
      */
     private fun handleConnectionState(state: String) {
-        connectionStatus = state
+        pcState = reducePcConnection(pcState, state)
         taskPhase = phaseOnConnectionChange(taskPhase, state)
     }
 
@@ -352,7 +231,9 @@ class RemoteControlActivity : FragmentActivity() {
             onState = { state -> runOnUiThread { handleConnectionState(state) } },
             onEvent = ::handleRemoteEvent,
         )
-        if (bridgeJob == null) connectionStatus = "No paired PC is saved. Paste a fresh PC pairing QR payload."
+        if (bridgeJob == null) {
+            pcState = reducePcConnection(pcState, "No paired PC is saved. Scan the QR code from the PC.")
+        }
     }
 
     private fun runRemoteTask(
@@ -365,10 +246,13 @@ class RemoteControlActivity : FragmentActivity() {
         lifecycleScope.launch {
             try {
                 val requestId = bridge.submitTask(capability, arguments, intent)
-                latestEvent = "Task submitted: $requestId"
+                taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
                 taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
             } catch (error: Exception) {
-                latestEvent = "Task was not submitted: ${error.message ?: "unknown error"}"
+                taskPhase = RemoteTaskPhase.Failed(
+                    message = "Task was not submitted: ${error.message ?: "unknown error"}",
+                    retryable = true,
+                )
             } finally {
                 requestBusy = false
             }
@@ -406,16 +290,11 @@ class RemoteControlActivity : FragmentActivity() {
             when (event.type) {
                 // Connection bookkeeping is not task state and must not push the
                 // lifecycle screens around.
-                "session.ready" -> connectionStatus = "Connected securely to PC."
-                "manifest.snapshot" -> latestEvent =
-                    "PC manifest loaded: ${event.payload["capabilities"]?.toString() ?: "no capabilities"}"
-                else -> {
-                    taskPhase = reduceRemoteTask(taskPhase, event)
-                    if (taskPhase != RemoteTaskPhase.Idle) {
-                        latestEvent = (taskPhase as? RemoteTaskPhase.Running)?.summary
-                            ?: event.type
-                    }
-                }
+                "session.ready" -> Unit
+                "manifest.snapshot" -> pcState = applyManifest(pcState, event.payload)
+                // The PC says its capability list changed; ask for the new one.
+                "manifest.changed" -> lifecycleScope.launch { runCatching { bridge.getManifest() } }
+                else -> taskPhase = reduceRemoteTask(taskPhase, event)
             }
         }
     }
@@ -505,15 +384,31 @@ class RemoteControlActivity : FragmentActivity() {
                     approvedAt = System.currentTimeMillis(),
                 )
             } catch (error: Exception) {
-                latestEvent = "Denial could not be delivered: ${error.message ?: "connection lost"}"
+                pcState = reducePcConnection(pcState, "Remote PC disconnected: denial not delivered")
             }
         }
+    }
+
+    /** Removes the stored pairing. The PC must approve this phone again. */
+    private fun forgetPc() {
+        bridgeJob?.cancel()
+        bridge.disconnect()
+        runCatching { bridge.forgetSavedPc() }
+        pcState = PcUiState()
+        taskPhase = RemoteTaskPhase.Idle
+    }
+
+    /** Submits one of the capabilities the PC actually advertised. */
+    private fun runCapability(name: String) {
+        val arguments = if (name == "open_app") buildJsonObject { put("app", "chrome") } else buildJsonObject { }
+        val intent = if (name == "open_app") "Open Chrome on PC" else null
+        runRemoteTask(name, arguments, intent)
     }
 
     private fun disconnect() {
         bridgeJob?.cancel()
         bridge.disconnect()
-        connectionStatus = "Disconnected"
+        pcState = pcState.copy(link = PcLink.DISCONNECTED, detail = "Disconnected.", capabilities = emptyList(), manifestReceived = false)
     }
 
     override fun onDestroy() {

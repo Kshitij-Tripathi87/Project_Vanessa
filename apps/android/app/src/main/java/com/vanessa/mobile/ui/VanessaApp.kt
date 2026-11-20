@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,6 +85,16 @@ import com.vanessa.mobile.ui.components.NeonButton
 import com.vanessa.mobile.ui.components.NeonIconButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import com.vanessa.mobile.remote.SavedPcReader
+import com.vanessa.mobile.remote.SavedPcSummary
+import com.vanessa.mobile.ui.components.NeonSecondaryButton
+import com.vanessa.mobile.ui.theme.VanessaRadius
+import com.vanessa.mobile.ui.theme.VanessaType
 import com.vanessa.mobile.model.InstalledModel
 import com.vanessa.mobile.profile.DeviceProfile
 import java.io.File
@@ -191,7 +202,7 @@ internal fun VanessaApp(
                         "PAIRING" -> PairingScreen(
                             inset, pairingNotice, onNavigate, onStartPairing, onDismissPairingNotice,
                         )
-                        "PC" -> PcDashboardScreen(inset, onNavigate)
+                        "PC" -> PcDashboardScreen(inset, onNavigate, onStartPairing)
                         "SETTINGS" -> SettingsScreen(
                             inset, profile, model, modelStatus, inferenceAvailable, modelLoaded,
                             speechReady, speechStatus, speechInputStatus, onDeviceSpeechAvailable,
@@ -318,11 +329,16 @@ private fun PairingScreen(
 private fun PcDashboardScreen(
     inset: Dp,
     onNavigate: (String) -> Unit,
+    onOpenMyPc: () -> Unit,
 ) {
+    // Read on resume: pairing happens in another Activity, so a value captured
+    // once at composition would still claim "not paired" on the way back.
+    val savedPc = rememberSavedPc()
+
     Box(modifier = Modifier.fillMaxSize()) {
         EnergyWave(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(220.dp),
-            intensity = 0.46f,
+            intensity = if (savedPc != null) 0.62f else 0.40f,
         )
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -338,75 +354,112 @@ private fun PcDashboardScreen(
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("MY DEVICES", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp)
-                    Text("Windows companion", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.headlineMedium)
+                    Text("MY DEVICES", color = VanessaPalette.Cyan, style = VanessaType.eyebrow)
+                    Text("Windows companion", color = VanessaPalette.TextPrimary, style = VanessaType.heading)
                 }
-                StatusPill("PC CONTROL", VanessaPalette.TextSecondary)
             }
 
             Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 VanessaOrb(
                     size = 164.dp,
-                    energy = 0.20f,
-                    offline = false,
+                    energy = if (savedPc != null) 0.34f else 0.18f,
+                    offline = savedPc == null,
                     ringCount = 3,
-                    description = "Vanessa orb. Windows PC is not paired.",
+                    description = if (savedPc == null) {
+                        "Vanessa orb. No Windows PC is paired."
+                    } else {
+                        "Vanessa orb. Paired with ${savedPc.name}."
+                    },
                 )
                 Text(
-                    "Your PC, in reach.",
+                    text = if (savedPc == null) "No PC paired yet" else "Paired with ${savedPc.name}",
                     color = VanessaPalette.TextPrimary,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = VanessaType.heading,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "Pair your Windows companion to access approved tasks from this phone.",
+                    text = if (savedPc == null) {
+                        "Pair your Windows companion to run approved tasks from this phone."
+                    } else {
+                        "Pairing is stored on this phone. The live session, its status and the PC's " +
+                            "capabilities are on the My PC screen."
+                    },
                     color = VanessaPalette.TextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = VanessaType.bodySmall,
                     textAlign = TextAlign.Center,
                 )
             }
 
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = VanessaPalette.Surface,
-                shape = RoundedCornerShape(20.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, VanessaPalette.Border),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Text("CONNECTION", color = VanessaPalette.Cyan, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.2.sp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(VanessaPalette.Warning))
-                        Spacer(Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Connection status", color = VanessaPalette.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-                            Text("Open remote control to check the live session.", color = VanessaPalette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+            if (savedPc != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = VanessaPalette.Surface,
+                    shape = RoundedCornerShape(VanessaRadius.card),
+                    border = BorderStroke(1.dp, VanessaPalette.Border),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("PAIRED PC", color = VanessaPalette.TextDim, style = VanessaType.eyebrow)
+                        Text(savedPc.name, color = VanessaPalette.TextPrimary, style = VanessaType.cardTitle)
+                        if (savedPc.endpoint.isNotBlank()) {
+                            Text(savedPc.endpoint, color = VanessaPalette.TextSecondary, style = VanessaType.caption)
+                        }
+                        if (savedPc.fingerprint.isNotBlank()) {
+                            Text(
+                                "Key ${savedPc.fingerprint.take(16)}${if (savedPc.fingerprint.length > 16) "…" else ""}",
+                                color = VanessaPalette.TextDim,
+                                style = VanessaType.caption,
+                            )
                         }
                     }
-                    ThinDivider()
-                    DeviceMetricRow(Icons.Outlined.Lock, "Trust", "A new phone must be approved locally on Windows")
                 }
             }
 
             NeonButton(
-                text = "Pair with Windows",
-                leadingIcon = Icons.Outlined.QrCode2,
+                text = if (savedPc == null) "Open My PC" else "Reconnect to ${savedPc.name}",
+                leadingIcon = Icons.Outlined.Computer,
                 trailingIcon = Icons.Outlined.ChevronRight,
+                onClick = onOpenMyPc,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            NeonSecondaryButton(
+                text = if (savedPc == null) "Pair with Windows" else "Pair a different PC",
+                leadingIcon = Icons.Outlined.QrCode2,
                 onClick = { onNavigate("PAIRING") },
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Connection details and live task results appear after the authenticated PC session is established.",
+                text = "Vanessa never infers a live session: connection state and capabilities are read " +
+                    "from the authenticated PC session itself.",
                 modifier = Modifier.fillMaxWidth(),
-                color = VanessaPalette.TextSecondary,
-                style = MaterialTheme.typography.labelSmall,
+                color = VanessaPalette.TextDim,
+                style = VanessaType.caption,
                 textAlign = TextAlign.Center,
             )
         }
     }
+}
+
+/**
+ * The stored pairing, refreshed whenever the screen comes back to the front.
+ * Reads preferences only — no connection is opened to answer "is a PC paired?".
+ */
+@Composable
+private fun rememberSavedPc(): SavedPcSummary? {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var generation by remember { mutableStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) generation++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return remember(generation) { SavedPcReader.read(context.applicationContext) }
 }
 
 @Composable
