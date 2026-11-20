@@ -177,8 +177,19 @@ jobs:
 
       - name: Run UI journeys
         run: |
+          # `| tail` returns tail's status, which is how a failed Gradle run was
+          # previously reported as success while producing no results at all.
+          set -o pipefail
+          export ANDROID_SERIAL="${ANDROID_SERIAL:-$("$ADB_BIN" devices | awk '/\tdevice$/ {print $1; exit}')}"
+          echo "ANDROID_SERIAL=${ANDROID_SERIAL:-none}"
+          "$ADB_BIN" devices
           cd apps/android
-          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tail -n 200
+          if ! ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tail -n 250; then
+            echo "::error::connectedDebugAndroidTest failed. Last lines above; also see the uploaded artefacts."
+            "$ADB_BIN" devices || true
+            exit 1
+          fi
+          echo "::warning::connectedDebugAndroidTest exited 0"
 
       - name: Upload Android UI test reports
         if: always()
@@ -198,7 +209,7 @@ jobs:
         run: |
           results="apps/android/app/build/outputs/androidTest-results/connected"
           if [ ! -d "$results" ]; then
-            echo "::error::No connected test results directory. The emulator runner never reached instrumentation."
+            echo "::error::Gradle exited 0 but wrote no connected test results. That means the task was skipped - usually no test classes or no device seen by AGP - not that the tests passed."
             exit 1
           fi
           execs=$(grep -rho '<testcase' "$results" 2>/dev/null | wc -l | tr -d ' ')
