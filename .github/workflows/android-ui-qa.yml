@@ -96,6 +96,23 @@ jobs:
           script: |
             cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
 
+      # The failure this job has always had is invisible in the step list: the
+      # emulator runner fails, the upload step then "succeeds" while shipping
+      # nothing, and the job looks like QA that ran. These two steps make the
+      # absence of results the loudest thing in the run.
+      - name: Explain why no instrumented tests ran
+        if: failure()
+        run: |
+          echo "::group::Emulator and ADB state"
+          adb devices || true
+          emulator -list-avds || true
+          echo "::endgroup::"
+          echo "::group::Instrumentation output on disk"
+          ls -R apps/android/app/build/outputs/androidTest-results 2>/dev/null || echo "no androidTest-results directory"
+          ls -R apps/android/app/build/reports/androidTests 2>/dev/null || echo "no androidTests report directory"
+          echo "::endgroup::"
+          echo "::error::The emulator runner failed before instrumentation reported. See the groups above: no test-results file is the difference between 'the app failed a UI test' and 'no UI test ran at all'."
+
       - name: Upload Android UI test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,3 +122,21 @@ jobs:
             apps/android/app/build/reports/androidTests/connected/**
             apps/android/app/build/outputs/androidTest-results/connected/**
           if-no-files-found: warn
+
+      # A release gate that accepts an empty report is not a gate. This fails the
+      # job when the XML exists but contains no executed testcase, which is the
+      # state this job has been in since #62.
+      - name: Require at least one executed instrumented test
+        if: always()
+        run: |
+          results="apps/android/app/build/outputs/androidTest-results/connected"
+          if [ ! -d "$results" ]; then
+            echo "::error::No connected test results directory. The emulator runner never reached instrumentation."
+            exit 1
+          fi
+          execs=$(grep -rho '<testcase' "$results" 2>/dev/null | wc -l | tr -d ' ')
+          echo "Executed testcase elements: $execs"
+          if [ "$execs" -eq 0 ]; then
+            echo "::error::Zero instrumented tests executed. A green run with no executed tests is not evidence; failing the job instead of caching silently."
+            exit 1
+          fi
