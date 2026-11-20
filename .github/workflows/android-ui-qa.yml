@@ -259,7 +259,11 @@ jobs:
                   total += 1
                   for bad in case.findall("failure") + case.findall("error"):
                       failures += 1
-                      text = (bad.get("message") or bad.text or "").strip()
+                      text = (bad.get("message") or "").strip() or bad.text.strip()
+                      # Some runners record the assertion's cause as the message
+                      # and leave the real one in the body; keep both.
+                      if bad.text.strip() and not bad.text.strip().startswith(text[:40]):
+                          text = (text + " | " + bad.text.strip()).strip()
                       text = " ".join(text.split())[:400]
                       lines.append(f"{case.get('classname','?')}.{case.get('name','?')}: {text}")
 
