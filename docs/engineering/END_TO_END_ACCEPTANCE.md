@@ -33,6 +33,38 @@ Required change, in this order:
 
 Until 1–3 are done, no PR may claim UI acceptance on the strength of this job.
 
+### Classification so far
+
+Steps 1–3 are done: the job now fails on a missing or empty report, and its
+annotations state the boundary instead of leaving it to a log.
+
+What the evidence says, as of the run on `62addadb`:
+
+- All setup steps succeed: checkout, JDK 17, SDK, KVM rule, SDK packages, Gradle.
+- The emulator step fails after roughly **2–3 minutes**, well under the 900 s
+  boot ceiling, so this is not a hung boot.
+- At failure time the diagnostic reports **`adb sees 0 device(s); AVDs: none`**.
+  The action may have cleaned up its AVD by then, so this shows the emulator is
+  not running — not *why* it did not start.
+- No `androidTest-results` directory is produced at all, so instrumentation never
+  began.
+
+The root cause is **not yet identified**: job logs are served from blob storage
+and were not retrievable from the environment that made these changes, so the
+action's own error text has not been read. The next person should open the failed
+step's log (Actions UI, "Run UI journeys on a clean Android emulator") before
+changing any emulator parameter — the current values (API 35, `google_apis`,
+x86_64, swiftshader) are internally consistent, and the last two edits to this
+job were guesses that did not help.
+
+Discarded hypotheses, so they are not retried blind:
+
+- Not a macOS/HVF problem — this job runs on `ubuntu-latest` with `/dev/kvm`
+  verified by an explicit pre-step.
+- Not a missing emulator package — installing it explicitly in the SDK step
+  changed nothing.
+- Not a boot timeout — the step dies far too quickly.
+
 ## Journey gates
 
 Each journey below needs a recorded artefact (log or screenshots) before it can
