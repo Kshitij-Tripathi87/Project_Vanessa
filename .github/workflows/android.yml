@@ -71,13 +71,28 @@ jobs:
       - name: Test Android modules and build verified native APK
         working-directory: apps/android
         run: |
+          # Failure here used to surface as "Process completed with exit code 1"
+          # and nothing else, because the Gradle output never left the runner.
+          # `|| status=$?` keeps the shell from aborting before the diagnosis,
+          # and every substitution carries `|| true` so a non-matching grep
+          # cannot abort the diagnostic itself.
+          status=0
           ./gradlew \
             :core:protocol:test \
             :core:agent:test \
             :app:testDebugUnitTest \
             :app:verifyLocalInferenceApk \
             --no-daemon \
-            -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp"
+            -PllamaCppDir="${GITHUB_WORKSPACE}/.toolchain/llama.cpp" \
+            > /tmp/android-gradle.log 2>&1 || status=$?
+          tail -n 40 /tmp/android-gradle.log || true
+          if [ $status -ne 0 ]; then
+            # `e:` lines are Kotlin compile errors; the JUnit failure lines are
+            # what a red unit test looks like.
+            excerpt=$(grep -nE "^e: |error:|FAILURE:|Execution failed|Caused by|There were failing tests|> Task .* FAILED" -A 2 /tmp/android-gradle.log | tail -c 2500 | tr '\n' '~' || true)
+            echo "::error::Gradle exited ${status}: ${excerpt:-no matching lines}"
+            exit $status
+          fi
 
       - name: Verify biometric approval uses the Keystore CryptoObject
         run: |
