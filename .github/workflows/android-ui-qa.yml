@@ -178,15 +178,21 @@ jobs:
       - name: Run UI journeys
         run: |
           # `| tail` returns tail's status, which is how a failed Gradle run was
-          # previously reported as success while producing no results at all.
+          # previously reported as success while producing no results at all. Keep
+          # the full log on disk, print a window of it, and make the error itself
+          # an annotation: step logs are not always retrievable, annotations are.
           set -o pipefail
           export ANDROID_SERIAL="${ANDROID_SERIAL:-$("$ADB_BIN" devices | awk '/\tdevice$/ {print $1; exit}')}"
           echo "ANDROID_SERIAL=${ANDROID_SERIAL:-none}"
           "$ADB_BIN" devices
           cd apps/android
-          if ! ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tail -n 250; then
-            echo "::error::connectedDebugAndroidTest failed. Last lines above; also see the uploaded artefacts."
-            "$ADB_BIN" devices || true
+          mkdir -p /tmp/emu
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace > /tmp/emu/tests.log 2>&1
+          status=$?
+          tail -n 60 /tmp/emu/tests.log
+          if [ $status -ne 0 ]; then
+            excerpt=$(grep -nE "FAILURE:|Execution failed|error:|e: |No connected devices|Caused by|What went wrong" -A 3 /tmp/emu/tests.log | tail -c 2600 | tr '\n' '~')
+            echo "::error::connectedDebugAndroidTest exit ${status}: ${excerpt:-no matching lines}"
             exit 1
           fi
           echo "::warning::connectedDebugAndroidTest exited 0"
