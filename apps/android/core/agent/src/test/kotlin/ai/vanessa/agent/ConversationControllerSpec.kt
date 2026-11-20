@@ -138,6 +138,26 @@ class ConversationControllerSpec {
     }
 
     @Test
+    fun aSecondAssistantGenerationCannotStrandTheFirstTurn() {
+        val controller = controller()
+        val firstRequest = requireNotNull(controller.submitTyped("first request"))
+        val firstAssistant = requireNotNull(controller.beginAssistantTurn(firstRequest))
+        val secondRequest = requireNotNull(controller.submitTyped("second request"))
+
+        assertNull(controller.beginAssistantTurn(secondRequest))
+        assertEquals(
+            ConversationPublishResult.PUBLISHED,
+            controller.publishValidatedResponse(firstAssistant, "First response completed."),
+        )
+        val secondAssistant = requireNotNull(controller.beginAssistantTurn(secondRequest))
+        assertEquals(
+            ConversationPublishResult.PUBLISHED,
+            controller.publishValidatedResponse(secondAssistant, "Second response completed."),
+        )
+        assertEquals(ConversationTurnStatus.COMPLETED, controller.state.value.turns.last().status)
+    }
+
+    @Test
     fun plannerContextContainsCompletedPriorTurnsButExcludesCurrentRequest() {
         val controller = controller()
         val first = controller.submitTyped("what is on my calendar today")!!
@@ -210,7 +230,7 @@ class ConversationControllerSpec {
         val chunks = ConversationResponseChunker.split(text)
 
         assertEquals(text, chunks.joinToString(""))
-        assertTrue(chunks.first().endsWith(". "))
+        assertTrue(chunks.first().endsWith("! "))
         assertTrue(chunks.size >= 2)
     }
 
@@ -241,3 +261,4 @@ class ConversationControllerSpec {
 
 private fun uuid(value: Int): String =
     "00000000-0000-4000-8000-" + value.toString().padStart(12, '0')
+
