@@ -16,6 +16,7 @@ there.
 | [AGENT_REGISTRY.md](AGENT_REGISTRY.md) | 12 agents, 62 actions, risk and authority | generated from `agentCatalog.ts` |
 | [AGENT_ORCHESTRATION_SPEC.md](AGENT_ORCHESTRATION_SPEC.md) | Supervisor → planner → policy → execution → critic | implemented in `services/orchestrator` |
 | [AGENT_CONTRACTS.md](AGENT_CONTRACTS.md) | Wire schemas, approval binding, proposed envelope | wire contract implemented, envelope not |
+| [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Session/turn contract, reducer invariants, on-device multi-turn context | contract and reducer implemented, voice bridge not |
 | [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | What each CI signal proves, release gates | gates defined, most unmet |
 
 ## Reading order for a new contributor

@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -423,6 +424,8 @@ internal fun ListeningScreen(
     listening: Boolean,
     speechAvailable: Boolean,
     status: String,
+    /** Live draft of the current utterance. Empty while nothing is being heard. */
+    draft: String,
     onStop: () -> Unit,
     onClose: () -> Unit,
     onTypeInstead: () -> Unit,
@@ -493,6 +496,22 @@ internal fun ListeningScreen(
                 )
             }
             Spacer(Modifier.height(14.dp))
+            if (draft.isNotBlank()) {
+                // The sentence as the recognizer currently has it. Shown in the
+                // primary colour because it is the content the user is
+                // producing, not a status line about the app.
+                Text(
+                    draft,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = VanessaPalette.TextPrimary,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             Text(
                 status,
                 modifier = Modifier.fillMaxWidth(),

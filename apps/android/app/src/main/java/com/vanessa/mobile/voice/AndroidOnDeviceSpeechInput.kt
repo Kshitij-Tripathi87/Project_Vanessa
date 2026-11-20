@@ -18,6 +18,15 @@ class AndroidOnDeviceSpeechInput(
     context: Context,
     private val onTranscript: (String) -> Unit,
     private val onState: (String) -> Unit,
+    /**
+     * Draft of the sentence being spoken, updated as the recognizer revises it.
+     *
+     * The recognizer was already asked for partial results and then threw them
+     * away, so the surface showed "Listening…" for the whole utterance and then
+     * jumped straight to the final transcript. Showing the draft is what makes
+     * the state legible while the user is still speaking.
+     */
+    private val onPartial: (String) -> Unit = {},
 ) {
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
@@ -79,7 +88,16 @@ class AndroidOnDeviceSpeechInput(
                     onTranscript(transcript)
                 }
             }
-            override fun onPartialResults(partialResults: Bundle?) = Unit
+            override fun onPartialResults(partialResults: Bundle?) {
+                val draft = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    ?.trim()
+                    .orEmpty()
+                // The recognizer also reports blank drafts between phrases; those
+                // do not clear what is on screen.
+                if (draft.isNotEmpty()) onPartial(draft)
+            }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
     }

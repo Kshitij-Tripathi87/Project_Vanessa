@@ -2,16 +2,18 @@ package com.vanessa.mobile.ui
 
 import android.Manifest
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -46,8 +48,18 @@ class VanessaNavigationTest {
         composeRule.onAllNodesWithText(text).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
     }.getOrDefault(false)
 
+    /**
+     * Clicks a label, scrolling it into view first.
+     *
+     * Without the scroll this is a silent no-op on any button that sits below
+     * the fold: the tap is injected at the node's centre, which is outside the
+     * window, so nothing receives it and nothing throws. The first-run walk
+     * spent twelve clicks on an invisible "Not now" before this was noticed.
+     */
     private fun clickText(text: String) {
-        composeRule.onAllNodesWithText(text)[0].performClick()
+        val node = composeRule.onAllNodesWithText(text)[0]
+        runCatching { node.performScrollTo() }
+        node.performClick()
         composeRule.waitForIdle()
     }
 
@@ -57,9 +69,51 @@ class VanessaNavigationTest {
      * test never sits behind a system permission dialog; the microphone grant
      * rule already covers the permission this build needs.
      */
+    /**
+     * Every text the semantics tree currently exposes. Marker checks answer
+     * "is the screen I expected here"; this answers "what is here", which is the
+     * question that matters when the walk stops somewhere unexpected.
+     */
+    private fun screenText(): String = runCatching {
+        // The framework's own tree dump: text, roles and test tags in one pass,
+        // with no per-property extraction to get wrong.
+        composeRule.onRoot(useUnmergedTree = true)
+            .printToString(maxDepth = 6)
+            .replace("\n", " ")
+            .replace(Regex("\\s+"), " ")
+            .take(900)
+    }.getOrDefault("unavailable")
+
+    /** What is on screen, for a failure message that can be read in CI. */
+    private fun describeScreen(): String {
+        val markers = listOf(
+            "Initializing Vanessa…",
+            "Checking this device…",
+            "Detecting the installed local model…",
+            "Starting the local model…",
+            "Vanessa is open. Some local features are unavailable.",
+            "Get Started",
+            "Continue",
+            "Allow microphone",
+            "Not now",
+            "How can I help?",
+            "No local model is active.",
+            "Type a message…",
+        ).filter { exists(it) }
+        val composer = runCatching {
+            composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().size
+        }.getOrDefault(-1)
+        return "visible: " + markers.joinToString(", ").ifEmpty { "none of the known screens" } +
+            "; composer menus: $composer; text: " + screenText()
+    }
+
     private fun enterAssistant() {
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            exists("How can I help?") || exists("Get Started")
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) {
+                exists("How can I help?") || exists("Get Started")
+            }
+        } catch (timeout: Throwable) {
+            throw AssertionError("No first screen after 60s. " + describeScreen())
         }
         // Step through the first-run screens until the composer exists. A
         // single pass over the labels races the recomposition that follows
@@ -69,12 +123,19 @@ class VanessaNavigationTest {
             guard += 1
             when {
                 exists("Get Started") -> clickText("Get Started")
+                exists("Allow microphone") -> clickText("Not now")
                 exists("Not now") -> clickText("Not now")
                 exists("Continue") -> clickText("Continue")
                 else -> composeRule.waitForIdle()
             }
         }
-        composeRule.waitUntil(timeoutMillis = 60_000) { composerVisible() }
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) { composerVisible() }
+        } catch (timeout: Throwable) {
+            throw AssertionError(
+                "The composer never appeared after " + guard + " first-run taps. " + describeScreen(),
+            )
+        }
     }
 
     /**
@@ -83,8 +144,13 @@ class VanessaNavigationTest {
      * greeting, which the first answer replaces.
      */
     private fun composerVisible(): Boolean = runCatching {
-        composeRule.onAllNodes(hasSetTextAction())
-            .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        // Anchored on the composer's own menu button rather than on
+        // `onAllNodes(hasSetTextAction())`: that call did not resolve against this
+        // Compose version, so the whole instrumented source set failed to compile
+        // and every emulator run for months reported "no tests" instead of a
+        // compile error. A content description that exists only in the composer is
+        // a narrower signal anyway.
+        composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().isNotEmpty()
     }.getOrDefault(false)
 
     @Test

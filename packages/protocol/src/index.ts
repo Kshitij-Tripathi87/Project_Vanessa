@@ -18,3 +18,7 @@ export * from "./signatures.ts";
 export * from "./protocol.ts";
 
 export * from "./sessionGuard.ts";
+
+// Conversation contract: session, turn and event shapes, plus the pure reducer
+// the phone and the desktop both fold events through.
+export * from "./conversation.ts";

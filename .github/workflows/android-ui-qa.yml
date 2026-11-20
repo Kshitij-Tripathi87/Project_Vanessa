@@ -72,58 +72,159 @@ jobs:
             'build-tools;35.0.0' \
             'emulator' \
             'system-images;android-35;google_apis;x86_64'
-          # The runner needs an emulator binary and the image before it can create
-          # an AVD. Both are installed here so a missing package fails loudly in a
-          # step we control rather than inside the action, where the log is the
-          # only evidence and it is not always retrievable.
-          emulator -version | head -1
+
+      # `emulator` is not on PATH on this runner even after sdkmanager installs
+      # it. That is what defeated the previous version of this workflow: it
+      # probed with `emulator -version | head -1`, and a pipeline returns the exit
+      # status of its last element, so "command not found" looked like success and
+      # the absence of the binary was never noticed anywhere. The binary is
+      # located once here and exported for every later step.
+      # Warn-only. This step exists to *report* the SDK layout, never to fail:
+      # a diagnostic that can fail is a diagnostic that hides its own output.
+      - name: Report SDK layout
+        run: |
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-unset}}"
+          emu="$(command -v emulator || echo none)"
+          adb="$(command -v adb || echo none)"
+          avd="$(command -v avdmanager || echo none)"
+          sdm="$(command -v sdkmanager || echo none)"
+          listing="$(ls "$sdk" 2>&1 | tr '\n' ' ')"
+          found="$(find "$sdk" -maxdepth 3 -name emulator -type f 2>/dev/null | tr '\n' ' ')"
+          echo "::warning::sdk=${sdk} | emulator-on-path=${emu} | adb=${adb} | avdmanager=${avd} | sdkmanager=${sdm} | sdk-listing=${listing} | emulator-binary-found=${found:-none}"
+          if [ "$emu" != "none" ]; then
+            echo "EMULATOR_BIN=$emu" >> "$GITHUB_ENV"
+          elif [ -n "$found" ]; then
+            echo "EMULATOR_BIN=$(echo "$found" | awk '{print $1}')" >> "$GITHUB_ENV"
+          fi
+          echo "ADB_BIN=${adb}" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run UI journeys on a clean Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          # Keep the fail-fast ceiling well under the job timeout so a broken
-          # image reports "timeout" instead of an ambiguous cancellation.
-          emulator-boot-timeout: 900
-          ram-size: 4096M
-          cores: 4
-          # A GPU mode is required even headless: without one the emulator cannot
-          # bring up the system UI and never reports boot_completed.
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          disable-animations: true
-          # Keep directory change and Gradle invocation in one shell command:
-          # the emulator action executes separate script lines in separate shells.
-          script: |
-            cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
-
-      # The failure this job has always had is invisible in the step list: the
-      # emulator runner fails, the upload step then "succeeds" while shipping
-      # nothing, and the job looks like QA that ran. These two steps make the
-      # absence of results the loudest thing in the run.
-      - name: Explain why no instrumented tests ran
-        if: failure()
+      # The emulator is booted here rather than by android-emulator-runner. The
+      # action is good, but when it fails its reason lives only in the step log,
+      # and step logs are served from blob storage that is not always reachable.
+      # Owning the boot means every decisive fact — acceleration, disk, AVD
+      # config, the emulator's own stderr — is emitted as an annotation on the
+      # run page, which stays readable when the log does not.
+      - name: Check emulator acceleration and disk
         run: |
-          echo "::group::Emulator and ADB state"
-          adb devices || true
-          emulator -list-avds || true
-          echo "::endgroup::"
-          # Logs are not always reachable (they are served from blob storage, not
-          # the API), but annotations are. Emit the decisive facts as annotations
-          # so the cause of a failed boot is readable on the run page itself.
-          devices=$(adb devices | grep -cE '\sdevice$' || true)
-          avds=$(emulator -list-avds | tr '\n' ' ' || true)
-          echo "::warning::adb sees ${devices} device(s); AVDs: ${avds:-none}"
-          echo "::group::Instrumentation output on disk"
-          ls -R apps/android/app/build/outputs/androidTest-results 2>/dev/null || echo "no androidTest-results directory"
-          ls -R apps/android/app/build/reports/androidTests 2>/dev/null || echo "no androidTests report directory"
-          echo "::endgroup::"
-          echo "::error::The emulator runner failed before instrumentation reported. See the groups above: no test-results file is the difference between 'the app failed a UI test' and 'no UI test ran at all'."
+          if [ -z "${EMULATOR_BIN:-}" ] || [ ! -x "$EMULATOR_BIN" ]; then
+            echo "::error::no usable emulator binary (EMULATOR_BIN='${EMULATOR_BIN:-unset}'). Read the 'Report SDK layout' annotation for what this runner actually has."
+            exit 1
+          fi
+          "$EMULATOR_BIN" -accel-check || true
+          df -h / /home /dev/shm || true
+          accel=$("$EMULATOR_BIN" -accel-check 2>&1 | tr '\n' ' ')
+          free=$(df -h --output=avail /home | tail -1 | tr -d ' ')
+          echo "::warning::acceleration: ${accel} | free on /home: ${free}"
+
+      - name: Create AVD
+        run: |
+          if ! echo "no" | avdmanager create avd \
+              -n vanessa \
+              -k 'system-images;android-35;google_apis;x86_64' \
+              -d pixel_2 \
+              --force; then
+            echo "::error::avdmanager could not create the AVD; the system image is missing or avdmanager is not on PATH."
+            ls "$ANDROID_HOME/cmdline-tools" || true
+            exit 1
+          fi
+          avdmanager list avd || true
+
+      - name: Boot the emulator
+        run: |
+          mkdir -p /tmp/emu
+          if [ -z "${EMULATOR_BIN:-}" ] || [ ! -x "$EMULATOR_BIN" ]; then
+            echo "::error::no usable emulator binary (EMULATOR_BIN='${EMULATOR_BIN:-unset}'). Read the 'Report SDK layout' annotation for what this runner actually has."
+            exit 1
+          fi
+          "$EMULATOR_BIN" -avd vanessa \
+            -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
+            > /tmp/emu/emulator.log 2>&1 &
+          echo $! > /tmp/emu/pid
+          echo "emulator pid $(cat /tmp/emu/pid)"
+          # A process that dies in its first seconds is faster to read than a
+          # ten-minute wait-for-device that is doomed anyway.
+          sleep 20
+          if ! kill -0 "$(cat /tmp/emu/pid)" 2>/dev/null; then
+            echo "::error::the emulator process exited within 20s of starting"
+            tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+            exit 1
+          fi
+          if ! timeout 420 "$ADB_BIN" wait-for-device; then
+            echo "::error::adb never saw a device"
+            "$ADB_BIN" devices || true
+            tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+            exit 1
+          fi
+          for i in $(seq 1 120); do
+            if [ "$("$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              echo "::warning::emulator booted after ~$((i * 5))s of polling"
+              # The app animates from its own frame clock and honours the system
+              # animator scale. With animations on, Compose never reports idle and
+              # every waitForIdle call in the suite hangs until the job times out -
+              # which is exactly what happened when this workflow replaced the
+              # emulator action, whose disable-animations did this for us.
+              "$ADB_BIN" shell settings put global window_animation_scale 0
+              "$ADB_BIN" shell settings put global transition_animation_scale 0
+              "$ADB_BIN" shell settings put global animator_duration_scale 0
+              echo "animator scale: $("$ADB_BIN" shell settings get global animator_duration_scale)"
+              "$ADB_BIN" devices
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/emu/pid)" 2>/dev/null; then
+              echo "::error::the emulator died while booting"
+              tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::sys.boot_completed never became 1 within 600s"
+          tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+          exit 1
+
+      - name: Run UI journeys
+        run: |
+          # `| tail` returns tail's status, which is how a failed Gradle run was
+          # previously reported as success while producing no results at all. Keep
+          # the full log on disk, print a window of it, and make the error itself
+          # an annotation: step logs are not always retrievable, annotations are.
+          set -o pipefail
+          export ANDROID_SERIAL="${ANDROID_SERIAL:-$("$ADB_BIN" devices | awk '/\tdevice$/ {print $1; exit}')}"
+          echo "ANDROID_SERIAL=${ANDROID_SERIAL:-none}"
+          "$ADB_BIN" devices
+          cd apps/android
+          mkdir -p /tmp/emu
+          # `|| status=$?` rather than a bare call: the shell runs with -e, so a
+          # failing Gradle aborts the step before the next line could record why.
+          status=0
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace > /tmp/emu/tests.log 2>&1 || status=$?
+          tail -n 60 /tmp/emu/tests.log
+          if [ $status -ne 0 ]; then
+            # `|| true` is load-bearing: with pipefail and `bash -e`, a grep that
+            # matches nothing aborts the step before this line can run, which is
+            # why earlier versions of this diagnostic printed nothing at all.
+            excerpt=$(grep -nE "FAILURE:|Execution failed|error:|e: |No connected devices|Caused by|What went wrong" -A 3 /tmp/emu/tests.log | tail -c 2200 | tr '\n' '~' || true)
+            tailnote=$(tail -c 1200 /tmp/emu/tests.log | tr '\n' '~' || true)
+            echo "::error::connectedDebugAndroidTest exit ${status}: ${excerpt:-no matching lines} || log tail: ${tailnote}"
+            exit 1
+          fi
+          echo "::warning::connectedDebugAndroidTest exited 0"
+          # Two guesses at this path were wrong in different ways, so stop
+          # guessing: search the build tree for the XML the next step parses, and
+          # print what was found either way.
+          # Anchored on the workspace: this step cd's into apps/android before
+          # invoking Gradle, so a repository-relative path resolves twice.
+          found=$(find "$GITHUB_WORKSPACE/apps/android/app/build" -name '*.xml' -path '*androidTest-results*' 2>/dev/null | head -5 || true)
+          if [ -n "$found" ]; then
+            echo "::warning::instrumented results: $(echo "$found" | tr '\n' ' ')"
+          else
+            why=$(grep -nE "> Task :app:connected|SKIPPED|NO-SOURCE|UP-TO-DATE|Installing|Starting|tests? on|No connected" /tmp/emu/tests.log | tail -c 2000 | tr '\n' '~' || true)
+            tailnote=$(tail -c 1200 /tmp/emu/tests.log | tr '\n' '~' || true)
+            echo "::error::connectedDebugAndroidTest exited 0 but wrote no instrumented result XML anywhere under apps/android/app/build. Task lines: ${why:-none captured} || log tail: ${tailnote}"
+            exit 1
+          fi
 
       - name: Upload Android UI test reports
         if: always()
@@ -135,20 +236,48 @@ jobs:
             apps/android/app/build/outputs/androidTest-results/connected/**
           if-no-files-found: warn
 
-      # A release gate that accepts an empty report is not a gate. This fails the
-      # job when the XML exists but contains no executed testcase, which is the
-      # state this job has been in since #62.
-      - name: Require at least one executed instrumented test
+      # A release gate that accepts an empty report is not a gate: this fails when
+      # the XML is missing or holds no executed testcase. It also lifts each
+      # failure into an annotation, because the JUnit HTML report is an artefact
+      # and artefacts are not always reachable from wherever the fix is made.
+      - name: Report instrumented results
         if: always()
         run: |
           results="apps/android/app/build/outputs/androidTest-results/connected"
           if [ ! -d "$results" ]; then
-            echo "::error::No connected test results directory. The emulator runner never reached instrumentation."
+            echo "::error::Gradle wrote no connected test results, so no instrumented test ran. This is not a pass."
             exit 1
           fi
-          execs=$(grep -rho '<testcase' "$results" 2>/dev/null | wc -l | tr -d ' ')
-          echo "Executed testcase elements: $execs"
-          if [ "$execs" -eq 0 ]; then
-            echo "::error::Zero instrumented tests executed. A green run with no executed tests is not evidence; failing the job instead of caching silently."
-            exit 1
-          fi
+          python3 - "$results" <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          root_dir = sys.argv[1]
+          files = glob.glob(root_dir + "/**/*.xml", recursive=True)
+          total = failures = 0
+          lines = []
+          for path in files:
+              try:
+                  tree = ET.parse(path)
+              except ET.ParseError:
+                  continue
+              for case in tree.getroot().iter("testcase"):
+                  total += 1
+                  for bad in case.findall("failure") + case.findall("error"):
+                      failures += 1
+                      text = (bad.get("message") or "").strip() or bad.text.strip()
+                      # Some runners record the assertion's cause as the message
+                      # and leave the real one in the body; keep both.
+                      if bad.text.strip() and not bad.text.strip().startswith(text[:40]):
+                          text = (text + " | " + bad.text.strip()).strip()
+                      text = " ".join(text.split())[:400]
+                      lines.append(f"{case.get('classname','?')}.{case.get('name','?')}: {text}")
+
+          print(f"::warning::executed {total} instrumented test(s) from {len(files)} result file(s); {failures} failing")
+          for line in lines[:10]:
+              print(f"::error::{line}")
+          if total == 0:
+              print("::error::zero instrumented tests executed; a green emulator run with no executed tests is not evidence")
+              sys.exit(1)
+          if failures:
+              sys.exit(1)
+          PY

@@ -119,6 +119,8 @@ internal fun VanessaApp(
     speechReady: Boolean,
     speechStatus: String,
     speechInputStatus: String,
+    /** Draft of the sentence being spoken, or empty when nothing is being heard. */
+    voiceDraft: String,
     onDeviceSpeechAvailable: Boolean,
     voiceListening: Boolean,
     microphonePermissionGranted: Boolean,
@@ -179,6 +181,7 @@ internal fun VanessaApp(
                             listening = voiceListening,
                             speechAvailable = onDeviceSpeechAvailable,
                             status = speechInputStatus,
+                            draft = voiceDraft,
                             onStop = onStopSpeech,
                             onClose = { onNavigate("HOME") },
                             onTypeInstead = { onNavigate("HOME") },
