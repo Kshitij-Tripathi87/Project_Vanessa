@@ -1,9 +1,7 @@
 package ai.vanessa.agent
 
-import com.vanessa.protocol.conversation.AssistantTurnHandle
 import com.vanessa.protocol.conversation.ConversationCodec
 import com.vanessa.protocol.conversation.ConversationEvent
-import com.vanessa.protocol.conversation.ConversationPublishResult
 import com.vanessa.protocol.conversation.ConversationState
 import com.vanessa.protocol.conversation.ConversationTurnRole
 import com.vanessa.protocol.conversation.ConversationTurnSource
