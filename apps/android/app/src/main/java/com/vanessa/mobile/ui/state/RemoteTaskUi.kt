@@ -131,8 +131,18 @@ internal sealed interface RemoteTaskPhase {
 
     data class Finished(val outcome: TaskOutcome) : RemoteTaskPhase
 
-    /** A protocol error or a lost connection — not a task outcome. */
-    data class Failed(val message: String, val retryable: Boolean) : RemoteTaskPhase
+    /**
+     * A protocol error or a lost connection — not a task outcome.
+     *
+     * [correlation] is set only when the failure is provably about one task. A
+     * connection-level failure stays unattributed, because blaming the task the
+     * user happens to be looking at would be an invented causal link.
+     */
+    data class Failed(
+        val message: String,
+        val retryable: Boolean,
+        val correlation: Correlation = Correlation(),
+    ) : RemoteTaskPhase
 
     /**
      * A session is being re-established and the PC's snapshots are still
@@ -141,6 +151,16 @@ internal sealed interface RemoteTaskPhase {
      */
     data class Recovering(
         val detail: String = "Checking what the PC is still working on…",
+        /**
+         * The task we were following when the connection dropped.
+         *
+         * Recovery without this was a hole: a replayed event arriving mid-recovery
+         * could silently install an unrelated task as the active one. The identity
+         * carries across the drop so replayed updates can still be checked against
+         * it; the PC's snapshot may confirm it, but a stray event cannot replace it.
+         */
+        val taskId: String? = null,
+        val requestId: String? = null,
     ) : RemoteTaskPhase
 
     /**
@@ -193,6 +213,10 @@ internal fun parsePendingApproval(approval: JsonObject): PendingApproval? {
     val taskId = approval.string("taskId") ?: return null
     val actionHash = approval.string("actionHash") ?: return null
     val deviceId = approval.string("deviceId") ?: return null
+    // An approval without a usable expiry cannot be enforced, and one we cannot
+    // enforce is not one we may offer. Fail closed rather than showing a button
+    // whose deadline is decorative.
+    val expiresAt = approval.long("expiresAt")?.takeIf { it > 0L } ?: return null
     val target = (approval["target"] as? JsonObject)
     return PendingApproval(
         approvalId = approvalId,
@@ -203,7 +227,7 @@ internal fun parsePendingApproval(approval: JsonObject): PendingApproval? {
         consequence = approval.string("consequence") ?: "The PC requested a protected operation.",
         targetKind = target?.string("kind").orEmpty(),
         targetValue = target?.string("value").orEmpty(),
-        expiresAt = approval.long("expiresAt") ?: 0L,
+        expiresAt = expiresAt,
     )
 }
 
@@ -323,11 +347,59 @@ private fun statusFromState(state: String): ResultStatus = when (state) {
     else -> ResultStatus.UNKNOWN
 }
 
-/** The task a phase is about, if it is about one. Used to refuse cross-task updates. */
-private fun phaseTaskId(phase: RemoteTaskPhase): String? = when (phase) {
-    is RemoteTaskPhase.Running -> phase.taskId
-    is RemoteTaskPhase.AwaitingApproval -> phase.approval.taskId
-    else -> null
+/**
+ * What a phase is tracking, if anything.
+ *
+ * There is exactly one of these. Live events, replayed events, snapshots and
+ * recovery all consult it, because the previous arrangement compared string
+ * fields ad hoc at each call site and two implementations of "is this the same
+ * task?" drifted apart — one of them allowed a progress update for a foreign
+ * task to overwrite the active screen.
+ */
+internal data class Correlation(val taskId: String? = null, val requestId: String? = null) {
+    val isKnown: Boolean get() = taskId != null || requestId != null
+}
+
+internal fun correlationOf(phase: RemoteTaskPhase): Correlation = when (phase) {
+    is RemoteTaskPhase.Submitted -> Correlation(requestId = phase.requestId)
+    is RemoteTaskPhase.Running -> Correlation(phase.taskId, phase.requestId)
+    is RemoteTaskPhase.AwaitingApproval -> Correlation(phase.approval.taskId, phase.requestId)
+    is RemoteTaskPhase.Recovering -> Correlation(phase.taskId, phase.requestId)
+    is RemoteTaskPhase.Failed -> phase.correlation
+    is RemoteTaskPhase.Idle,
+    is RemoteTaskPhase.Finished,
+    is RemoteTaskPhase.Unrecoverable -> Correlation()
+}
+
+/**
+ * Strict: true only when this phase is already tracking exactly this task.
+ *
+ * Used by every live or replayed update that describes work in progress. Such an
+ * update must never be able to *create* the active task — only an acceptance or
+ * an authoritative snapshot may do that.
+ */
+internal fun matchesActiveTask(phase: RemoteTaskPhase, incomingTaskId: String?): Boolean {
+    val active = correlationOf(phase).taskId ?: return false
+    return incomingTaskId == active
+}
+
+/** Strict: true only when this phase is already tracking exactly this request. */
+internal fun matchesSubmittedRequest(phase: RemoteTaskPhase, incomingRequestId: String?): Boolean {
+    val active = correlationOf(phase).requestId ?: return false
+    return incomingRequestId == active
+}
+
+/**
+ * True when [incomingTaskId] may become the tracked task: either nothing is
+ * tracked yet, or it is the same task.
+ *
+ * Only authoritative PC statements (`task.snapshot`, `sync.event`) use this.
+ * They are the one source allowed to establish identity, which is why they are
+ * separate from [matchesActiveTask].
+ */
+internal fun mayAdoptTask(phase: RemoteTaskPhase, incomingTaskId: String): Boolean {
+    val active = correlationOf(phase).taskId ?: return true
+    return active == incomingTaskId
 }
 
 private fun lastReportedPercent(phase: RemoteTaskPhase, taskId: String): Int? =
@@ -400,8 +472,7 @@ internal fun recoverFromSnapshot(payload: JsonObject): RemoteTaskPhase {
 /** A single task refresh (`task.snapshot`), or one replayed event (`sync.event`). */
 internal fun applyTaskSnapshot(phase: RemoteTaskPhase, payload: JsonObject): RemoteTaskPhase {
     val task = (payload["task"] as? JsonObject)?.let(::parseTaskSnapshot) ?: return phase
-    val current = phaseTaskId(phase)
-    if (current != null && current != task.taskId) return phase
+    if (!mayAdoptTask(phase, task.taskId)) return phase
 
     if (isTerminal(task.state)) {
         return RemoteTaskPhase.Finished(
@@ -435,8 +506,7 @@ internal fun applySyncEvent(phase: RemoteTaskPhase, payload: JsonObject): Remote
     val event = payload["event"] as? JsonObject ?: return phase
     val taskId = event.string("taskId") ?: return phase
     val state = event.string("state") ?: return phase
-    val current = phaseTaskId(phase)
-    if (current != null && current != taskId) return phase
+    if (!mayAdoptTask(phase, taskId)) return phase
     val line = TaskEventLine(state, event)
 
     if (isTerminal(state)) {
@@ -470,65 +540,73 @@ internal fun applySyncEvent(phase: RemoteTaskPhase, payload: JsonObject): Remote
 internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): RemoteTaskPhase {
     val payload = event.payload
     return when (event.type) {
+        // An acceptance is the only live event allowed to establish task identity,
+        // and it does so only for the request this phone is actually waiting on.
+        // A delayed acceptance for an older request must not hijack the screen.
         "task.accepted" -> {
-            val summary = payload.string("safeSummary")
-                ?: "The PC accepted the task."
+            val submitted = phase as? RemoteTaskPhase.Submitted ?: return phase
+            if (!matchesSubmittedRequest(submitted, payload.string("requestId"))) return phase
+            val taskId = payload.string("taskId") ?: return phase
+            val summary = payload.string("safeSummary") ?: "The PC accepted the task."
             RemoteTaskPhase.Running(
                 stateLabel = stateLabel(payload.string("state") ?: "accepted"),
                 summary = summary,
                 percentComplete = null,
                 steps = appendStep(emptyList(), summary),
-                taskId = payload.string("taskId"),
-                requestId = payload.string("requestId"),
+                taskId = taskId,
+                requestId = submitted.requestId,
             )
         }
 
+        // Progress cannot arrive before acceptance: the task ID is only issued by
+        // task.accepted, so a progress event for a task we never accepted is
+        // either stale or foreign. Both are ignored.
         "task.progress" -> {
+            val previous = phase as? RemoteTaskPhase.Running ?: return phase
+            val incomingTaskId = payload.string("taskId") ?: return phase
+            if (!matchesActiveTask(phase, incomingTaskId)) return phase
             val summary = payload.string("safeSummary").orEmpty()
-            val previous = phase as? RemoteTaskPhase.Running
-            val previousSteps = previous?.steps.orEmpty()
-            val percent = (payload["percentComplete"] as? JsonPrimitive)
+            val reported = (payload["percentComplete"] as? JsonPrimitive)
                 ?.intOrNull
                 ?.coerceIn(0, 100)
             RemoteTaskPhase.Running(
                 stateLabel = stateLabel(payload.string("state") ?: "running"),
                 summary = summary.ifBlank { "The PC is working on it." },
-                percentComplete = percent,
-                steps = appendStep(previousSteps, summary),
-                taskId = payload.string("taskId") ?: previous?.taskId,
-                requestId = previous?.requestId,
-                cancellationRequested = previous?.cancellationRequested ?: false,
-                cancellationAck = previous?.cancellationAck,
-                cancellationError = previous?.cancellationError,
+                // A progress event without a percentage keeps the last one the PC
+                // genuinely reported. Null stays null: silence is not 0%.
+                percentComplete = reported ?: previous.percentComplete,
+                steps = appendStep(previous.steps, summary),
+                taskId = incomingTaskId,
+                requestId = previous.requestId,
+                cancellationRequested = previous.cancellationRequested,
+                cancellationAck = previous.cancellationAck,
+                cancellationError = previous.cancellationError,
             )
         }
 
+        // The protocol emits task.accepted before an approval can be requested, so
+        // an approval arriving while we are still in Submitted has no task to bind
+        // to and is refused rather than shown.
         "task.confirmation_required" -> {
-            val approval = payload["approval"] as? JsonObject
-            val parsed = approval?.let(::parsePendingApproval)
+            val running = phase as? RemoteTaskPhase.Running ?: return phase
+            val parsed = (payload["approval"] as? JsonObject)?.let(::parsePendingApproval)
             if (parsed == null) {
-                // An approval we cannot bind to an action hash is not approvable.
-                // Say so instead of offering a button that cannot work.
                 RemoteTaskPhase.Failed(
-                    message = "The PC asked for approval but did not send a complete request.",
+                    message = "The PC asked for approval but did not send a complete, " +
+                        "time-limited request, so Vanessa cannot sign it.",
                     retryable = false,
+                    correlation = correlationOf(phase),
                 )
+            } else if (!matchesActiveTask(phase, parsed.taskId)) {
+                phase
             } else {
-                val submittedRequestId = when (phase) {
-                    is RemoteTaskPhase.Submitted -> phase.requestId
-                    is RemoteTaskPhase.Running -> phase.requestId
-                    else -> null
-                }
-                RemoteTaskPhase.AwaitingApproval(
-                    approval = parsed,
-                    requestId = submittedRequestId,
-                )
+                RemoteTaskPhase.AwaitingApproval(approval = parsed, requestId = running.requestId)
             }
         }
 
         "task.cancel_ack" -> {
             val previous = phase as? RemoteTaskPhase.Running ?: return phase
-            if (payload.string("taskId") != previous.taskId) return phase
+            if (!matchesActiveTask(phase, payload.string("taskId"))) return phase
             val acknowledgement = parseCancellationAcknowledgement(payload) ?: return phase
             previous.copy(
                 cancellationRequested = false,
@@ -537,17 +615,44 @@ internal fun reduceRemoteTask(phase: RemoteTaskPhase, event: RemoteV2Event): Rem
             )
         }
 
-        "task.result" -> parseOutcome(payload)?.let { RemoteTaskPhase.Finished(it) } ?: phase
+        // A result for a task this phone is not tracking cannot be attributed to
+        // the screen, so it is dropped. Acknowledging a cancellation is also not a
+        // result — only task.result finishes a task.
+        "task.result" -> {
+            if (!matchesActiveTask(phase, payload.string("taskId"))) return phase
+            parseOutcome(payload)?.let { RemoteTaskPhase.Finished(it) } ?: phase
+        }
 
-        "task.error" -> RemoteTaskPhase.Failed(
-            message = payload.string("message") ?: "The PC reported an error.",
-            retryable = payload.bool("retryable"),
-        )
+        "task.error" -> {
+            val eventTaskId = payload.string("taskId")
+            val accepted = when {
+                phase is RemoteTaskPhase.Submitted ->
+                    // Before acceptance the only attributable rejection is the one
+                    // that carries no task ID: a supplied ID cannot be matched yet.
+                    eventTaskId == null
+                correlationOf(phase).taskId == null -> false
+                else -> matchesActiveTask(phase, eventTaskId)
+            }
+            if (!accepted) return phase
+            RemoteTaskPhase.Failed(
+                message = payload.string("message") ?: "The PC reported an error.",
+                retryable = payload.bool("retryable"),
+                correlation = correlationOf(phase),
+            )
+        }
 
-        "protocol.error" -> RemoteTaskPhase.Failed(
-            message = payload.string("message") ?: payload.toString(),
-            retryable = payload.bool("retryable"),
-        )
+        // A protocol error is about the session unless it names a task. It keeps
+        // its attribution empty in the session case: a dropped frame is not
+        // evidence that the running task failed.
+        "protocol.error" -> {
+            val eventTaskId = payload.string("taskId")
+            if (eventTaskId != null && !matchesActiveTask(phase, eventTaskId)) return phase
+            RemoteTaskPhase.Failed(
+                message = payload.string("message") ?: payload.toString(),
+                retryable = payload.bool("retryable"),
+                correlation = if (eventTaskId == null) Correlation() else correlationOf(phase),
+            )
+        }
 
         // ---- reconnect / recovery ----------------------------------------
         "sync.snapshot" -> recoverFromSnapshot(payload)
@@ -618,11 +723,15 @@ internal fun encodeRemoteTaskPhase(phase: RemoteTaskPhase): String = when (phase
         put("kind", "failed")
         put("message", phase.message)
         put("retryable", phase.retryable)
+        phase.correlation.taskId?.let { put("taskId", it) }
+        phase.correlation.requestId?.let { put("requestId", it) }
     }
 
     is RemoteTaskPhase.Recovering -> buildJsonObject {
         put("kind", "recovering")
         put("detail", phase.detail)
+        phase.taskId?.let { put("taskId", it) }
+        phase.requestId?.let { put("requestId", it) }
     }
 
     is RemoteTaskPhase.Unrecoverable -> buildJsonObject {
@@ -706,9 +815,17 @@ internal fun decodeRemoteTaskPhase(raw: String?): RemoteTaskPhase {
             )
         }
 
-        "failed" -> RemoteTaskPhase.Failed(text("message") ?: "Unknown error.", flag("retryable"))
+        "failed" -> RemoteTaskPhase.Failed(
+            message = text("message") ?: "Unknown error.",
+            retryable = flag("retryable"),
+            correlation = Correlation(taskId = text("taskId"), requestId = text("requestId")),
+        )
 
-        "recovering" -> RemoteTaskPhase.Recovering(text("detail") ?: "Reconnecting to the PC…")
+        "recovering" -> RemoteTaskPhase.Recovering(
+            detail = text("detail") ?: "Reconnecting to the PC…",
+            taskId = text("taskId"),
+            requestId = text("requestId"),
+        )
 
         "unrecoverable" -> RemoteTaskPhase.Unrecoverable(
             title = text("title") ?: "State unavailable",
@@ -739,8 +856,15 @@ internal fun phaseOnConnectionChange(
         connectionState.startsWith("Connecting")
     if (!stalled) return phase
     return when (phase) {
-        is RemoteTaskPhase.Running,
-        is RemoteTaskPhase.Submitted -> RemoteTaskPhase.Recovering("Reconnecting to the PC…")
+        is RemoteTaskPhase.Running -> RemoteTaskPhase.Recovering(
+            detail = "Reconnecting to the PC…",
+            taskId = phase.taskId,
+            requestId = phase.requestId,
+        )
+        is RemoteTaskPhase.Submitted -> RemoteTaskPhase.Recovering(
+            detail = "Reconnecting to the PC…",
+            requestId = phase.requestId,
+        )
         else -> phase
     }
 }

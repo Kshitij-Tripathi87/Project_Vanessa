@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -21,6 +22,37 @@ import org.junit.Test
 class RemoteTaskUiTest {
 
     private fun event(type: String, payload: JsonObject) = RemoteV2Event(type, payload)
+
+    private val taskId = "0f3d0c1e-0000-4000-8000-000000000001"
+    private val otherTaskId = "bbbbbbbb-0000-4000-8000-000000000009"
+    private val requestId = "9d3b6e17-0000-4000-8000-000000000002"
+    private val otherRequestId = "cccccccc-0000-4000-8000-000000000008"
+
+    /** Waiting for an acceptance for exactly one request. */
+    private fun submitted(capability: String = "open_app") =
+        RemoteTaskPhase.Submitted(capability, requestId)
+
+    private fun accepted(
+        request: String = requestId,
+        task: String = taskId,
+        summary: String = "Accepted.",
+    ): JsonObject = buildJsonObject {
+        put("requestId", request)
+        put("taskId", task)
+        put("state", "accepted")
+        put("safeSummary", summary)
+        put("eventSeq", 2)
+    }
+
+    /** A phase that legitimately accepted [taskId] for [requestId]. */
+    private fun running(): RemoteTaskPhase.Running = RemoteTaskPhase.Running(
+        stateLabel = "Accepted",
+        summary = "Accepted.",
+        percentComplete = null,
+        steps = listOf("Accepted."),
+        taskId = taskId,
+        requestId = requestId,
+    )
 
     private fun progress(state: String, summary: String, percent: Int? = null): JsonObject =
         buildJsonObject {
@@ -67,7 +99,7 @@ class RemoteTaskUiTest {
 
     @Test
     fun progressWithoutPercentReportsNoPercentage() {
-        val phase = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.progress", progress("running", "Copying")))
+        val phase = reduceRemoteTask(running(), event("task.progress", progress("running", "Copying")))
         val running = phase as RemoteTaskPhase.Running
         assertNull("A missing percentComplete must stay missing", running.percentComplete)
     }
@@ -75,13 +107,13 @@ class RemoteTaskUiTest {
     @Test
     fun reportedPercentIsUsedAndClamped() {
         val withPercent = reduceRemoteTask(
-            RemoteTaskPhase.Idle,
+            running(),
             event("task.progress", progress("running", "Copying", 40)),
         ) as RemoteTaskPhase.Running
         assertEquals(40, withPercent.percentComplete)
 
         val over = reduceRemoteTask(
-            RemoteTaskPhase.Idle,
+            running(),
             event("task.progress", progress("running", "Copying", 140)),
         ) as RemoteTaskPhase.Running
         assertEquals(100, over.percentComplete)
@@ -89,12 +121,12 @@ class RemoteTaskUiTest {
 
     @Test
     fun stepsAccumulateWithoutRepeatingTheSameLine() {
-        var phase: RemoteTaskPhase = RemoteTaskPhase.Idle
+        var phase: RemoteTaskPhase = running()
         phase = reduceRemoteTask(phase, event("task.progress", progress("planning", "Planning the steps")))
         phase = reduceRemoteTask(phase, event("task.progress", progress("running", "Opening Chrome")))
         phase = reduceRemoteTask(phase, event("task.progress", progress("running", "Opening Chrome")))
         val running = phase as RemoteTaskPhase.Running
-        assertEquals(listOf("Planning the steps", "Opening Chrome"), running.steps)
+        assertEquals(listOf("Accepted.", "Planning the steps", "Opening Chrome"), running.steps)
     }
 
     @Test
@@ -106,7 +138,10 @@ class RemoteTaskUiTest {
             put("safeSummary", "Accepted: open chrome.")
             put("eventSeq", 2)
         }
-        val running = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.accepted", payload)) as RemoteTaskPhase.Running
+        val running = reduceRemoteTask(
+            RemoteTaskPhase.Submitted("open_app", "9d3b6e17-0000-4000-8000-000000000002"),
+            event("task.accepted", payload),
+        ) as RemoteTaskPhase.Running
         assertEquals("Accepted", running.stateLabel)
         assertNull(running.percentComplete)
         assertEquals(listOf("Accepted: open chrome."), running.steps)
@@ -166,7 +201,7 @@ class RemoteTaskUiTest {
 
     @Test
     fun verifiedSuccessIsTheOnlySuccess() {
-        val phase = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.result", result("succeeded", "verified")))
+        val phase = reduceRemoteTask(running(), event("task.result", result("succeeded", "verified")))
         val outcome = (phase as RemoteTaskPhase.Finished).outcome
         assertEquals(OutcomeTone.SUCCESS, outcome.tone)
     }
@@ -174,7 +209,7 @@ class RemoteTaskUiTest {
     @Test
     fun succeededButUnverifiedIsNotReportedAsSuccess() {
         val phase = reduceRemoteTask(
-            RemoteTaskPhase.Idle,
+            running(),
             event("task.result", result("succeeded", "not_available")),
         )
         val outcome = (phase as RemoteTaskPhase.Finished).outcome
@@ -186,7 +221,7 @@ class RemoteTaskUiTest {
     @Test
     fun failedVerificationIsNotASuccessEvenWhenTheTaskSucceeded() {
         val phase = reduceRemoteTask(
-            RemoteTaskPhase.Idle,
+            running(),
             event("task.result", result("succeeded", "failed")),
         )
         assertEquals(OutcomeTone.UNVERIFIED, (phase as RemoteTaskPhase.Finished).outcome.tone)
@@ -194,13 +229,13 @@ class RemoteTaskUiTest {
 
     @Test
     fun partialAndFailedStatusesKeepTheirOwnTone() {
-        val partial = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.result", result("partial", "partial")))
+        val partial = reduceRemoteTask(running(), event("task.result", result("partial", "partial")))
         assertEquals(OutcomeTone.PARTIAL, (partial as RemoteTaskPhase.Finished).outcome.tone)
 
-        val failed = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.result", result("failed", "failed")))
+        val failed = reduceRemoteTask(running(), event("task.result", result("failed", "failed")))
         assertEquals(OutcomeTone.FAILURE, (failed as RemoteTaskPhase.Finished).outcome.tone)
 
-        val timeout = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.result", result("timed_out", "not_available")))
+        val timeout = reduceRemoteTask(running(), event("task.result", result("timed_out", "not_available")))
         assertEquals(OutcomeTone.FAILURE, (timeout as RemoteTaskPhase.Finished).outcome.tone)
     }
 
@@ -238,7 +273,7 @@ class RemoteTaskUiTest {
             put("approval", approval())
             put("eventSeq", 4)
         }
-        val phase = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.confirmation_required", payload))
+        val phase = reduceRemoteTask(running(), event("task.confirmation_required", payload))
         val pending = (phase as RemoteTaskPhase.AwaitingApproval).approval
         assertEquals("delete_files", pending.capability)
         assertEquals("file · C:/Users/me/scratch", pending.targetLabel)
@@ -252,13 +287,13 @@ class RemoteTaskUiTest {
             put("approval", approval(withActionHash = false))
             put("eventSeq", 4)
         }
-        val phase = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.confirmation_required", payload))
+        val phase = reduceRemoteTask(running(), event("task.confirmation_required", payload))
         assertTrue("An unbound approval must not become an approvable screen", phase is RemoteTaskPhase.Failed)
     }
 
     @Test
     fun unrelatedEventsLeaveTheTaskPhaseAlone() {
-        val running = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.progress", progress("running", "Working")))
+        val running = reduceRemoteTask(running(), event("task.progress", progress("running", "Working")))
         val afterManifest = reduceRemoteTask(
             running,
             event("manifest.snapshot", buildJsonObject { put("eventSeq", 3) }),
@@ -268,7 +303,7 @@ class RemoteTaskUiTest {
 
     @Test
     fun aResultWithoutASummaryDoesNotBlankTheScreen() {
-        val running = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.progress", progress("running", "Working")))
+        val running = reduceRemoteTask(running(), event("task.progress", progress("running", "Working")))
         val partialPayload = buildJsonObject {
             put("taskId", "0f3d0c1e-0000-4000-8000-000000000001")
             put("status", "succeeded")
@@ -284,7 +319,9 @@ class RemoteTaskUiTest {
             put("message", "Chrome is not installed on the PC.")
             put("retryable", true)
         }
-        val phase = reduceRemoteTask(RemoteTaskPhase.Idle, event("task.error", payload))
+        // Before an acceptance the only attributable rejection is the one that
+        // carries no task ID — see taskErrorWithATaskIdBeforeAcceptanceIsIgnored.
+        val phase = reduceRemoteTask(submitted(), event("task.error", payload))
         val failure = phase as RemoteTaskPhase.Failed
         assertEquals("Chrome is not installed on the PC.", failure.message)
         assertTrue(failure.retryable)
@@ -616,5 +653,246 @@ class RemoteTaskUiTest {
             taskId = liveTask,
         )
         assertEquals(running, phaseOnConnectionChange(running, "Connected securely to Desktop."))
+    }
+
+    /* --------------- correlation and ordering (A4 matrix) --------------- */
+
+    @Test
+    fun delayedAcceptanceForAnOlderRequestIsIgnored() {
+        val phase = submitted()
+        val delayed = reduceRemoteTask(phase, event("task.accepted", accepted(request = otherRequestId)))
+        assertEquals("A late acceptance for another request must not become the active task", phase, delayed)
+    }
+
+    @Test
+    fun acceptanceWithoutARequestIdIsIgnored() {
+        val payload = buildJsonObject {
+            put("taskId", taskId)
+            put("state", "accepted")
+            put("safeSummary", "Accepted.")
+        }
+        assertEquals(submitted(), reduceRemoteTask(submitted(), event("task.accepted", payload)))
+    }
+
+    @Test
+    fun progressForAnotherTaskIsIgnored() {
+        val phase = running()
+        val foreign = buildJsonObject {
+            put("taskId", otherTaskId)
+            put("state", "running")
+            put("safeSummary", "Some other task is copying files.")
+            put("percentComplete", 90)
+        }
+        assertEquals(phase, reduceRemoteTask(phase, event("task.progress", foreign)))
+    }
+
+    @Test
+    fun progressCannotCreateATaskBeforeAcceptance() {
+        assertEquals(submitted(), reduceRemoteTask(submitted(), event("task.progress", progress("running", "Working"))))
+    }
+
+    @Test
+    fun progressWithoutPercentageKeepsTheLastGenuinePercentage() {
+        val halfway = (running() as RemoteTaskPhase.Running).copy(percentComplete = 45)
+        val next = reduceRemoteTask(halfway, event("task.progress", progress("running", "Still copying"))) 
+            as RemoteTaskPhase.Running
+        assertEquals(45, next.percentComplete)
+    }
+
+    @Test
+    fun resultForAnotherTaskIsIgnored() {
+        val payload = buildJsonObject {
+            put("taskId", otherTaskId)
+            put("status", "succeeded")
+            put("verification", buildJsonObject { put("status", "verified") })
+            put("safeSummary", "Some other task finished.")
+        }
+        assertEquals(running(), reduceRemoteTask(running(), event("task.result", payload)))
+    }
+
+    @Test
+    fun errorForAnotherTaskIsIgnored() {
+        val payload = buildJsonObject {
+            put("taskId", otherTaskId)
+            put("message", "Some other task failed.")
+            put("retryable", true)
+        }
+        assertEquals(running(), reduceRemoteTask(running(), event("task.error", payload)))
+    }
+
+    @Test
+    fun taskErrorWithATaskIdBeforeAcceptanceIsIgnored() {
+        val payload = buildJsonObject {
+            put("taskId", taskId)
+            put("message", "Rejected.")
+            put("retryable", false)
+        }
+        assertEquals(
+            "A task ID issued before acceptance cannot be matched to our request",
+            submitted(),
+            reduceRemoteTask(submitted(), event("task.error", payload)),
+        )
+    }
+
+    @Test
+    fun approvalBeforeAcceptanceIsRejected() {
+        val payload = buildJsonObject { put("approval", approval()) }
+        assertEquals(submitted(), reduceRemoteTask(submitted(), event("task.confirmation_required", payload)))
+    }
+
+    @Test
+    fun approvalForAnotherTaskIsRejected() {
+        val foreign = buildJsonObject {
+            put("approval", buildJsonObject {
+                put("approvalId", "b1c7bde2-0000-4000-8000-000000000002")
+                put("taskId", otherTaskId)
+                put("deviceId", "device-abc")
+                put("actionHash", "a".repeat(64))
+                put("expiresAt", 1_700_000_600_000L)
+            })
+        }
+        assertEquals(running(), reduceRemoteTask(running(), event("task.confirmation_required", foreign)))
+    }
+
+    @Test
+    fun approvalWithoutAUsableExpiryFailsClosed() {
+        for (expiry in listOf<Number?>(null, 0)) {
+            val payload = buildJsonObject {
+                put("approval", buildJsonObject {
+                    put("approvalId", "b1c7bde2-0000-4000-8000-000000000002")
+                    put("taskId", taskId)
+                    put("deviceId", "device-abc")
+                    put("actionHash", "a".repeat(64))
+                    if (expiry != null) put("expiresAt", expiry.toLong())
+                })
+            }
+            val phase = reduceRemoteTask(running(), event("task.confirmation_required", payload))
+            assertTrue("expiry=$expiry must not be approvable", phase is RemoteTaskPhase.Failed)
+        }
+    }
+
+    @Test
+    fun approvalKeepsTheExpiryTheUiMustEnforce() {
+        val payload = buildJsonObject { put("approval", approval()) }
+        val phase = reduceRemoteTask(running(), event("task.confirmation_required", payload))
+        assertEquals(1_700_000_600_000L, (phase as RemoteTaskPhase.AwaitingApproval).approval.expiresAt)
+    }
+
+    @Test
+    fun connectionLevelFailureIsNotAttributedToTheTask() {
+        val payload = buildJsonObject {
+            put("code", "frame_rejected")
+            put("message", "The PC rejected a frame.")
+        }
+        val failure = reduceRemoteTask(running(), event("protocol.error", payload)) as RemoteTaskPhase.Failed
+        assertNull("A dropped frame is not evidence that the task failed", failure.correlation.taskId)
+    }
+
+    @Test
+    fun taskSpecificFailureCarriesItsCorrelation() {
+        val payload = buildJsonObject {
+            put("taskId", taskId)
+            put("message", "Chrome is not installed.")
+            put("retryable", true)
+        }
+        val failure = reduceRemoteTask(running(), event("task.error", payload)) as RemoteTaskPhase.Failed
+        assertEquals(taskId, failure.correlation.taskId)
+        assertEquals(requestId, failure.correlation.requestId)
+    }
+
+    @Test
+    fun protocolErrorForAnotherTaskIsIgnored() {
+        val payload = buildJsonObject {
+            put("taskId", otherTaskId)
+            put("message", "err")
+        }
+        assertEquals(running(), reduceRemoteTask(running(), event("protocol.error", payload)))
+    }
+
+    @Test
+    fun correlationOfEachPhaseIsStatedOnce() {
+        assertEquals(Correlation(requestId = requestId), correlationOf(submitted()))
+        assertEquals(Correlation(taskId, requestId), correlationOf(running()))
+        assertTrue(matchesActiveTask(running(), taskId))
+        assertFalse(matchesActiveTask(running(), otherTaskId))
+        assertFalse("A phase with no task cannot match one", matchesActiveTask(submitted(), taskId))
+        assertTrue(matchesSubmittedRequest(submitted(), requestId))
+        assertFalse(matchesSubmittedRequest(submitted(), otherRequestId))
+        assertFalse("A request ID is not a task ID", matchesActiveTask(submitted(), requestId))
+    }
+
+    /* ------------- identity must survive the recovery window ------------- */
+
+    @Test
+    fun reconnectionKeepsTheTaskIdentityBeingRecovered() {
+        val recovering = phaseOnConnectionChange(running(), "Remote PC disconnected.")
+        val phase = recovering as RemoteTaskPhase.Recovering
+        assertEquals(taskId, phase.taskId)
+        assertEquals(requestId, phase.requestId)
+    }
+
+    @Test
+    fun replayForTheRecoveringTaskIsAccepted() {
+        val recovering = phaseOnConnectionChange(running(), "Remote PC disconnected.")
+        val payload = buildJsonObject {
+            put("event", buildJsonObject {
+                put("taskId", taskId)
+                put("state", "verifying")
+                put("eventSeq", 7)
+                put("safePayload", buildJsonObject { put("safeSummary", "Checking the window title") })
+            })
+        }
+        val phase = reduceRemoteTask(recovering, event("sync.event", payload)) as RemoteTaskPhase.Running
+        assertEquals(taskId, phase.taskId)
+        assertEquals("Verifying", phase.stateLabel)
+    }
+
+    @Test
+    fun replayedEventDuringRecoveryCannotEstablishAnUnrelatedTask() {
+        val recovering = phaseOnConnectionChange(running(), "Remote PC disconnected.")
+        val payload = buildJsonObject {
+            put("event", buildJsonObject {
+                put("taskId", otherTaskId)
+                put("state", "running")
+                put("eventSeq", 3)
+            })
+        }
+        assertEquals(recovering, reduceRemoteTask(recovering, event("sync.event", payload)))
+    }
+
+    @Test
+    fun snapshotForAnotherTaskIsRefusedWhileRecovering() {
+        val recovering = phaseOnConnectionChange(running(), "Remote PC disconnected.")
+        val phase = reduceRemoteTask(recovering, event("task.snapshot", buildJsonObject {
+            put("task", taskSnapshot(otherTaskId, "running", "Other work"))
+        }))
+        assertEquals(recovering, phase)
+    }
+
+    @Test
+    fun snapshotForTheRecoveringTaskIsAccepted() {
+        val recovering = phaseOnConnectionChange(running(), "Remote PC disconnected.")
+        val phase = reduceRemoteTask(recovering, event("task.snapshot", buildJsonObject {
+            put("task", taskSnapshot(taskId, "running", "Still copying"))
+        })) as RemoteTaskPhase.Running
+        assertEquals(taskId, phase.taskId)
+        assertEquals("Still copying", phase.summary)
+    }
+
+    @Test
+    fun recoveryIdentitySurvivesActivityRecreation() {
+        val recovering = phaseOnConnectionChange(running(), "Reconnecting to Desktop…")
+        val restored = decodeRemoteTaskPhase(encodeRemoteTaskPhase(recovering))
+        assertEquals(recovering, restored)
+    }
+
+    @Test
+    fun aFailedPhaseRemembersWhichTaskFailed() {
+        val failed = RemoteTaskPhase.Failed(
+            message = "Chrome is not installed.",
+            retryable = true,
+            correlation = Correlation(taskId = taskId, requestId = requestId),
+        )
+        assertEquals(failed, decodeRemoteTaskPhase(encodeRemoteTaskPhase(failed)))
     }
 }

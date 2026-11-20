@@ -9,6 +9,7 @@ import com.vanessa.protocol.v2.JcsCanonicalizer
 import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -65,6 +66,7 @@ import com.vanessa.mobile.ui.state.PcIdentity
 import com.vanessa.mobile.ui.state.PcLink
 import com.vanessa.mobile.ui.state.PcUiState
 import com.vanessa.mobile.ui.state.PendingApproval
+import com.vanessa.mobile.ui.state.Correlation
 import com.vanessa.mobile.ui.state.RemoteTaskPhase
 import com.vanessa.mobile.ui.screens.MyPcScreen
 import com.vanessa.mobile.ui.screens.TaskRecoveryScreen
@@ -76,6 +78,7 @@ import com.vanessa.mobile.ui.state.reducePcConnection
 import com.vanessa.mobile.ui.state.reduceRemoteTask
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.UUID
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -114,6 +117,20 @@ class RemoteControlActivity : FragmentActivity() {
         }
         window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
         window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
+        // A live approval is the PC's request, not a page to swipe away from:
+        // backing out of it would leave the PC waiting with nobody told.
+        onBackPressedDispatcher.addCallback(this) {
+            val phase = taskPhase
+            if (phase is RemoteTaskPhase.AwaitingApproval) {
+                if (!approvalBusy) denyTask(phase.approval)
+            } else {
+                // Everything else keeps the ordinary back behaviour; disable this
+                // callback for the re-dispatch so it does not intercept itself.
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        }
         setContent {
             VanessaTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = VanessaPalette.Obsidian) {
@@ -146,7 +163,6 @@ class RemoteControlActivity : FragmentActivity() {
                             approval = phase.approval,
                             onApprove = { beginBiometricApproval(phase.approval, phase.requestId) },
                             onDeny = { denyTask(phase.approval) },
-                            onBack = { taskPhase = RemoteTaskPhase.Idle },
                             busy = approvalBusy,
                         )
                         is RemoteTaskPhase.Running -> TaskExecutionScreen(
@@ -243,16 +259,30 @@ class RemoteControlActivity : FragmentActivity() {
     ) {
         if (requestBusy) return
         requestBusy = true
+        val requestId = UUID.randomUUID().toString()
+        // Publish the pending request before the signed frame is written. The PC
+        // can answer the moment the frame lands, and the reducer only lets the
+        // request it already knows about become the active task.
+        taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
         lifecycleScope.launch {
             try {
-                val requestId = bridge.submitTask(capability, arguments, intent)
-                taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
-                taskPhase = RemoteTaskPhase.Submitted(capability, requestId)
-            } catch (error: Exception) {
-                taskPhase = RemoteTaskPhase.Failed(
-                    message = "Task was not submitted: ${error.message ?: "unknown error"}",
-                    retryable = true,
+                bridge.submitTask(
+                    capability = capability,
+                    arguments = arguments,
+                    intent = intent,
+                    requestId = requestId,
                 )
+            } catch (error: Exception) {
+                // Only this request may fail into this request's screen. A late
+                // exception from an older submission must not replace a newer task.
+                val pending = taskPhase as? RemoteTaskPhase.Submitted
+                if (pending?.requestId == requestId) {
+                    taskPhase = RemoteTaskPhase.Failed(
+                        message = "Task was not submitted: ${error.message ?: "unknown error"}",
+                        retryable = true,
+                        correlation = Correlation(requestId = requestId),
+                    )
+                }
             } finally {
                 requestBusy = false
             }
