@@ -38,6 +38,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,11 +54,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.sp
 import com.vanessa.mobile.ui.components.EnergyWave
 import com.vanessa.mobile.ui.components.ProgressRing
@@ -64,6 +68,7 @@ import com.vanessa.mobile.ui.components.NeonIconButton
 import com.vanessa.mobile.ui.components.NeonSecondaryButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
+import com.vanessa.mobile.ui.theme.VanessaType
 
 internal data class VanessaChatMessage(
     val id: Long,
@@ -102,12 +107,43 @@ internal fun ChatScreen(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val messageScrollState = rememberScrollState()
-    LaunchedEffect(messages.size, assistantBusy) {
-        // Wait until the newly-added message row has been measured before
-        // reading maxValue; otherwise the first scroll can stop one row short.
-        withFrameNanos { }
-        messageScrollState.animateScrollTo(messageScrollState.maxValue)
+    val scope = rememberCoroutineScope()
+    val bottomSlop = with(LocalDensity.current) { 48.dp.toPx() }
+
+    // Whether the reader is at the live end of the conversation. Derived from the
+    // scroll position rather than assumed, because following every message meant
+    // that reading older turns was impossible: each arrival yanked the viewport
+    // back to the bottom mid-sentence.
+    val atBottom by remember(bottomSlop) {
+        derivedStateOf {
+            val max = messageScrollState.maxValue
+            max == 0 || messageScrollState.value >= max - bottomSlop
+        }
     }
+    var hasUnread by remember { mutableStateOf(false) }
+
+    LaunchedEffect(messages.size) {
+        // Wait until the newly-added row has been measured before reading maxValue;
+        // otherwise the first scroll can stop one row short.
+        withFrameNanos { }
+        if (atBottom) {
+            messageScrollState.animateScrollTo(messageScrollState.maxValue)
+            hasUnread = false
+        } else if (messages.isNotEmpty()) {
+            hasUnread = true
+        }
+    }
+
+    // The thinking row is not a message: only follow it when the reader is already
+    // at the live end, and never flag it as unread.
+    LaunchedEffect(assistantBusy) {
+        if (atBottom) {
+            withFrameNanos { }
+            messageScrollState.animateScrollTo(messageScrollState.maxValue)
+        }
+    }
+
+    LaunchedEffect(atBottom) { if (atBottom) hasUnread = false }
 
     Box(modifier = Modifier.fillMaxSize()) {
         EnergyWave(
@@ -265,6 +301,35 @@ internal fun ChatScreen(
                     )
                 }
                 Spacer(Modifier.height(4.dp))
+            }
+
+            if (hasUnread) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Surface(
+                        color = VanessaPalette.SurfaceStrong.copy(alpha = 0.96f),
+                        shape = RoundedCornerShape(999.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            VanessaPalette.Cyan.copy(alpha = 0.45f),
+                        ),
+                        modifier = Modifier.clickable(role = Role.Button) {
+                            scope.launch {
+                                messageScrollState.animateScrollTo(messageScrollState.maxValue)
+                                hasUnread = false
+                            }
+                        },
+                    ) {
+                        Text(
+                            text = "New messages ↓",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            color = VanessaPalette.Cyan,
+                            style = VanessaType.caption,
+                        )
+                    }
+                }
             }
 
             Composer(

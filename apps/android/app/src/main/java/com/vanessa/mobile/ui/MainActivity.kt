@@ -173,11 +173,9 @@ class MainActivity : ComponentActivity() {
                             stopSpeechInput()
                             destination = VanessaDestination.HOME
                         }
-                        VanessaDestination.CONFIRM -> {
-                            pendingApprovalChecksum = null
-                            approval = null
-                            destination = VanessaDestination.SETTINGS
-                        }
+                        // One cancel path, not two. Back used to clear the same
+                        // state by hand and could drift from the Cancel button.
+                        VanessaDestination.CONFIRM -> cancelPendingAction()
                         // Work in progress is not cancellable from the route:
                         // leaving mid-run would strand the result.
                         VanessaDestination.EXECUTING -> Unit
@@ -265,11 +263,7 @@ class MainActivity : ComponentActivity() {
                         )
                     },
                     onApprove = ::approvePendingAction,
-                    onCancelApproval = {
-                        pendingApprovalChecksum = null
-                        approval = null
-                        destination = VanessaDestination.SETTINGS
-                    },
+                    onCancelApproval = ::cancelPendingAction,
                 )
             }
         }
@@ -728,6 +722,17 @@ class MainActivity : ComponentActivity() {
         )
         destination = VanessaDestination.EXECUTING
         chooseModel(checksum)
+    }
+
+    /**
+     * Drops a local confirmation that the user has not committed to. Nothing is
+     * pending on any PC — this is a screen gate in front of a local file import —
+     * so cancelling is complete in itself.
+     */
+    private fun cancelPendingAction() {
+        pendingApprovalChecksum = null
+        approval = null
+        destination = VanessaDestination.SETTINGS
     }
 
     private fun hasCalendarPermission(): Boolean =

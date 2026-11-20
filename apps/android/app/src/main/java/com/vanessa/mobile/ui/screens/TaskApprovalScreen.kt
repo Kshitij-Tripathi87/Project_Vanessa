@@ -2,7 +2,6 @@ package com.vanessa.mobile.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vanessa.mobile.ui.components.NeonButton
@@ -60,7 +58,6 @@ internal fun TaskApprovalScreen(
     approval: PendingApproval,
     onApprove: () -> Unit,
     onDeny: () -> Unit,
-    onBack: () -> Unit,
     busy: Boolean = false,
 ) {
     val remaining = rememberCountdown(approval.expiresAt)
@@ -146,15 +143,10 @@ internal fun TaskApprovalScreen(
             style = VanessaType.caption,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "Back",
-            color = VanessaPalette.TextSecondary,
-            style = VanessaType.caption,
-            modifier = Modifier
-                .padding(vertical = 8.dp)
-                .clickable(role = Role.Button, onClick = onBack),
-        )
+        // Deliberately no "back" out of this screen. Leaving here without a
+        // decision used to drop a live approval on the floor: the PC kept waiting
+        // until the request expired and the user was told nothing. Approving and
+        // cancelling are the two ways out, and cancelling tells the PC.
     }
 }
 
