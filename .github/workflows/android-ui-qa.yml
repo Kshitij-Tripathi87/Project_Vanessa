@@ -107,6 +107,12 @@ jobs:
           adb devices || true
           emulator -list-avds || true
           echo "::endgroup::"
+          # Logs are not always reachable (they are served from blob storage, not
+          # the API), but annotations are. Emit the decisive facts as annotations
+          # so the cause of a failed boot is readable on the run page itself.
+          devices=$(adb devices | grep -cE '\sdevice$' || true)
+          avds=$(emulator -list-avds | tr '\n' ' ' || true)
+          echo "::warning::adb sees ${devices} device(s); AVDs: ${avds:-none}"
           echo "::group::Instrumentation output on disk"
           ls -R apps/android/app/build/outputs/androidTest-results 2>/dev/null || echo "no androidTest-results directory"
           ls -R apps/android/app/build/reports/androidTests 2>/dev/null || echo "no androidTests report directory"
