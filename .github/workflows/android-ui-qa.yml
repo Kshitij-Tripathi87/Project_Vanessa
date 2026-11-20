@@ -222,20 +222,44 @@ jobs:
             apps/android/app/build/outputs/androidTest-results/connected/**
           if-no-files-found: warn
 
-      # A release gate that accepts an empty report is not a gate. This fails the
-      # job when the XML exists but contains no executed testcase, which is the
-      # state this job has been in since #62.
-      - name: Require at least one executed instrumented test
+      # A release gate that accepts an empty report is not a gate: this fails when
+      # the XML is missing or holds no executed testcase. It also lifts each
+      # failure into an annotation, because the JUnit HTML report is an artefact
+      # and artefacts are not always reachable from wherever the fix is made.
+      - name: Report instrumented results
         if: always()
         run: |
           results="apps/android/app/build/outputs/androidTest-results/connected"
           if [ ! -d "$results" ]; then
-            echo "::error::Gradle exited 0 but wrote no connected test results. That means the task was skipped - usually no test classes or no device seen by AGP - not that the tests passed."
+            echo "::error::Gradle wrote no connected test results, so no instrumented test ran. This is not a pass."
             exit 1
           fi
-          execs=$(grep -rho '<testcase' "$results" 2>/dev/null | wc -l | tr -d ' ')
-          echo "Executed testcase elements: $execs"
-          if [ "$execs" -eq 0 ]; then
-            echo "::error::Zero instrumented tests executed. A green run with no executed tests is not evidence; failing the job instead of caching silently."
-            exit 1
-          fi
+          python3 - "$results" <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          root_dir = sys.argv[1]
+          files = glob.glob(root_dir + "/**/*.xml", recursive=True)
+          total = failures = 0
+          lines = []
+          for path in files:
+              try:
+                  tree = ET.parse(path)
+              except ET.ParseError:
+                  continue
+              for case in tree.getroot().iter("testcase"):
+                  total += 1
+                  for bad in case.findall("failure") + case.findall("error"):
+                      failures += 1
+                      text = (bad.get("message") or bad.text or "").strip()
+                      text = " ".join(text.split())[:400]
+                      lines.append(f"{case.get('classname','?')}.{case.get('name','?')}: {text}")
+
+          print(f"::warning::executed {total} instrumented test(s) from {len(files)} result file(s); {failures} failing")
+          for line in lines[:10]:
+              print(f"::error::{line}")
+          if total == 0:
+              print("::error::zero instrumented tests executed; a green emulator run with no executed tests is not evidence")
+              sys.exit(1)
+          if failures:
+              sys.exit(1)
+          PY
