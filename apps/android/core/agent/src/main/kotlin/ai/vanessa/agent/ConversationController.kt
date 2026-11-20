@@ -152,6 +152,10 @@ class ConversationController(
 
     /** Creates one assistant turn paired to a completed user request. */
     fun beginAssistantTurn(request: ConversationRequestHandle): AssistantTurnHandle? = synchronized(lock) {
+        // This controller serializes assistant generations. The UI may queue a
+        // later request, but it must not strand an earlier nonterminal turn by
+        // replacing the only active response handle.
+        if (activeAssistant != null) return@synchronized null
         if (request.conversationId != conversationId) return@synchronized null
         val current = mutableState.value
         val user = current.turns.firstOrNull {
