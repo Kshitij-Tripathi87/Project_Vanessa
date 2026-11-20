@@ -264,8 +264,10 @@ function scanJsonObject(state: ScanState): void {
   }
 }
 
-/** Throw if `text` is not one complete JSON document with unique member names. */
-function assertJsonWithoutDuplicates(text: string): void {
+/** Throw if `text` is not one complete JSON document with unique member names.
+ * Shared by other strict protocol decoders before JSON.parse can collapse duplicates.
+ */
+export function assertJsonWithoutDuplicates(text: string): void {
   const state: ScanState = { text, index: 0, depth: 0 };
   skipJsonValue(state);
   skipDecodeWhitespace(state);

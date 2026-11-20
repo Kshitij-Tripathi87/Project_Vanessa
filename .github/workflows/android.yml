@@ -6,11 +6,13 @@ on:
       - main
     paths:
       - 'apps/android/**'
+      - 'packages/protocol/**'
       - 'scripts/fetch-llama-cpp.sh'
       - '.github/workflows/android.yml'
   pull_request:
     paths:
       - 'apps/android/**'
+      - 'packages/protocol/**'
       - 'scripts/fetch-llama-cpp.sh'
       - '.github/workflows/android.yml'
   workflow_dispatch:
