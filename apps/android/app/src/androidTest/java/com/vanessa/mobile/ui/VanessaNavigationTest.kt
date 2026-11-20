@@ -4,7 +4,6 @@ import android.Manifest
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -13,6 +12,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,16 +65,13 @@ class VanessaNavigationTest {
      * question that matters when the walk stops somewhere unexpected.
      */
     private fun screenText(): String = runCatching {
-        composeRule.onAllNodes(hasText("", substring = true))
-            .fetchSemanticsNodes()
-            .mapNotNull { node ->
-                val text: String? = node.config.getOrNull(SemanticsProperties.Text)
-                    ?.joinToString(" ") { span -> span.text }
-                text?.takeIf { joined -> joined.isNotBlank() }
-            }
-            .distinct()
-            .take(12)
-            .joinToString(" / ")
+        // The framework's own tree dump: text, roles and test tags in one pass,
+        // with no per-property extraction to get wrong.
+        composeRule.onRoot(useUnmergedTree = true)
+            .printToString(maxDepth = 6)
+            .replace("\n", " ")
+            .replace(Regex("\\s+"), " ")
+            .take(900)
     }.getOrDefault("unavailable")
 
     /** What is on screen, for a failure message that can be read in CI. */
