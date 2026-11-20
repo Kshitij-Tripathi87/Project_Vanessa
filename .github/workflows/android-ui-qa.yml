@@ -187,8 +187,10 @@ jobs:
           "$ADB_BIN" devices
           cd apps/android
           mkdir -p /tmp/emu
-          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace > /tmp/emu/tests.log 2>&1
-          status=$?
+          # `|| status=$?` rather than a bare call: the shell runs with -e, so a
+          # failing Gradle aborts the step before the next line could record why.
+          status=0
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace > /tmp/emu/tests.log 2>&1 || status=$?
           tail -n 60 /tmp/emu/tests.log
           if [ $status -ne 0 ]; then
             # `|| true` is load-bearing: with pipefail and `bash -e`, a grep that
