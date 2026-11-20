@@ -72,11 +72,28 @@ jobs:
             'build-tools;35.0.0' \
             'emulator' \
             'system-images;android-35;google_apis;x86_64'
-          # The runner needs an emulator binary and the image before it can create
-          # an AVD. Both are installed here so a missing package fails loudly in a
-          # step we control rather than inside the action, where the log is the
-          # only evidence and it is not always retrievable.
-          emulator -version | head -1
+
+      # `emulator` is not on PATH on this runner even after sdkmanager installs
+      # it. That is what defeated the previous version of this workflow: it
+      # probed with `emulator -version | head -1`, and a pipeline returns the exit
+      # status of its last element, so "command not found" looked like success and
+      # the absence of the binary was never noticed anywhere. The binary is
+      # located once here and exported for every later step.
+      - name: Locate the emulator and adb
+        run: |
+          set -o pipefail
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "sdk=$sdk"
+          ls "$sdk" || true
+          if [ ! -x "$sdk/emulator/emulator" ]; then
+            echo "::error::the emulator binary is missing at $sdk/emulator/emulator"
+            ls "$sdk/emulator" || true
+            exit 1
+          fi
+          echo "EMULATOR_BIN=$sdk/emulator/emulator" >> "$GITHUB_ENV"
+          echo "ADB_BIN=$sdk/platform-tools/adb" >> "$GITHUB_ENV"
+          "$sdk/emulator/emulator" -version 2>&1 | head -3
+          "$sdk/platform-tools/adb" version
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -89,9 +106,9 @@ jobs:
       # run page, which stays readable when the log does not.
       - name: Check emulator acceleration and disk
         run: |
-          emulator -accel-check || true
+          "$EMULATOR_BIN" -accel-check || true
           df -h / /home /dev/shm || true
-          accel=$(emulator -accel-check 2>&1 | tr '\n' ' ')
+          accel=$("$EMULATOR_BIN" -accel-check 2>&1 | tr '\n' ' ')
           free=$(df -h --output=avail /home | tail -1 | tr -d ' ')
           echo "::warning::acceleration: ${accel} | free on /home: ${free}"
 
@@ -111,7 +128,7 @@ jobs:
       - name: Boot the emulator
         run: |
           mkdir -p /tmp/emu
-          emulator -avd vanessa \
+          "$EMULATOR_BIN" -avd vanessa \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
             > /tmp/emu/emulator.log 2>&1 &
           echo $! > /tmp/emu/pid
@@ -124,16 +141,16 @@ jobs:
             tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
             exit 1
           fi
-          if ! timeout 420 adb wait-for-device; then
+          if ! timeout 420 "$ADB_BIN" wait-for-device; then
             echo "::error::adb never saw a device"
-            adb devices || true
+            "$ADB_BIN" devices || true
             tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
             exit 1
           fi
           for i in $(seq 1 120); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+            if [ "$("$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
               echo "::warning::emulator booted after ~$((i * 5))s of polling"
-              adb devices
+              "$ADB_BIN" devices
               exit 0
             fi
             if ! kill -0 "$(cat /tmp/emu/pid)" 2>/dev/null; then
