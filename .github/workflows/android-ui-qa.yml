@@ -70,7 +70,13 @@ jobs:
           sdkmanager --install \
             'platforms;android-35' \
             'build-tools;35.0.0' \
+            'emulator' \
             'system-images;android-35;google_apis;x86_64'
+          # The runner needs an emulator binary and the image before it can create
+          # an AVD. Both are installed here so a missing package fails loudly in a
+          # step we control rather than inside the action, where the log is the
+          # only evidence and it is not always retrievable.
+          emulator -version | head -1
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
