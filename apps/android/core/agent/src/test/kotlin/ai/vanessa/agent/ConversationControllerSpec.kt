@@ -64,7 +64,7 @@ class ConversationControllerSpec {
 
         val request = requireNotNull(controller.publishFinal(lease, "what is on my calendar"))
         val user = controller.state.value.turns.single()
-        assertEquals(request!!.requestId, user.requestId)
+        assertEquals(request.requestId, user.requestId)
         assertEquals(request.userTurnId, user.turnId)
         assertEquals(ConversationTurnStatus.COMPLETED, user.status)
         assertEquals("what is on my calendar", user.text)
@@ -113,7 +113,7 @@ class ConversationControllerSpec {
         assertEquals(ConversationTurnRole.USER, user.role)
         assertEquals(ConversationTurnSource.TEXT, user.source)
         assertEquals(ConversationTurnStatus.COMPLETED, user.status)
-        assertEquals(request!!.userTurnId, user.turnId)
+        assertEquals(request.userTurnId, user.turnId)
         assertEquals(request.requestId, user.requestId)
     }
 
