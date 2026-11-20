@@ -11,10 +11,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./schema": "./schema/protocol-v1.schema.json"
+    "./schema": "./schema/protocol-v1.schema.json",
+    "./conversation-schema": "./schema/conversation-v1.schema.json"
   },
   "scripts": {
-    "build": "tsc && node scripts/generate-json-schema.mjs && node scripts/generate-kotlin-models.mjs",
+    "build": "tsc && node scripts/generate-json-schema.mjs && node scripts/generate-kotlin-models.mjs && node scripts/generate-conversation-schema.mjs && node scripts/generate-conversation-kotlin.mjs",
     "test": "node --test src/*.test.ts",
     "fixtures": "node scripts/generate-fixtures.mjs",
     "lint": "eslint src"

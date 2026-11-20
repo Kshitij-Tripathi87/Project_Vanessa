@@ -1,142 +1,151 @@
 # Conversation runtime
 
-**Status: contract and reducer implemented; on-device multi-turn context implemented;
-voice bridge, memory retrieval, model routing and task handoff are not.**
+**Status: the shared wire contract, TypeScript reducer, generated Kotlin models and
+Kotlin reducer exist. The Android and desktop conversation paths do not yet use
+those reducers.** The voice → conversation bridge, a controller, persistence,
+memory retrieval, model routing and task handoff remain unimplemented.
 
-This document describes the conversation layer as the code stands today. Where the
-programme brief asks for a component that does not exist yet, this document says so
-in [Not implemented](#not-implemented) instead of describing the intention as if it
-were built.
+The design and later implementation sequence are in
+[VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md). That document is a
+snapshot of the proposal at PR #69; this page reports the code's present state.
 
-## The separation this layer exists to enforce
+## Ownership and actual integration
 
-Four responsibilities, which must not be mixed:
+The intended separation is conversation (turns and context), voice (capture and
+playback), agents (capabilities), and orchestrator (planning and task authority).
+The UI should ultimately project conversation state; it must not manufacture
+remote task state or treat stopping speech as task cancellation.
 
-| Layer | Owns | Does not own |
-|---|---|---|
-| Conversation | Session identity, turns, context, what was said | Whether a request needs a device, an approval or a PC |
-| Voice | Capture, VAD, ASR, turn-taking, TTS playback | Conversation state; it publishes into a turn |
-| Agents | Execution of one capability | Planning, authorization, conversation |
-| Orchestrator | Intent → plan → policy → execution → verification | What the conversation shows |
+**That conversation integration has not happened yet.** Android currently keeps
+chat history in `chatMessages` and the live speech partial in `voiceDraft` in
+`MainActivity`. The on-device recognizer supplies genuine partials to that draft;
+the final transcript goes to the existing local assistant path. Neither the UI nor
+the recognizer emits the conversation events below. The desktop voice session is
+also disconnected from this contract. The new Kotlin reducer is a protocol module,
+not yet an Android conversation controller.
 
-The rule that makes the separation real is that **the surface renders what the
-runtime publishes**. The Android chat does not invent a turn, a phase or a verdict;
-it folds events through the reducer in `packages/protocol/src/conversation.ts`.
+## Contract and generation
 
-## What exists
+`packages/protocol/src/conversation.ts` defines strict Zod schemas for the session,
+turn, and seven event shapes. Every event has `conversationId` and `turnId`;
+`turn.received` also carries `requestId`, role, source and timestamp. IDs are
+canonical lowercase UUID strings. Timestamps are nonnegative integer epoch
+milliseconds up to `8_640_000_000_000_000`.
 
-### The contract — `packages/protocol/src/conversation.ts`
-
-Zod schemas matching the conventions of the existing v2 wire contract: strict
-objects, lowercase UUIDs, epoch-millisecond timestamps, every string bounded.
-
-| Type | Purpose |
+| Artifact | Source |
 |---|---|
-| `ConversationSessionSchema` | `conversationId`, `deviceId`, `activeTurnId?`, `status`, `createdAt`, `updatedAt` |
-| `ConversationTurnSchema` | One turn: role, source (`text`/`voice`), content, status |
-| `ConversationEventSchema` | Discriminated union of the seven events below |
+| `packages/protocol/schema/conversation-v1.schema.json` | Generated from those Zod schemas, independently of the legacy protocol-v1 schema |
+| `apps/android/core/protocol/.../conversation/ConversationModels.kt` | Generated from the conversation JSON Schema: serializable event variants, session/turn models, enums, bounds and validation rules |
+| `apps/android/core/protocol/.../conversation/ConversationCodec.kt` | Strict JSON ingress/egress for the generated models |
+| `apps/android/core/protocol/.../conversation/ConversationReducer.kt` | Hand-written, pure Kotlin reducer and state DTOs |
 
-Events: `turn.received`, `transcript.partial`, `transcript.final`,
-`response.chunk`, `response.completed`, `turn.interrupted`, `turn.failed`. Every
-event carries `conversationId` and `turnId`.
+The `@vanessa/protocol` build regenerates both new artifacts and the pre-existing
+protocol-v1 artifacts. CI checks that the generated files are tracked and clean.
+The generator fails on unrecognized schema constraints instead of silently
+weakening Kotlin validation. There are no hand-maintained copies of the wire
+models or validation bounds.
 
-### The reducer — `applyConversationEvent`
+Use `decodeConversationEvent`, `decodeConversationSession`, and
+`decodeConversationTurn` for TypeScript JSON ingress, and `ConversationCodec`
+for Kotlin JSON ingress **and egress**. They reject duplicate member names before
+JSON parsing can collapse them, reject unknown/missing fields and invalid enum,
+UUID, timestamp and string bounds, and never treat these shapes as authorization.
+Kotlin constructors and bare `kotlinx.serialization` decoding do not by themselves
+enforce all wire constraints; callers must use the codec at the boundary. JSON
+numeric forms such as `1e3` and `1000.0` are interpreted as JavaScript numbers
+before integral/range validation; `-0` normalizes to `0` on JSON output.
 
-A pure function from `(state, event)` to state. It is the same shape as the phone's
-remote-task reducer, for the same reason: one authority per piece of state, with the
-ignore rules written down and tested rather than inferred.
+### Unicode length caveat
 
-| Rule | Why |
+The current Zod contract uses JavaScript string `.length`, and Kotlin uses
+`String.length`: **both count UTF-16 code units**, not Unicode code points.
+For example, one supplementary emoji occupies two units. The generated schema
+includes the standard `minLength`/`maxLength` plus matching
+`x-vanessa-minUtf16Length`/`x-vanessa-maxUtf16Length` annotations. Generic JSON
+Schema validators count code points and ordinarily ignore those extensions; on
+their own they can accept an over-limit emoji string. They also cannot detect
+duplicate members after ordinary JSON parsing. Use the strict codecs above (or
+implement both the extension and duplicate-member guard) for contract parity.
+
+## Reducer behavior
+
+The TypeScript and Kotlin reducers take a state and validated event and return a
+state. They have no clock, random IDs, Android APIs, audio operations, network
+operations or task-cancellation side effects. Both retain at most 200 turns and
+select the newest unfinished turn as active.
+
+| Event or condition | Result |
 |---|---|
-| A turn is created **only** by `turn.received` | Otherwise a replayed or late fragment manufactures a turn |
-| Events for an unknown `turnId` are ignored | Late events from a dropped turn must not resurrect it |
-| Events for another `conversationId` are ignored | Conversation and device isolation |
-| Duplicate `turn.received` / `transcript.final` / `response.completed` are no-ops | Reconnect replay is normal, not exceptional |
-| A partial after a final transcript is ignored | The final transcript is authoritative |
-| A user turn completes when its final transcript is accepted | The user has stopped speaking; nothing else is pending |
-| An assistant turn moves to `processing`, then `responding` | The written answer and the spoken answer are the same turn |
-| The **first** `response.chunk` replaces the text, later ones append | A written answer followed by speech of the same words must not double |
-| `turn.interrupted` is terminal for the turn | Speech stops; the turn cannot be resurrected by a late chunk |
-| `turn.failed` is terminal and keeps text already shown | A failure does not erase what the user already heard |
-| Ignored events return the **same object** | `next === state` is the test for "nothing happened" |
-| Turns are capped at `MAX_CONVERSATION_TURNS` | A long call cannot grow state without limit |
+| `turn.received` | The only event that creates a turn; duplicate receipt is ignored |
+| Unknown turn or other conversation | Ignored; no turn is synthesized |
+| `transcript.partial` | A nonempty complete draft replaces previous text; late partials after a final or terminal state are ignored |
+| `transcript.final` | Authoritative; completes a user turn or puts an assistant turn in `processing` |
+| `response.chunk` | Assistant only; the first chunk replaces existing text, later chunks append |
+| Response exceeds 4,000 UTF-16 units | Turn becomes terminal `failed`; previously accepted text remains, the overflowing chunk is not sliced or appended, and a late completion cannot report success |
+| `response.completed` | Completes an assistant response in processing/responding; subsequent delivery is ignored |
+| `turn.interrupted` | Ends the turn with its reason; late output is ignored, but no task is cancelled and the reducer itself does not stop audio |
+| `turn.failed` | Ends the turn; retains accepted text, or displays its reason if no text exists |
 
-**Interruption is not cancellation.** `turn.interrupted` ends the *turn*: playback
-stops and late chunks are dropped. It says nothing about a task the supervisor
-already owns. Cancelling work is a separate decision on a separate contract. The
-desktop `VanessaVoiceSession` already distinguishes barge-in from task cancellation,
-and this contract keeps that distinction rather than flattening it.
+Ignored events return the *same state object* on both runtimes. A repeated,
+nonempty partial before finalization is applied again and may return a new but
+equal state. The event schema currently has no sequence or event ID; a future
+controller must serialize publication and fence stale callbacks itself. This
+contract does not provide transport ordering or persistence.
 
-### The Android planner context — `ai.vanessa.agent.ConversationContext`
+Wire ingress rejects individual partials/chunks over 512 units and final
+transcripts over 4,000; the reducer also guards the accumulated response. The
+future assistant output adapter must validate the complete response **before**
+event publication. A terminal failure on aggregate overflow is a safety net,
+not permission to publish unvalidated model output.
 
-`LocalPlanCoordinator.run(prompt, context)` now receives recent turns. Before this,
-the coordinator saw one request in isolation, so "and tomorrow?" reached the planner
-with no referent.
+## Existing Android planner context
 
-| Bound | Value | Reason |
-|---|---|---|
-| `MAX_TURNS` | 6 | The nearest context resolves references; older turns mostly add noise |
-| `MAX_TURN_CHARS` | 240 | One long message must not crowd out the others |
-| `MAX_CHARS` | 1200 | Ceiling for the whole block, so the request always fits |
+`LocalPlanCoordinator.run(prompt, context)` currently gets its bounded context
+from the activity's existing chat list: up to six turns, 240 units each, and
+1,200 units total, dropping oldest turns first. Text is collapsed to one line and
+JSON-escaped. Context is advisory: the existing tool allow-list, permission gates,
+plan validation and evidence-only responder remain unchanged. It is **not yet**
+derived from the conversation reducer.
 
-Trimming drops the **oldest** turn first, so the nearest context survives. Each line
-is collapsed to a single line and JSON-escaped through `JsonPrimitive`, so a message
-containing a quote cannot break out of the quoted region of the prompt.
+## Verification and CI
 
-Three limits are deliberate:
+The same checked-in files under `packages/protocol/fixtures/` are consumed by
+both TypeScript and Kotlin tests:
 
-- The context is **advisory**. It can change which allowed tool the model picks. It
-  cannot add a tool, widen a permission or relax validation, because validation runs
-  on the answer rather than the question.
-- The **responder does not receive it**. `respond()` output is a selection of
-  verbatim evidence, never a new claim; handing it conversation to paraphrase would
-  be a licence to invent.
-- The planner still has exactly two tools (`android.device.status`,
-  `android.calendar.search`). Context makes the planner better at *choosing*, not
-  more capable.
+- `conversation-events-v1.jsonl` covers all event families and session/turn
+  shapes, accepted and rejected boundaries, UUIDs, duplicate keys, numeric JSON,
+  and UTF-16 supplementary characters.
+- `conversation-reducer-vectors-v1.json` specifies normalized state and object
+  identity after every step, including final/partial ordering, first-chunk
+  replacement, interruption, failure, overflow and the 201st turn.
 
-## What the tests prove
+Gradle reads those same repository-level files as test resources; there is no
+manually copied Android fixture. The Android foundation job runs
+`:core:protocol:test` and is triggered by protocol changes as well as Android
+changes. The main CI job builds and tests the TypeScript protocol and verifies
+generated artifact drift. A green debug APK is not evidence of an instrumented
+journey; emulator results must be checked separately.
 
-`packages/protocol/src/conversation.test.ts` — 20 cases: creation, duplicate
-creation, unknown turn, foreign conversation, partial replacement, partial-after-final,
-duplicate final, user completion, assistant processing/streaming, streaming before any
-transcript, chunks rejected on a user turn, content bound, interruption, completion
-after interruption, idempotent completion, failure text preservation, active-turn
-selection, history bound, batch-replay stability.
+```sh
+pnpm --filter @vanessa/protocol build
+pnpm --filter @vanessa/protocol test
+cd apps/android && ./gradlew :core:protocol:test
+```
 
-`apps/android/core/agent/src/test/kotlin/ai/vanessa/agent/ConversationContextSpec.kt` —
-10 cases: prompt unchanged with no context, blank turns ignored, ordering,
-turn cap, per-turn truncation, block ceiling keeping the newest, one-line collapsing,
-quote escaping, an unsafe plan remaining unexecutable with context present, and the
-allowed tool still planning and executing.
+## Remaining work
 
-## Not implemented
+The next planned slice is the `ConversationController`: IDs and request pairing,
+ordered event ingress, generation fencing, and reducer-owned state, tested without
+microphone or TTS APIs. Subsequent slices wire typed/ASR input, validated assistant
+output, offline TTS playback and UI projections, then execute emulator journeys.
+Do not remove `chatMessages`/`voiceDraft` or claim a single conversation authority
+until those paths are actually migrated.
 
-Each item below is required by the brief and absent from the code. None is claimed as
-done anywhere in this repository.
-
-| Component | State | Next step |
-|---|---|---|
-| Voice → conversation bridge | Android surfaces a final transcript only; partials are dropped in `AndroidOnDeviceSpeechInput` | Publish `transcript.partial` / `transcript.final` into the active turn |
-| Streaming TTS with playback state | Offline TTS speaks a completed string | Chunk by sentence, publish `response.chunk` as audio starts |
-| Barge-in on Android | Not wired to the conversation; the desktop has it | `turn.interrupted(barge_in)` must also stop playback |
-| Memory retrieval | `services/orchestrator/src/memory/memoryPalace.ts` exists; not used to build turn context | Retrieve by conversation and device, with provenance |
-| Context window management | Fixed turn/character bounds only | Summarise older turns when the window is full |
-| Model routing | Android uses local llama.cpp only | One inference interface with provider readiness and fallback |
-| Clarification | Model may answer a question instead of acting; no explicit clarification state | A `clarification` turn outcome with the missing slot named |
-| Task handoff | No `task.handoff` event exists yet | Add it, carrying the `requestId` the remote task contract already uses |
-| Conversation persistence | Sessions live in memory on the device | Durable session and turn store, with separate retention for verified task outcomes |
-
-## Where this leaves the milestone
-
-The brief's acceptance scenario — *hear → understand → remember → clarify → plan → act
-→ verify → respond*, over multiple turns, by voice and by typing, surviving an
-interruption — cannot run end to end yet. What is in place is the part every other
-part depends on: a turn has an identity, a bounded lifecycle and one authority that
-decides what happened to it.
-
-The next step with the highest value is the voice bridge, because it is the only
-missing piece that changes what a user can do today: today the phone hears a sentence,
-thinks, and speaks a paragraph with no visible middle. Publishing partial transcripts
-and streaming chunks into the turn contract is what turns four disconnected features
-into one conversation.
+Native llama.cpp currently returns completed strings, not token streams. The
+future bridge may publish bounded chunks **after** validating the whole response;
+that is not model-token streaming. Offline TTS currently speaks one complete
+string with explicit Read Aloud; playback progress, queueing and Android barge-in
+are not yet connected. Conversation persistence, Memory Palace retrieval,
+clarification outcomes, task handoff, desktop integration and the end-to-end
+hear → understand → remember → clarify → plan → act → verify → respond journey
+also remain open.

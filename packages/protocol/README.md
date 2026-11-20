@@ -34,16 +34,28 @@ npm test
 regeneration is deterministic. The tests verify the generated vectors and
 expected rejection cases.
 
+## Conversation contract
+
+`src/conversation.ts` is the independent conversation-v1 source of truth. The
+build generates `schema/conversation-v1.schema.json` and Android
+`core/protocol/.../conversation/ConversationModels.kt`; TypeScript and Kotlin
+consume the same wire and reducer vectors in `fixtures/conversation-*`. Use the
+strict `decodeConversation*` functions and Kotlin `ConversationCodec` at wire
+boundaries; bare JSON parsing loses duplicate members and bare Kotlin decoding
+does not enforce every schema constraint.
+
+The contract's string limits count UTF-16 code units. JSON Schema's normal
+`maxLength` counts code points, so the generated schema also supplies
+`x-vanessa-minUtf16Length` and `x-vanessa-maxUtf16Length`. Generic schema
+validators alone do not enforce those extensions. See
+[`CONVERSATION_RUNTIME.md`](../../docs/engineering/CONVERSATION_RUNTIME.md) for
+details and current integration status.
+
 ## Legacy v1 artifacts
 
-The current JSON Schema and Kotlin model generators still describe protocol v1:
-
-- `schema/protocol-v1.schema.json`
-- `apps/android/core/protocol/src/main/kotlin/` (generated locally)
-
-They are retained for legacy consumers and are not the v2 cross-language
-fixture contract. The v2 canonicalization and signature vectors are currently
-the shared contract for TypeScript and Kotlin implementations.
+`schema/protocol-v1.schema.json` and its generated Kotlin models remain for
+legacy consumers. Their generators and fixtures are separate from the
+conversation contract and the authenticated protocol-v2 fixtures.
 
 ## Contract-first rule
 

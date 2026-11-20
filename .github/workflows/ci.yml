@@ -44,6 +44,19 @@ jobs:
       - name: Test canonical phone-PC protocol
         run: pnpm --filter @vanessa/protocol test
 
+      - name: Verify generated conversation and legacy protocol artifacts are current
+        run: |
+          git ls-files --error-unmatch \
+            packages/protocol/schema/conversation-v1.schema.json \
+            apps/android/core/protocol/src/main/kotlin/com/vanessa/protocol/conversation/ConversationModels.kt \
+            packages/protocol/schema/protocol-v1.schema.json \
+            apps/android/core/protocol/src/main/kotlin/com/vanessa/mobile/protocol/ProtocolModels.kt > /dev/null
+          git diff --exit-code -- \
+            packages/protocol/schema/conversation-v1.schema.json \
+            apps/android/core/protocol/src/main/kotlin/com/vanessa/protocol/conversation/ConversationModels.kt \
+            packages/protocol/schema/protocol-v1.schema.json \
+            apps/android/core/protocol/src/main/kotlin/com/vanessa/mobile/protocol/ProtocolModels.kt
+
       - name: Build shared contracts
         run: pnpm --filter @vanessa/shared build
 

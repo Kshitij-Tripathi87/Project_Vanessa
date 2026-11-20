@@ -13,3 +13,6 @@ apps/android/gradlew text eol=lf
 packages/shared/schema/*.json text eol=lf
 packages/shared/fixtures/*.jsonl text eol=lf
 packages/protocol/schema/*.json text eol=lf
+packages/protocol/fixtures/conversation-*.json text eol=lf
+packages/protocol/fixtures/conversation-*.jsonl text eol=lf
+apps/android/core/protocol/src/main/kotlin/com/vanessa/protocol/conversation/ConversationModels.kt text eol=lf

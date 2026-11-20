@@ -193,9 +193,9 @@ test("chunks are ignored on a user turn", () => {
   assert.equal(next, state);
 });
 
-test("a response cannot exceed the content bound", () => {
+test("a response at the content bound succeeds but an overflow fails without truncation", () => {
   let state = started("assistant");
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     state = applyConversationEvent(state, {
       type: "response.chunk",
       conversationId: CONVERSATION,
@@ -204,6 +204,34 @@ test("a response cannot exceed the content bound", () => {
     });
   }
   assert.equal(state.turns[0].text.length, MAX_TURN_CONTENT);
+  assert.equal(state.turns[0].status, "responding");
+  const overflow = applyConversationEvent(state, {
+    type: "response.chunk", conversationId: CONVERSATION, turnId: TURN, text: "!",
+  });
+  assert.equal(overflow.turns[0].text, state.turns[0].text);
+  assert.equal(overflow.turns[0].status, "failed");
+  assert.equal(overflow.turns[0].final, true);
+  assert.equal(applyConversationEvent(overflow, {
+    type: "response.completed", conversationId: CONVERSATION, turnId: TURN,
+  }), overflow, "an incomplete response cannot later be marked complete");
+});
+
+test("overflow never splits a surrogate pair or publishes a partial chunk", () => {
+  let state = started("assistant");
+  for (let index = 0; index < 7; index += 1) {
+    state = applyConversationEvent(state, {
+      type: "response.chunk", conversationId: CONVERSATION, turnId: TURN, text: "x".repeat(512),
+    });
+  }
+  state = applyConversationEvent(state, {
+    type: "response.chunk", conversationId: CONVERSATION, turnId: TURN, text: "x".repeat(415),
+  });
+  assert.equal(state.turns[0].text.length, MAX_TURN_CONTENT - 1);
+  const overflow = applyConversationEvent(state, {
+    type: "response.chunk", conversationId: CONVERSATION, turnId: TURN, text: "😀",
+  });
+  assert.equal(overflow.turns[0].text, state.turns[0].text);
+  assert.equal(overflow.turns[0].status, "failed");
 });
 
 test("interruption ends the turn and stops further chunks", () => {

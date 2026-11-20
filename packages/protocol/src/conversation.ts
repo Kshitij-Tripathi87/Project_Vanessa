@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { assertJsonWithoutDuplicates } from "./envelope.ts";
 import { EpochMsSchema, UuidSchema } from "./messages.ts";
 
 /**
@@ -32,10 +33,10 @@ import { EpochMsSchema, UuidSchema } from "./messages.ts";
 /** Version of the conversation contract. Independent of the wire protocol. */
 export const CONVERSATION_PROTOCOL_VERSION = 1 as const;
 
-/** Longest accepted final transcript or completed response, in characters. */
+/** Longest accepted final transcript or completed response, in UTF-16 code units. */
 export const MAX_TURN_CONTENT = 4000;
 
-/** Longest accepted partial transcript or response chunk, in characters. */
+/** Longest accepted partial transcript or response chunk, in UTF-16 code units. */
 export const MAX_TRANSCRIPT_CHUNK = 512;
 
 /** Turns retained per conversation. Older turns are dropped from the head. */
@@ -159,6 +160,34 @@ export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 export type ConversationEvent = z.infer<typeof ConversationEventSchema>;
 export type ConversationTurnStatus = z.infer<typeof ConversationTurnStatusSchema>;
 export type InterruptReason = z.infer<typeof InterruptReasonSchema>;
+
+/**
+ * Strict JSON ingress for the conversation contract. A plain JSON.parse loses
+ * duplicate members before Zod can inspect them. Use the same structural guard
+ * as remote envelopes and then validate the decoded value with the Zod schema.
+ * These functions do not claim authentication or task authorization.
+ */
+function parseConversationJson(text: string): unknown {
+  try {
+    assertJsonWithoutDuplicates(text);
+    return JSON.parse(text);
+  } catch {
+    // Do not include the potentially sensitive conversation text in the error.
+    throw new Error("Invalid conversation JSON.");
+  }
+}
+
+export function decodeConversationEvent(text: string): ConversationEvent {
+  return ConversationEventSchema.parse(parseConversationJson(text));
+}
+
+export function decodeConversationSession(text: string): ConversationSession {
+  return ConversationSessionSchema.parse(parseConversationJson(text));
+}
+
+export function decodeConversationTurn(text: string): ConversationTurn {
+  return ConversationTurnSchema.parse(parseConversationJson(text));
+}
 
 /* ------------------------------------------------------------------ *
  * Reducer state
@@ -296,8 +325,15 @@ export function applyConversationEvent(
       }
       if (event.text.length === 0) return state;
       const text = turn.streaming ? `${turn.text}${event.text}` : event.text;
+      if (text.length > MAX_TURN_CONTENT) {
+        // Never silently publish a truncated response as completed. In
+        // particular, slicing at the limit can split a UTF-16 surrogate pair.
+        // Keep previously accepted text and make the failure terminal; late
+        // completion/chunks cannot turn an incomplete response into success.
+        return replace({ status: "failed", final: true });
+      }
       return replace({
-        text: text.slice(0, MAX_TURN_CONTENT),
+        text,
         status: "responding",
         streaming: true,
       });

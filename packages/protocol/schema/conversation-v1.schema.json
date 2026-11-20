@@ -1,0 +1,406 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Generated from conversation.ts. String limits use UTF-16 code units; enforce x-vanessa-minUtf16Length and x-vanessa-maxUtf16Length in addition to standard JSON Schema keywords.",
+  "x-vanessa-protocolVersion": 1,
+  "x-vanessa-maxConversationTurns": 200,
+  "$ref": "#/definitions/ConversationEvent",
+  "definitions": {
+    "ConversationEvent": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "turn.received"
+            },
+            "requestId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "text",
+                "voice"
+              ]
+            },
+            "createdAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8640000000000000
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "requestId",
+            "role",
+            "source",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "transcript.partial"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 512,
+              "x-vanessa-maxUtf16Length": 512
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "transcript.final"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000,
+              "x-vanessa-minUtf16Length": 1,
+              "x-vanessa-maxUtf16Length": 4000
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "response.chunk"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 512,
+              "x-vanessa-maxUtf16Length": 512
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "response.completed"
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "turn.interrupted"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "barge_in",
+                "user_cancel"
+              ]
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conversationId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "turnId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f-]+$"
+            },
+            "type": {
+              "type": "string",
+              "const": "turn.failed"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "x-vanessa-minUtf16Length": 1,
+              "x-vanessa-maxUtf16Length": 300
+            }
+          },
+          "required": [
+            "conversationId",
+            "turnId",
+            "type",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ConversationSession": {
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "activeTurnId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "closed"
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8640000000000000
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8640000000000000
+        }
+      },
+      "required": [
+        "conversationId",
+        "deviceId",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationTurn": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "conversationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "text",
+            "voice"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "x-vanessa-minUtf16Length": 1,
+          "x-vanessa-maxUtf16Length": 4000
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "received",
+            "processing",
+            "responding",
+            "completed",
+            "interrupted",
+            "failed"
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8640000000000000
+        }
+      },
+      "required": [
+        "turnId",
+        "conversationId",
+        "requestId",
+        "role",
+        "source",
+        "content",
+        "status",
+        "createdAt"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "closed"
+      ]
+    },
+    "ConversationTurnRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ]
+    },
+    "ConversationTurnSource": {
+      "type": "string",
+      "enum": [
+        "text",
+        "voice"
+      ]
+    },
+    "ConversationTurnStatus": {
+      "type": "string",
+      "enum": [
+        "received",
+        "processing",
+        "responding",
+        "completed",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "InterruptReason": {
+      "type": "string",
+      "enum": [
+        "barge_in",
+        "user_cancel"
+      ]
+    }
+  }
+}
