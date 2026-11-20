@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -55,34 +56,36 @@ class VanessaNavigationTest {
      * test never sits behind a system permission dialog; the microphone grant
      * rule already covers the permission this build needs.
      */
+    /** What is on screen, for a failure message that can be read in CI. */
+    private fun describeScreen(): String {
+        val markers = listOf(
+            "Initializing Vanessa…",
+            "Checking this device…",
+            "Detecting the installed local model…",
+            "Starting the local model…",
+            "Vanessa is open. Some local features are unavailable.",
+            "Get Started",
+            "Continue",
+            "Allow microphone",
+            "Not now",
+            "How can I help?",
+            "No local model is active.",
+            "Type a message…",
+        ).filter { exists(it) }
+        val composer = runCatching {
+            composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().size
+        }.getOrDefault(-1)
+        return "visible: " + markers.joinToString(", ").ifEmpty { "none of the known screens" } +
+            "; composer menus: $composer"
+    }
+
     private fun enterAssistant() {
         try {
             composeRule.waitUntil(timeoutMillis = 60_000) {
                 exists("How can I help?") || exists("Get Started")
             }
         } catch (timeout: Throwable) {
-            // The timeout message is what the CI annotation shows, and artefacts
-            // are not always reachable. Say which screen is actually on display
-            // instead of only that the expected one was not.
-            val markers = listOf(
-                "Initializing Vanessa…",
-                "Checking this device…",
-                "Detecting the installed local model…",
-                "Starting the local model…",
-                "Vanessa is open. Some local features are unavailable.",
-                "Get Started",
-                "Continue",
-                "Not now",
-                "How can I help?",
-                "No local model is active.",
-            ).filter { exists(it) }
-            // No cause: the report shows the message, and the message is the
-            // diagnosis. A wrapped exception replaced it with the timeout text.
-            throw AssertionError(
-                "The assistant never appeared within 60s. Visible markers: " +
-                    (markers.joinToString(", ").ifEmpty { "none of the known screens" }) +
-                    ". Cause: ${timeout::class.java.simpleName}",
-            )
+            throw AssertionError("No first screen after 60s. " + describeScreen())
         }
         // Step through the first-run screens until the composer exists. A
         // single pass over the labels races the recomposition that follows
@@ -92,12 +95,19 @@ class VanessaNavigationTest {
             guard += 1
             when {
                 exists("Get Started") -> clickText("Get Started")
+                exists("Allow microphone") -> clickText("Not now")
                 exists("Not now") -> clickText("Not now")
                 exists("Continue") -> clickText("Continue")
                 else -> composeRule.waitForIdle()
             }
         }
-        composeRule.waitUntil(timeoutMillis = 60_000) { composerVisible() }
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) { composerVisible() }
+        } catch (timeout: Throwable) {
+            throw AssertionError(
+                "The composer never appeared after " + guard + " first-run taps. " + describeScreen(),
+            )
+        }
     }
 
     /**
@@ -112,8 +122,7 @@ class VanessaNavigationTest {
         // and every emulator run for months reported "no tests" instead of a
         // compile error. A content description that exists only in the composer is
         // a narrower signal anyway.
-        composeRule.onNodeWithContentDescription("Open actions").assertExists()
-        true
+        composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().isNotEmpty()
     }.getOrDefault(false)
 
     @Test
