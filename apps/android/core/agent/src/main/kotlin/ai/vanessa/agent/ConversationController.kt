@@ -1,6 +1,23 @@
 package ai.vanessa.agent
 
-import com.vanessa.protocol.conversation.*
+import com.vanessa.protocol.conversation.AssistantTurnHandle
+import com.vanessa.protocol.conversation.ConversationCodec
+import com.vanessa.protocol.conversation.ConversationEvent
+import com.vanessa.protocol.conversation.ConversationPublishResult
+import com.vanessa.protocol.conversation.ConversationState
+import com.vanessa.protocol.conversation.ConversationTurnRole
+import com.vanessa.protocol.conversation.ConversationTurnSource
+import com.vanessa.protocol.conversation.ConversationTurnStatus
+import com.vanessa.protocol.conversation.InterruptReason
+import com.vanessa.protocol.conversation.ResponseChunkEvent
+import com.vanessa.protocol.conversation.ResponseCompletedEvent
+import com.vanessa.protocol.conversation.TranscriptFinalEvent
+import com.vanessa.protocol.conversation.TranscriptPartialEvent
+import com.vanessa.protocol.conversation.TurnFailedEvent
+import com.vanessa.protocol.conversation.TurnInterruptedEvent
+import com.vanessa.protocol.conversation.TurnReceivedEvent
+import com.vanessa.protocol.conversation.applyConversationEvent
+import com.vanessa.protocol.conversation.initialConversationState
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
