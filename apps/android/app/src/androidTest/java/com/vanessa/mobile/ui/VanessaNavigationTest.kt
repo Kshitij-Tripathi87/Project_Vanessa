@@ -4,6 +4,8 @@ import android.Manifest
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -56,6 +58,24 @@ class VanessaNavigationTest {
      * test never sits behind a system permission dialog; the microphone grant
      * rule already covers the permission this build needs.
      */
+    /**
+     * Every text the semantics tree currently exposes. Marker checks answer
+     * "is the screen I expected here"; this answers "what is here", which is the
+     * question that matters when the walk stops somewhere unexpected.
+     */
+    private fun screenText(): String = runCatching {
+        composeRule.onAllNodes(hasText("", substring = true))
+            .fetchSemanticsNodes()
+            .mapNotNull { node ->
+                node.config.getOrNull(SemanticsProperties.Text)
+                    ?.joinToString(" ") { span -> span.text }
+                    ?.takeIf { it.isNotBlank() }
+            }
+            .distinct()
+            .take(12)
+            .joinToString(" / ")
+    }.getOrDefault("unavailable")
+
     /** What is on screen, for a failure message that can be read in CI. */
     private fun describeScreen(): String {
         val markers = listOf(
@@ -76,7 +96,7 @@ class VanessaNavigationTest {
             composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().size
         }.getOrDefault(-1)
         return "visible: " + markers.joinToString(", ").ifEmpty { "none of the known screens" } +
-            "; composer menus: $composer"
+            "; composer menus: $composer; text: " + screenText()
     }
 
     private fun enterAssistant() {
