@@ -76,10 +76,12 @@ class VanessaNavigationTest {
                 "How can I help?",
                 "No local model is active.",
             ).filter { exists(it) }
+            // No cause: the report shows the message, and the message is the
+            // diagnosis. A wrapped exception replaced it with the timeout text.
             throw AssertionError(
                 "The assistant never appeared within 60s. Visible markers: " +
-                    (markers.joinToString(", ").ifEmpty { "none of the known screens" }),
-                timeout,
+                    (markers.joinToString(", ").ifEmpty { "none of the known screens" }) +
+                    ". Cause: ${timeout::class.java.simpleName}",
             )
         }
         // Step through the first-run screens until the composer exists. A
