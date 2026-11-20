@@ -161,6 +161,15 @@ jobs:
           for i in $(seq 1 120); do
             if [ "$("$ADB_BIN" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
               echo "::warning::emulator booted after ~$((i * 5))s of polling"
+              # The app animates from its own frame clock and honours the system
+              # animator scale. With animations on, Compose never reports idle and
+              # every waitForIdle call in the suite hangs until the job times out -
+              # which is exactly what happened when this workflow replaced the
+              # emulator action, whose disable-animations did this for us.
+              "$ADB_BIN" shell settings put global window_animation_scale 0
+              "$ADB_BIN" shell settings put global transition_animation_scale 0
+              "$ADB_BIN" shell settings put global animator_duration_scale 0
+              echo "animator scale: $("$ADB_BIN" shell settings get global animator_duration_scale)"
               "$ADB_BIN" devices
               exit 0
             fi
