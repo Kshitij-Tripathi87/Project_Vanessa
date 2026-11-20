@@ -81,49 +81,76 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run UI journeys on a clean Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          # Keep the fail-fast ceiling well under the job timeout so a broken
-          # image reports "timeout" instead of an ambiguous cancellation.
-          emulator-boot-timeout: 900
-          ram-size: 4096M
-          cores: 4
-          # A GPU mode is required even headless: without one the emulator cannot
-          # bring up the system UI and never reports boot_completed.
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          disable-animations: true
-          # Keep directory change and Gradle invocation in one shell command:
-          # the emulator action executes separate script lines in separate shells.
-          script: |
-            cd apps/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace
-
-      # The failure this job has always had is invisible in the step list: the
-      # emulator runner fails, the upload step then "succeeds" while shipping
-      # nothing, and the job looks like QA that ran. These two steps make the
-      # absence of results the loudest thing in the run.
-      - name: Explain why no instrumented tests ran
-        if: failure()
+      # The emulator is booted here rather than by android-emulator-runner. The
+      # action is good, but when it fails its reason lives only in the step log,
+      # and step logs are served from blob storage that is not always reachable.
+      # Owning the boot means every decisive fact — acceleration, disk, AVD
+      # config, the emulator's own stderr — is emitted as an annotation on the
+      # run page, which stays readable when the log does not.
+      - name: Check emulator acceleration and disk
         run: |
-          echo "::group::Emulator and ADB state"
-          adb devices || true
-          emulator -list-avds || true
-          echo "::endgroup::"
-          # Logs are not always reachable (they are served from blob storage, not
-          # the API), but annotations are. Emit the decisive facts as annotations
-          # so the cause of a failed boot is readable on the run page itself.
-          devices=$(adb devices | grep -cE '\sdevice$' || true)
-          avds=$(emulator -list-avds | tr '\n' ' ' || true)
-          echo "::warning::adb sees ${devices} device(s); AVDs: ${avds:-none}"
-          echo "::group::Instrumentation output on disk"
-          ls -R apps/android/app/build/outputs/androidTest-results 2>/dev/null || echo "no androidTest-results directory"
-          ls -R apps/android/app/build/reports/androidTests 2>/dev/null || echo "no androidTests report directory"
-          echo "::endgroup::"
-          echo "::error::The emulator runner failed before instrumentation reported. See the groups above: no test-results file is the difference between 'the app failed a UI test' and 'no UI test ran at all'."
+          emulator -accel-check || true
+          df -h / /home /dev/shm || true
+          accel=$(emulator -accel-check 2>&1 | tr '\n' ' ')
+          free=$(df -h --output=avail /home | tail -1 | tr -d ' ')
+          echo "::warning::acceleration: ${accel} | free on /home: ${free}"
+
+      - name: Create AVD
+        run: |
+          if ! echo "no" | avdmanager create avd \
+              -n vanessa \
+              -k 'system-images;android-35;google_apis;x86_64' \
+              -d pixel_2 \
+              --force; then
+            echo "::error::avdmanager could not create the AVD; the system image is missing or avdmanager is not on PATH."
+            ls "$ANDROID_HOME/cmdline-tools" || true
+            exit 1
+          fi
+          avdmanager list avd || true
+
+      - name: Boot the emulator
+        run: |
+          mkdir -p /tmp/emu
+          emulator -avd vanessa \
+            -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
+            > /tmp/emu/emulator.log 2>&1 &
+          echo $! > /tmp/emu/pid
+          echo "emulator pid $(cat /tmp/emu/pid)"
+          # A process that dies in its first seconds is faster to read than a
+          # ten-minute wait-for-device that is doomed anyway.
+          sleep 20
+          if ! kill -0 "$(cat /tmp/emu/pid)" 2>/dev/null; then
+            echo "::error::the emulator process exited within 20s of starting"
+            tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+            exit 1
+          fi
+          if ! timeout 420 adb wait-for-device; then
+            echo "::error::adb never saw a device"
+            adb devices || true
+            tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+            exit 1
+          fi
+          for i in $(seq 1 120); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              echo "::warning::emulator booted after ~$((i * 5))s of polling"
+              adb devices
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/emu/pid)" 2>/dev/null; then
+              echo "::error::the emulator died while booting"
+              tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::sys.boot_completed never became 1 within 600s"
+          tail -c 3000 /tmp/emu/emulator.log | tr '\n' '~'
+          exit 1
+
+      - name: Run UI journeys
+        run: |
+          cd apps/android
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tail -n 200
 
       - name: Upload Android UI test reports
         if: always()
