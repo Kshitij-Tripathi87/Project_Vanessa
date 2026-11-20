@@ -16,9 +16,10 @@ there.
 | [AGENT_REGISTRY.md](AGENT_REGISTRY.md) | 12 agents, 62 actions, risk and authority | generated from `agentCatalog.ts` |
 | [AGENT_ORCHESTRATION_SPEC.md](AGENT_ORCHESTRATION_SPEC.md) | Supervisor → planner → policy → execution → critic | implemented in `services/orchestrator` |
 | [AGENT_CONTRACTS.md](AGENT_CONTRACTS.md) | Wire schemas, approval binding, proposed envelope | wire contract implemented, envelope not |
-| [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Session/turn contract, generated Kotlin models, reducer parity, current Android context | protocol implemented; neither UI uses the reducer yet |
-| [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Android-first bridge specification and staged rollout | design snapshot; controller and bridge still pending |
-| [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | What each CI signal proves, release gates | gates defined, most unmet |
+| [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Live session/turn contract, generated Kotlin models, reducer parity, current Android integration status | protocol/reducer implemented; Android/desktop controller wiring pending |
+| [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md) | Timeboxed 21–23 Nov execution plan for controller, ASR/typed input, response/TTS and UI integration | execution specification; not implementation evidence |
+| [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Detailed Android-first bridge architecture and original PR #69 design snapshot | historical design snapshot; PR #70 supersedes contract/reducer work |
+| [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | CI evidence, emulator journeys, physical-device and release gates | five existing emulator journeys pass; integrated conversation and physical PC journeys remain open |
 
 ## Reading order for a new contributor
 
