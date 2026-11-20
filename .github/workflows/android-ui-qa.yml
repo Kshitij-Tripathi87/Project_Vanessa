@@ -196,6 +196,14 @@ jobs:
             exit 1
           fi
           echo "::warning::connectedDebugAndroidTest exited 0"
+          results="../app/build/outputs/androidTest-results/connected"
+          if [ ! -d "$results" ]; then
+            # Exit 0 with no results means the task was skipped. Report why here,
+            # where the Gradle output still exists, rather than one step later.
+            why=$(grep -nE "> Task :app:connected|SKIPPED|NO-SOURCE|UP-TO-DATE|Installing|Starting|tests? on|No connected" /tmp/emu/tests.log | tail -c 2200 | tr '\n' '~')
+            echo "::error::connectedDebugAndroidTest wrote no results despite exit 0. Task lines: ${why:-none captured}"
+            exit 1
+          fi
 
       - name: Upload Android UI test reports
         if: always()
