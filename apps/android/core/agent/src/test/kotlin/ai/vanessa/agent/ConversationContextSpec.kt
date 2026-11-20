@@ -15,7 +15,7 @@ import org.junit.Test
  * context can never make an unsafe plan executable.
  */
 class ConversationContextSpec {
-    private val status = """{"tool":"android.device.status","args":{}}"""
+    private val status = """{"steps":[{"tool":"android.device.status","args":{}}]}"""
 
     private fun coordinator(raw: String, calls: MutableList<String> = mutableListOf()) =
         LocalPlanCoordinator(
