@@ -62,8 +62,7 @@ class ConversationControllerSpec {
         val controller = controller()
         val lease = controller.beginCapture()
 
-        val request = controller.publishFinal(lease, "what is on my calendar")
-        assertTrue(request != null)
+        val request = requireNotNull(controller.publishFinal(lease, "what is on my calendar"))
         val user = controller.state.value.turns.single()
         assertEquals(request!!.requestId, user.requestId)
         assertEquals(request.userTurnId, user.turnId)
@@ -108,8 +107,7 @@ class ConversationControllerSpec {
     @Test
     fun typedInputUsesTheSameReceivedAndFinalLifecycle() {
         val controller = controller()
-        val request = controller.submitTyped("check device status")
-        assertTrue(request != null)
+        val request = requireNotNull(controller.submitTyped("check device status"))
 
         val user = controller.state.value.turns.single()
         assertEquals(ConversationTurnRole.USER, user.role)
