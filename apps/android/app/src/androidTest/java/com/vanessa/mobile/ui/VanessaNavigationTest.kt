@@ -56,8 +56,31 @@ class VanessaNavigationTest {
      * rule already covers the permission this build needs.
      */
     private fun enterAssistant() {
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            exists("How can I help?") || exists("Get Started")
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) {
+                exists("How can I help?") || exists("Get Started")
+            }
+        } catch (timeout: Throwable) {
+            // The timeout message is what the CI annotation shows, and artefacts
+            // are not always reachable. Say which screen is actually on display
+            // instead of only that the expected one was not.
+            val markers = listOf(
+                "Initializing Vanessa…",
+                "Checking this device…",
+                "Detecting the installed local model…",
+                "Starting the local model…",
+                "Vanessa is open. Some local features are unavailable.",
+                "Get Started",
+                "Continue",
+                "Not now",
+                "How can I help?",
+                "No local model is active.",
+            ).filter { exists(it) }
+            throw AssertionError(
+                "The assistant never appeared within 60s. Visible markers: " +
+                    (markers.joinToString(", ").ifEmpty { "none of the known screens" }),
+                timeout,
+            )
         }
         // Step through the first-run screens until the composer exists. A
         // single pass over the labels races the recomposition that follows

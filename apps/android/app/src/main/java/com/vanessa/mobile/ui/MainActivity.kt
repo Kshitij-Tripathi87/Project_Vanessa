@@ -326,58 +326,84 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /**
+     * Startup must always finish. Every probe here talks to the platform — the
+     * device profile, app storage, the native runtime — and any of them can throw
+     * on a device the build was not tested against. Previously a single throw left
+     * `startupReady` false, which parks the app on the splash screen forever with
+     * no message and no way forward. A first-run emulator test caught it: five
+     * journeys all timed out waiting for the welcome screen to appear.
+     *
+     * A failed probe is now reported and the app opens with the affected features
+     * unavailable, which is the same contract the rest of the surface follows.
+     */
     private fun initializeRuntime() {
         lifecycleScope.launch {
-            startupMessage = "Checking this device…"
-            val device = withContext(Dispatchers.IO) { profiler.snapshot() }
+            try {
+                startupMessage = "Checking this device…"
+                val device = withContext(Dispatchers.IO) { profiler.snapshot() }
 
-            startupMessage = "Detecting the installed local model…"
-            val model = withContext(Dispatchers.IO) { modelManager.installedModel() }
-            val engine = localInference()
-            inferenceAvailable = engine.isAvailable
-            modelBusy = model != null && engine.isAvailable && !engine.isModelLoaded
+                startupMessage = "Detecting the installed local model…"
+                val model = withContext(Dispatchers.IO) { modelManager.installedModel() }
+                val engine = localInference()
+                inferenceAvailable = engine.isAvailable
+                modelBusy = model != null && engine.isAvailable && !engine.isModelLoaded
 
-            val status: String
-            if (model == null) {
-                modelLoaded = false
-                status = "No valid local GGUF model was found in app storage."
-            } else if (!engine.isAvailable) {
-                modelLoaded = false
-                status = "A local model was detected, but the native inference runtime is unavailable on this device."
-            } else if (engine.isModelLoaded) {
-                modelLoaded = true
-                status = "The installed local model is already loaded."
-            } else {
-                val modelSizeMb = model.bytes / (1024L * 1024L)
-                val requiredRamMb = maxOf(1024L, modelSizeMb + 512L)
-                if (device.ramAvailableMb < requiredRamMb) {
+                val status: String
+                if (model == null) {
                     modelLoaded = false
-                    status = "Model detected. Automatic loading was skipped because available memory is below the safe startup threshold."
+                    status = "No valid local GGUF model was found in app storage."
+                } else if (!engine.isAvailable) {
+                    modelLoaded = false
+                    status = "A local model was detected, but the native inference runtime is unavailable on this device."
+                } else if (engine.isModelLoaded) {
+                    modelLoaded = true
+                    status = "The installed local model is already loaded."
                 } else {
-                    startupMessage = "Starting the local model…"
-                    status = try {
-                        withContext(Dispatchers.IO) { engine.loadModel(File(model.path)) }
-                        modelLoaded = engine.isModelLoaded
-                        if (modelLoaded) "The installed local model was detected and loaded automatically."
-                        else "The model load did not complete. Local inference is unavailable."
-                    } catch (error: Exception) {
+                    val modelSizeMb = model.bytes / (1024L * 1024L)
+                    val requiredRamMb = maxOf(1024L, modelSizeMb + 512L)
+                    if (device.ramAvailableMb < requiredRamMb) {
                         modelLoaded = false
-                        "Model detected, but loading failed: ${error.message ?: "unknown runtime error"}"
+                        status = "Model detected. Automatic loading was skipped because available memory is below the safe startup threshold."
+                    } else {
+                        startupMessage = "Starting the local model…"
+                        status = try {
+                            withContext(Dispatchers.IO) { engine.loadModel(File(model.path)) }
+                            modelLoaded = engine.isModelLoaded
+                            if (modelLoaded) "The installed local model was detected and loaded automatically."
+                            else "The model load did not complete. Local inference is unavailable."
+                        } catch (error: Exception) {
+                            modelLoaded = false
+                            "Model detected, but loading failed: ${error.message ?: "unknown runtime error"}"
+                        }
                     }
                 }
-            }
 
-            installedModel = model
-            modelStatus = status
-            modelBusy = false
-            inferenceAvailable = engine.isAvailable
-            profile = device.copy(
-                inferenceRuntimeInstalled = engine.isAvailable,
-                modelLoadVerified = engine.isModelLoaded,
-            )
-            startupMessage = if (modelLoaded) "Vanessa is ready on this device."
-            else "Vanessa is open. Some local features are unavailable."
-            startupReady = true
+                installedModel = model
+                modelStatus = status
+                modelBusy = false
+                inferenceAvailable = engine.isAvailable
+                profile = device.copy(
+                    inferenceRuntimeInstalled = engine.isAvailable,
+                    modelLoadVerified = engine.isModelLoaded,
+                )
+                startupMessage = if (modelLoaded) "Vanessa is ready on this device."
+                else "Vanessa is open. Some local features are unavailable."
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // Report, do not trap. The surface says what is unavailable.
+                modelLoaded = false
+                modelBusy = false
+                inferenceAvailable = false
+                modelStatus = "The startup check did not finish: " +
+                    (error.message ?: error::class.java.simpleName) +
+                    ". Local features are unavailable until this is resolved."
+                installedModel = null
+                startupMessage = "Vanessa is open. Some local features are unavailable."
+            } finally {
+                startupReady = true
+            }
         }
     }
 
