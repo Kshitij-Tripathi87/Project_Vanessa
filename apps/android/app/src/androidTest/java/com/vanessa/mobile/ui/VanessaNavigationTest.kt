@@ -48,8 +48,18 @@ class VanessaNavigationTest {
         composeRule.onAllNodesWithText(text).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
     }.getOrDefault(false)
 
+    /**
+     * Clicks a label, scrolling it into view first.
+     *
+     * Without the scroll this is a silent no-op on any button that sits below
+     * the fold: the tap is injected at the node's centre, which is outside the
+     * window, so nothing receives it and nothing throws. The first-run walk
+     * spent twelve clicks on an invisible "Not now" before this was noticed.
+     */
     private fun clickText(text: String) {
-        composeRule.onAllNodesWithText(text)[0].performClick()
+        val node = composeRule.onAllNodesWithText(text)[0]
+        runCatching { node.performScrollTo() }
+        node.performClick()
         composeRule.waitForIdle()
     }
 
