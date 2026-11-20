@@ -211,7 +211,11 @@ jobs:
             exit 1
           fi
           echo "::warning::connectedDebugAndroidTest exited 0"
-          results="../app/build/outputs/androidTest-results/connected"
+          # A path relative to this step's working directory, which is the
+          # repository root - not the app module. The previous value escaped the
+          # checkout entirely, so the check reported "no results" on a run whose
+          # five tests had all passed.
+          results="apps/android/app/build/outputs/androidTest-results/connected"
           if [ ! -d "$results" ]; then
             # Exit 0 with no results means the task was skipped. Report why here,
             # where the Gradle output still exists, rather than one step later.
