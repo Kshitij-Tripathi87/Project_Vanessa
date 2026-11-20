@@ -5,9 +5,11 @@ Kotlin reducer exist. The Android and desktop conversation paths do not yet use
 those reducers.** The voice → conversation bridge, a controller, persistence,
 memory retrieval, model routing and task handoff remain unimplemented.
 
-The design and later implementation sequence are in
-[VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md). That document is a
-snapshot of the proposal at PR #69; this page reports the code's present state.
+The three-day implementation sequence is in
+[THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md).
+The detailed [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) remains
+a design snapshot from PR #69, with PR #70's generated Kotlin contract and reducer
+parity now delivered. This page reports the code's present state.
 
 ## Ownership and actual integration
 
