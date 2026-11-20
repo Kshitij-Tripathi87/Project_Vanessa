@@ -113,11 +113,78 @@ step ::= "{\"tool\":\"android.calendar.search\",\"args\":{\"range\":\"today\"}}"
     }
 }
 
+/**
+ * One earlier exchange, as the planner needs it.
+ *
+ * Deliberately small: a boolean for the speaker and the text. The planner does
+ * not need ids, timestamps or task state to resolve "what about tomorrow?" - and
+ * anything it does not need is something that can be wrong.
+ */
+data class ConversationTurn(val fromUser: Boolean, val text: String)
+
+/**
+ * Renders recent conversation for the planner prompt.
+ *
+ * This is the smallest honest step towards multi-turn conversation on the
+ * device. Before it, `run()` saw one request in isolation, so "and tomorrow?"
+ * reached the planner with no referent at all.
+ *
+ * The bounds are the important part. A prompt is built from user- and
+ * model-authored text, and an unbounded transcript would push the planner past
+ * its context window and let one long exchange crowd out the current request.
+ * So: the newest turns survive, each turn is collapsed to one line and
+ * truncated, and the whole block has a ceiling. When it cannot fit, older turns
+ * are dropped rather than truncating the newest - the nearest context is the
+ * context that resolves the reference.
+ *
+ * The responder in [LocalPlanCoordinator.respond] deliberately does not receive
+ * this. Its output is a selection of verbatim evidence, never a new claim; giving
+ * it conversation to paraphrase would be a licence to invent.
+ */
+object ConversationContext {
+    /** Turns considered, newest first when trimming. */
+    const val MAX_TURNS = 6
+
+    /** Characters kept per turn after whitespace is collapsed. */
+    const val MAX_TURN_CHARS = 240
+
+    /** Ceiling for the rendered block, excluding its heading. */
+    const val MAX_CHARS = 1200
+
+    fun render(turns: List<ConversationTurn>): String {
+        val usable = turns.filter { it.text.isNotBlank() }.takeLast(MAX_TURNS)
+        if (usable.isEmpty()) return ""
+        val kept = ArrayDeque<String>()
+        var budget = MAX_CHARS
+        for (turn in usable.asReversed()) {
+            val line = line(turn)
+            if (line.length > budget) break
+            kept.addFirst(line)
+            budget -= line.length + 1
+        }
+        return kept.joinToString("\n")
+    }
+
+    private fun line(turn: ConversationTurn): String {
+        val speaker = if (turn.fromUser) "User" else "Vanessa"
+        val text = turn.text.replace(Regex("\\s+"), " ").trim().take(MAX_TURN_CHARS)
+        return "$speaker: $text"
+    }
+}
+
 class LocalPlanCoordinator(
     private val inference: LocalInference,
     private val executor: LocalToolExecutor,
 ) {
-    suspend fun run(prompt: String): LocalPlanOutcome {
+    /**
+     * Plans [prompt] with [context] in view.
+     *
+     * The context is advisory: it changes which of the allowed tools the model
+     * picks for an ambiguous request, and nothing else. It cannot add a tool,
+     * widen a permission or relax validation, because those checks run on the
+     * answer rather than on the question.
+     */
+    suspend fun run(prompt: String, context: List<ConversationTurn> = emptyList()): LocalPlanOutcome {
         if (prompt.isBlank() || prompt.length > LocalPlanValidator.MAX_PROMPT_CHARS) {
             return LocalPlanOutcome.Failure(
                 LocalPlanError.INVALID_PROMPT,
@@ -126,12 +193,7 @@ class LocalPlanCoordinator(
         }
         currentCoroutineContext().ensureActive()
         val raw = try {
-            inference.generateConstrained(
-                "Choose only the allowed local tools for the user's request. Return the exact JSON plan. " +
-                        "Use one or two steps. Do not invent tools, arguments, or permissions. " +
-                        "User request: ${JsonPrimitive(prompt)}",
-                LocalPlanValidator.PLAN_GBNF
-            )
+            inference.generateConstrained(plannerPrompt(prompt, context), LocalPlanValidator.PLAN_GBNF)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -182,6 +244,22 @@ class LocalPlanCoordinator(
         }
         currentCoroutineContext().ensureActive()
         return LocalPlanOutcome.Success(results.toList())
+    }
+
+    /**
+     * The planner prompt. Kept as one function so the prompt has exactly one
+     * definition and the tests can inspect it directly.
+     */
+    internal fun plannerPrompt(prompt: String, context: List<ConversationTurn>): String {
+        val conversation = ConversationContext.render(context)
+        val base = "Choose only the allowed local tools for the user's request. Return the exact JSON plan. " +
+            "Use one or two steps. Do not invent tools, arguments, or permissions. "
+        return if (conversation.isEmpty()) {
+            base + "User request: ${JsonPrimitive(prompt)}"
+        } else {
+            base + "Recent conversation, oldest first, for resolving references: " +
+                JsonPrimitive(conversation) + ". User request: ${JsonPrimitive(prompt)}"
+        }
     }
 
     // Model output is treated as a selection of verbatim evidence, never as a new factual claim.

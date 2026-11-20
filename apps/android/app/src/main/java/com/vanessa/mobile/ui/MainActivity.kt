@@ -1,5 +1,6 @@
 package com.vanessa.mobile.ui
 
+import ai.vanessa.agent.ConversationTurn
 import ai.vanessa.agent.LocalPlanCoordinator
 import ai.vanessa.agent.LocalPlanError
 import ai.vanessa.agent.LocalPlanOutcome
@@ -65,6 +66,12 @@ class MainActivity : ComponentActivity() {
     private var assistantMetrics by mutableStateOf("")
     private var assistantBusy by mutableStateOf(false)
     private var speechStatus by mutableStateOf("Checking offline speech output…")
+
+    /**
+     * The draft of the sentence being spoken. Cleared when a turn ends, so a
+     * stale draft can never be mistaken for the current utterance.
+     */
+    private var voiceDraft by mutableStateOf("")
     private var speechReady by mutableStateOf(false)
     private var speechInputStatus by mutableStateOf("Checking on-device speech support…")
     private var onDeviceSpeechAvailable by mutableStateOf(false)
@@ -204,6 +211,7 @@ class MainActivity : ComponentActivity() {
                     speechReady = speechReady,
                     speechStatus = speechStatus,
                     speechInputStatus = speechInputStatus,
+                    voiceDraft = voiceDraft,
                     onDeviceSpeechAvailable = onDeviceSpeechAvailable,
                     voiceListening = voiceListening,
                     microphonePermissionGranted = microphonePermissionGranted,
@@ -284,11 +292,18 @@ class MainActivity : ComponentActivity() {
                     destination = VanessaDestination.HOME
                     prompt = ""
                     voiceListening = false
+                    voiceDraft = ""
                     runAssistant(transcript)
                 }
             },
+            onPartial = { draft ->
+                runOnUiThread { voiceDraft = draft }
+            },
             onState = { state ->
                 runOnUiThread {
+                    // A stopped or failed recognizer must not leave its last
+                    // draft on screen.
+                    if (!state.contains("Listening", ignoreCase = true)) voiceDraft = ""
                     speechInputStatus = state
                     voiceListening = state.contains("Listening", ignoreCase = true) &&
                         !state.contains("unavailable", ignoreCase = true) &&
@@ -603,6 +618,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (assistantBusy) return
+        // Snapshot the conversation *before* this request joins it: the planner
+        // needs what was said earlier, not the words it is about to be asked to
+        // interpret. Taken here so a retry (which does not record the user turn)
+        // sees the same history as the first attempt.
+        val conversationContext = chatMessages.map { ConversationTurn(it.fromUser, it.text) }
         if (recordUserMessage && chatMessages.lastOrNull()?.let { it.fromUser && it.text == task } != true) {
             appendChatMessage(fromUser = true, text = task)
         }
@@ -640,7 +660,11 @@ class MainActivity : ComponentActivity() {
                     inference = engine,
                     executor = AndroidLocalToolExecutor(profiler, calendarTool),
                 )
-                when (val outcome = withContext(Dispatchers.Default) { coordinator.run(task) }) {
+                when (
+                    val outcome = withContext(Dispatchers.Default) {
+                        coordinator.run(task, conversationContext)
+                    }
+                ) {
                     is LocalPlanOutcome.Success -> {
                         assistantResponse = withContext(Dispatchers.Default) {
                             coordinator.respond(task, outcome.results)
