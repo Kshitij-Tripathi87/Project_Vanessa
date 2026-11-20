@@ -357,12 +357,20 @@ object ConversationResponseChunker {
         var selected: Int? = null
         for (index in start until end) {
             val char = text[index]
-            if (char == '\n' || char == '.' || char == '!' || char == '?') {
-                val next = index + 1
-                if (next - start >= MIN_PREFERRED_BOUNDARY &&
-                    (next == text.length || text[next].isWhitespace())
-                ) selected = next
+            val next = index + 1
+            val candidateEnd = when {
+                char == '\n' -> next
+                char == '.' || char == '!' || char == '?' -> when {
+                    next == text.length -> next
+                    next < end && text[next].isWhitespace() -> next + 1
+                    else -> null
+                }
+                else -> null
             }
+            if (candidateEnd != null &&
+                candidateEnd <= end &&
+                candidateEnd - start >= MIN_PREFERRED_BOUNDARY
+            ) selected = candidateEnd
         }
         return selected
     }
