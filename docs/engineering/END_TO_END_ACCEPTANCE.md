@@ -127,3 +127,33 @@ Before the overall Vanessa application is declared end-to-end complete:
 4. No new dead control or status that the app cannot substantiate.
 5. No unreviewed coupling between conversation interruption and task cancellation.
 6. Documentation is updated when behavior changes; the status page describes code, while plans describe intended work.
+
+
+## Real Windows host acceptance (opt-in)
+
+The deterministic CI integration test uses a fake Core Audio reader. It proves the planner → policy → task runner → Windows agent → evidence/verifier path, but it does not read the runner's actual audio device.
+
+To run the same safe request against a real Windows host, execute from the repository root:
+
+```powershell
+pnpm run test:windows:host-acceptance
+```
+
+This opt-in test fixes only the planner output to the read-only `volume.get` action. The Windows agent uses its real PowerShell/Core Audio implementation and must return a default render device, a volume percentage, mute state and `windows-audio.readback` evidence. It does not change volume or mute state.
+
+Record the Vanessa commit SHA, Windows version, whether a default playback device was present, test outcome and sanitized evidence. Do not record audio, private transcripts, device serials or credentials. A skipped test is not acceptance evidence.
+
+This host test still does **not** prove a multi-step write operation, physical microphone capture, ASR quality, voice interruption or Android-to-PC execution. Those require separate supervised device acceptance.
+
+## One-week acceptance sequence
+
+| Window | Gate | Required evidence |
+|---|---|---|
+| Days 1–2 | Typed Windows request | Real host read-only query, planner correlation, policy decision, Core Audio read-back and verified result |
+| Day 3 | Voice and interruption | Physical microphone permission/capture, final transcript, response playback, barge-in, and proof that the underlying task continues |
+| Day 4 | Android conversation and offline TTS | Physical device typed/ASR turn, explicit Read aloud, Stop reading aloud, replay and lifecycle checks |
+| Day 5 | Android-to-PC | Authenticated pairing, approved safe read-only task, correlated task status and independently checked result |
+| Day 6 | Recovery and regression | Disconnect/reconnect, delayed responses, pending-history retention, cancellation races and full CI |
+| Day 7 | Release candidate | Installer/APK artifacts, checksums, known limitations, acceptance record and go/no-go review |
+
+Do not promote a gate based on compilation or a mocked integration fixture. Each gate requires evidence from the environment named in the table.
