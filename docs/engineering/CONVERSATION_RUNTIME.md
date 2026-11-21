@@ -1,10 +1,13 @@
 # Conversation runtime
 
-**Status: the shared wire contract, TypeScript reducer, generated Kotlin models,
-Kotlin reducer and an in-memory Android-core conversation controller exist.**
-The Android app and desktop conversation paths do not yet use that controller or
-its reducers. The voice → conversation bridge, persistence, memory retrieval,
-model routing and task handoff remain unimplemented.
+**Status as of the Android conversation integration PR:** the shared wire
+contract, TypeScript reducer, generated Kotlin models, Kotlin reducer and
+in-memory Android-core controller exist. Desktop typed conversation and voice
+bridge changes are in open stacked PRs #80 and #81. Android Activity/ASR/UI wiring
+is implemented on the open stacked branch for PR #82; it is not yet merged or
+validated by its required Android CI/emulator runs. Durable conversation
+persistence, memory retrieval, model routing, explicit clarification and task
+handoff remain separate work.
 
 The three-day implementation sequence is in
 [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md).
@@ -19,14 +22,25 @@ playback), agents (capabilities), and orchestrator (planning and task authority)
 The UI should ultimately project conversation state; it must not manufacture
 remote task state or treat stopping speech as task cancellation.
 
-**That conversation integration has not happened yet.** Android currently keeps
-chat history in `chatMessages` and the live speech partial in `voiceDraft` in
-`MainActivity`. The on-device recognizer supplies genuine partials to that draft;
-the final transcript goes to the existing local assistant path. Neither the UI nor
-the recognizer emits the conversation events below. The desktop voice session is
-also disconnected from this contract. The standalone controller in
-`apps/android/core/agent` has not yet been wired to the activity, recognizer,
-planner, playback or remote tasks.
+**Android integration is now implemented on the PR #82 branch, pending
+validation.** `MainActivity` owns one `ConversationController`; it no longer
+stores an independent mutable `chatMessages` list or `voiceDraft` string.
+Chat messages and the live ASR draft are projections of the controller's
+`ConversationState`. Typed input calls `submitTyped`; the on-device recognizer
+uses a capture lease and publishes replacement partials and one final transcript.
+The planner receives only completed prior turns, excluding the current request.
+Assistant output is published after `LocalPlanCoordinator.respond` returns its
+complete response. Calendar-permission retry retains the same request handle.
+
+The Android recognizer now fences late callbacks from a stopped/replaced capture
+generation. The Listening screen distinguishes Finish (request the final
+transcript) from Cancel (invalidate the lease before recognizer teardown).
+Offline TTS remains explicitly user-triggered. PR #82 still needs required
+Android foundation and emulator UI QA to pass before this can be called verified.
+
+Desktop typed conversation and the voice bridge are in PRs #80 and #81, also
+open and unmerged at this status cut. The desktop and Android branches share the
+protocol contract, but they do not yet share one durable cross-device session.
 
 ## Contract and generation
 
@@ -122,12 +136,13 @@ not evidence that the app uses them.
 
 ## Existing Android planner context
 
-`LocalPlanCoordinator.run(prompt, context)` currently gets its bounded context
-from the activity's existing chat list: up to six turns, 240 units each, and
-1,200 units total, dropping oldest turns first. Text is collapsed to one line and
-JSON-escaped. Context is advisory: the existing tool allow-list, permission gates,
-plan validation and evidence-only responder remain unchanged. It is **not yet**
-derived from the conversation reducer.
+`ConversationController.plannerContext(excludingRequestId)` now supplies
+completed historical turns to `LocalPlanCoordinator.run(prompt, context)` on
+the PR #82 branch. The controller excludes the current request and partial ASR
+drafts. The existing LocalPlanCoordinator context renderer still bounds context
+to six turns, 240 units per turn and 1,200 units total, collapses text to one line,
+and JSON-escapes it. Context remains advisory: the existing tool allow-list,
+permission gates, plan validation and evidence-only responder are unchanged.
 
 ## Verification and CI
 
@@ -156,17 +171,19 @@ cd apps/android && ./gradlew :core:protocol:test :core:agent:test
 
 ## Remaining work
 
-The standalone `ConversationController` is implemented and unit-tested without
-microphone or TTS APIs. The next slices wire typed/ASR input, planner context,
-validated assistant output, offline TTS playback and UI projections, then execute
-integrated emulator journeys. Do not remove `chatMessages`/`voiceDraft` or claim a
-single app-level conversation authority until those paths are actually migrated.
+PR #82 wires the Activity, typed composer, on-device ASR, local planner and
+Compose projections to the existing controller. It adds pure projection tests
+and capture-generation fencing. Required Android foundation and emulator QA
+must pass before merge; no physical-device microphone test has yet been recorded.
+The controller remains in-memory and scoped to the Activity instance. Durable
+cross-process history is explicitly outside this integration slice.
 
-Native llama.cpp currently returns completed strings, not token streams. The
-future bridge may publish bounded chunks **after** validating the whole response;
-that is not model-token streaming. Offline TTS currently speaks one complete
-string with explicit Read Aloud; playback progress, queueing and Android barge-in
-are not yet connected. Conversation persistence, Memory Palace retrieval,
-clarification outcomes, task handoff, desktop integration and the end-to-end
+Native llama.cpp still returns completed strings, not model-token streams.
+The controller publishes assistant output only after the complete response has
+been produced and passed to its bounded response publisher; this is not
+incremental model-token streaming. Offline TTS remains a user-triggered complete
+string operation; playback progress, a managed sentence queue and Android
+barge-in are not yet connected. Memory Palace retrieval, explicit clarification,
+task handoff, shared durable desktop/Android sessions, and the full end-to-end
 hear → understand → remember → clarify → plan → act → verify → respond journey
-also remain open.
+remain open.
