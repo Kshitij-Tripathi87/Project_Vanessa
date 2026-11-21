@@ -97,7 +97,7 @@ test("file.search keeps the established filename result shape and includes evide
     assert.deepEqual((result.data as any).matches, ["report-final.md"]);
     assert.equal((result.data as any).bestMatch.name, "report-final.md");
     assert.equal(result.verification?.passed, true);
-    assert.equal(result.evidence.length, 1);
+    assert.equal((result.evidence || []).length, 1);
     assert.equal((result.evidence || [])[0]?.source, await fs.realpath(root));
   });
 });
