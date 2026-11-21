@@ -70,7 +70,6 @@ export class FileAgent implements SpecialistAgent {
     "file_inspection",
     "folder_creation",
     "file_manipulation",
-    "drive_upload",
     "archive_creation",
   ];
   allowedTools = [
@@ -172,13 +171,9 @@ export class FileAgent implements SpecialistAgent {
         const targetDir = await resolveApprovedDirectory(requestedDirectory, "search directory");
         try {
           const entries = await fs.readdir(targetDir, { withFileTypes: true });
-          const matches = entries
-            .filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase()))
-            .map((entry) => ({
-              name: entry.name,
-              path: path.join(targetDir, entry.name),
-              kind: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
-            }));
+          const matchingEntries = entries.filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase()));
+          const matches = matchingEntries.map((entry) => entry.name);
+          const matchPaths = matchingEntries.map((entry) => path.join(targetDir, entry.name));
           const detail = "Listed " + entries.length + " entr(y/ies) in approved directory " + targetDir +
             "; " + matches.length + " matched the requested name filter.";
           return {
@@ -194,11 +189,11 @@ export class FileAgent implements SpecialistAgent {
               confidence: 1,
               data: { entryCount: entries.length, matchCount: matches.length },
             }],
-            artifacts: matches.map((match) => match.path),
+            artifacts: matchPaths,
             data: {
-              fileReferences: matches.map((match) => match.path),
+              fileReferences: matchPaths,
               matches,
-              bestMatch: matches[0] ? { id: matches[0].path, name: matches[0].name, kind: matches[0].kind } : undefined,
+              bestMatch: matches[0] ? { id: matchPaths[0], name: matches[0] } : undefined,
               directory: targetDir,
               verifiedFilesystemResults: { totalEntries: entries.length, totalMatches: matches.length },
             },
