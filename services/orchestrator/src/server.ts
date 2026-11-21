@@ -245,10 +245,17 @@ fastify.post("/api/reject", async (request, reply) => {
 });
 
 fastify.post("/api/cancel", async (_request, reply) => {
-  await orchestrator.cancelAll();
+  const result = await orchestrator.cancelAll();
   return reply.send({
     success: true,
-    message: "Emergency cancellation processed. Inspect task statuses for any termination_unconfirmed operations; their conflicting locks remain held.",
+    ...result,
+    message: result.terminationUnconfirmed > 0
+      ? "Emergency cancellation processed, but one or more process trees could not be verified stopped. Conflicting locks remain held."
+      : result.executionFinished > 0
+        ? "Emergency cancellation processed. Some operations had already finished and will retain their actual results."
+        : result.cancelled > 0
+          ? "Emergency cancellation verified for the reported active tasks."
+          : "No active tasks were available to cancel.",
   });
 });
 

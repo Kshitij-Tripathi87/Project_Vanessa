@@ -342,7 +342,11 @@ async function cancelTaskWithProofInternal(
   }
 }
 
-export async function triggerKillSwitch(): Promise<void> {
+export async function triggerKillSwitch(): Promise<{
+  cancelled: number;
+  executionFinished: number;
+  terminationUnconfirmed: number;
+}> {
   isKillSwitchEngaged = true;
   const checks: Promise<CancellationResolution>[] = [];
   for (const task of activeTasks.values()) {
@@ -366,6 +370,11 @@ export async function triggerKillSwitch(): Promise<void> {
         : "Emergency cancellation completed. Every running managed process was verified stopped; queued tasks were cancelled before execution.",
   });
   if (unconfirmed === 0) isKillSwitchEngaged = false;
+  return {
+    cancelled: results.filter((result) => result === "cancelled").length,
+    executionFinished,
+    terminationUnconfirmed: unconfirmed,
+  };
 }
 
 export function resolveParams(params: Record<string, any>, allTasks: Task[]): Record<string, any> {

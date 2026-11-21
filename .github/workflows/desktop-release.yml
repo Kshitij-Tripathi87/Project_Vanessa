@@ -103,6 +103,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm run test:desktop:layout
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run test:desktop:cancellation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm run test:desktop:microphone
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/remotePcIdentityStore.test.ts
