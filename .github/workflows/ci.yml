@@ -125,6 +125,9 @@ jobs:
       - name: Test Windows action failure handling and verification
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/windowsAgentUiAutomation.test.ts src/tests/windowsControls.test.ts src/tests/windowsUiAutomation.test.ts
 
+      - name: Test filesystem capability boundaries
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/fileAgent.test.ts
+
       - name: Test task outcome and verification semantics
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/taskRunner.result.test.ts
 
