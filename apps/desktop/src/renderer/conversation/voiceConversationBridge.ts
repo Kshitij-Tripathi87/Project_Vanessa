@@ -9,7 +9,10 @@ import { DesktopConversationRuntime, type ConversationRequestHandle } from "./co
 export class DesktopVoiceConversationBridge {
   private readonly requests = new Map<string, ConversationRequestHandle>();
 
-  constructor(private readonly runtime: DesktopConversationRuntime) {}
+  constructor(
+    private readonly runtime: DesktopConversationRuntime,
+    private readonly onPublicationFailure?: (requestId: string, text: string, reason: string) => void,
+  ) {}
 
   acceptFinalTranscript(text: unknown, requestId: unknown): boolean {
     if (typeof text !== "string" || typeof requestId !== "string") return false;
@@ -30,7 +33,12 @@ export class DesktopVoiceConversationBridge {
     const request = this.requests.get(requestId);
     if (!request) return false;
     const completed = this.runtime.completeAssistant(request, response);
-    if (completed) this.requests.delete(requestId);
+    this.requests.delete(requestId);
+    if (!completed) this.onPublicationFailure?.(
+      requestId,
+      response,
+      "The voice response arrived, but bounded conversation history could not accept it. This copy is retained here for recovery.",
+    );
     return completed;
   }
 
@@ -39,14 +47,25 @@ export class DesktopVoiceConversationBridge {
     const request = this.requests.get(requestId);
     if (!request) return false;
     const failed = this.runtime.failAssistant(request, reason);
-    if (failed) this.requests.delete(requestId);
+    this.requests.delete(requestId);
+    if (!failed) this.onPublicationFailure?.(
+      requestId,
+      reason,
+      "The voice failure could not be added to bounded conversation history. This copy is retained here for recovery.",
+    );
     return failed;
   }
 
   failPendingResponses(reason: string): number {
     let failed = 0;
     for (const [requestId, request] of this.requests) {
-      if (this.runtime.failAssistant(request, reason)) failed += 1;
+      const published = this.runtime.failAssistant(request, reason);
+      if (published) failed += 1;
+      else this.onPublicationFailure?.(
+        requestId,
+        reason,
+        "The voice failure could not be added to bounded conversation history. This copy is retained here for recovery.",
+      );
       this.requests.delete(requestId);
     }
     return failed;

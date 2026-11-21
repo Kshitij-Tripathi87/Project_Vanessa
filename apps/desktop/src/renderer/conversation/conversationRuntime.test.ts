@@ -182,3 +182,28 @@ test("interrupting assistant speech leaves an explicit interrupted turn and rele
   assert.equal(runtime.plannerContext().length, 1);
   assert.equal(runtime.plannerContext()[0].content, "Find my next meeting");
 });
+
+
+test("in-flight requests are retained and block admission from evicting their user turns", () => {
+  const fixture = makeRuntime();
+  const requests = [];
+  for (let index = 0; index < 200; index += 1) {
+    const request = fixture.runtime.submitTyped("Question " + index);
+    assert.ok(request);
+    requests.push(request);
+  }
+
+  const oldestTurnId = fixture.state.turns[0].turnId;
+  assert.equal(fixture.runtime.submitTyped("Overflow request"), null);
+  assert.equal(fixture.state.turns[0].turnId, oldestTurnId);
+
+  // The response cannot be appended without evicting its own originating turn.
+  // The caller must surface it through the recovery channel instead.
+  assert.equal(fixture.runtime.completeAssistant(requests[0], "Recovered answer"), false);
+  assert.equal(fixture.state.turns[0].turnId, oldestTurnId);
+
+  // Once the response has arrived, the request is no longer in-flight and a
+  // later admission may evict the now-terminal oldest turn.
+  assert.ok(fixture.runtime.submitTyped("Next request"));
+  assert.notEqual(fixture.state.turns[0].turnId, oldestTurnId);
+});

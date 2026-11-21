@@ -133,7 +133,10 @@ export class DesktopConversationRuntime {
    */
   completeAssistant(request: ConversationRequestHandle, responseText: string): boolean {
     const assistantTurnId = this.beginAssistantTurn(request);
-    if (!assistantTurnId) return false;
+    if (!assistantTurnId) {
+      this.activeRequests.delete(request.requestId);
+      return false;
+    }
 
     const content = responseText.trim();
     if (!content || content.length > MAX_TURN_CONTENT) {
@@ -174,7 +177,10 @@ export class DesktopConversationRuntime {
     reason: "barge_in" | "user_cancel" = "user_cancel",
   ): boolean {
     const assistantTurnId = this.beginAssistantTurn(request);
-    if (!assistantTurnId) return false;
+    if (!assistantTurnId) {
+      this.activeRequests.delete(request.requestId);
+      return false;
+    }
     const interrupted = this.dispatch({
       type: "turn.interrupted",
       conversationId: this.currentState.conversationId,
@@ -188,7 +194,10 @@ export class DesktopConversationRuntime {
   /** Adds an explicit failed assistant turn without inventing a task result. */
   failAssistant(request: ConversationRequestHandle, reason: string): boolean {
     const assistantTurnId = this.beginAssistantTurn(request);
-    if (!assistantTurnId) return false;
+    if (!assistantTurnId) {
+      this.activeRequests.delete(request.requestId);
+      return false;
+    }
     const safeReason = reason.trim().slice(0, 300) || "The assistant response failed.";
     const failed = this.dispatch({
       type: "turn.failed",
@@ -227,6 +236,18 @@ export class DesktopConversationRuntime {
 
   private beginAssistantTurn(request: ConversationRequestHandle): string | null {
     if (request.conversationId !== this.currentState.conversationId) return null;
+    // The reducer evicts the oldest turn when a new turn arrives. Preserve an
+    // in-flight request and its originating user turn instead of losing context.
+    const turns = this.currentState.turns;
+    if (turns.length >= MAX_CONVERSATION_TURNS) {
+      const oldest = turns[0];
+      if (
+        !oldest ||
+        !isTerminalTurnStatus(oldest.status) ||
+        oldest.turnId === request.userTurnId ||
+        this.activeRequests.has(oldest.requestId)
+      ) return null;
+    }
     const userTurn = this.currentState.turns.find((turn) =>
       turn.turnId === request.userTurnId &&
       turn.requestId === request.requestId &&
@@ -253,8 +274,9 @@ export class DesktopConversationRuntime {
 
   private canReceiveTurn(): boolean {
     const turns = this.currentState.turns;
-    return turns.length < MAX_CONVERSATION_TURNS ||
-      (turns.length > 0 && isTerminalTurnStatus(turns[0].status));
+    if (turns.length < MAX_CONVERSATION_TURNS) return true;
+    const oldest = turns[0];
+    return Boolean(oldest && isTerminalTurnStatus(oldest.status) && !this.activeRequests.has(oldest.requestId));
   }
 
   private dispatch(event: ConversationEvent): boolean {

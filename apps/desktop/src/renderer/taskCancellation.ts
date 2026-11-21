@@ -9,6 +9,7 @@ export type TaskCancellationResult = {
 };
 
 export type TaskCancellationStage =
+  | "cancelling"
   | "cancelled"
   | "verifying"
   | "termination_unconfirmed"
@@ -82,15 +83,22 @@ export function presentTaskCancellation(
 
   const planningOnly = result.planningOnly === true ||
     (typeof result.planningOnly === "number" && result.planningOnly > 0);
-  if (cancelled > 0 || planningOnly) {
+  if (planningOnly) {
     return {
       stage: "cancelled",
-      message: planningOnly
-        ? (typeof result.planningOnly === "number" ? result.planningOnly + " request(s)" : "The request") +
-          " was cancelled during planning. Late planner results cannot start work."
-        : cancelled + " operation(s) were confirmed cancelled by the process supervisor.",
+      message: (typeof result.planningOnly === "number" ? result.planningOnly + " request(s)" : "The request") +
+        " was cancelled during planning. Late planner results cannot start work.",
       clearApproval: true,
       clearRequest: true,
+    };
+  }
+
+  if (cancelled > 0) {
+    return {
+      stage: "cancelling",
+      message: cancelled + " operation(s) were confirmed cancelled. Waiting for the overall plan outcome.",
+      clearApproval: true,
+      clearRequest: false,
     };
   }
 

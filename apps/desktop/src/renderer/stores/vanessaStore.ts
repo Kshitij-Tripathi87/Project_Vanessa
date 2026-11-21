@@ -3,6 +3,13 @@ import type { ConversationState } from "@vanessa/protocol/conversation";
 import { initialConversationState } from "@vanessa/protocol/conversation";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
+export interface ConversationRecoveryItem {
+  requestId: string;
+  text: string;
+  reason: string;
+  createdAt: number;
+}
+
 export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
 export type TaskStage = "idle" | "accepted" | "planning" | "executing" | "verifying" | "cancelling" | "termination_unconfirmed" | "completed" | "partial" | "failed" | "cancelled";
 
@@ -20,6 +27,7 @@ interface VanessaState {
   currentTaskId: string | null;
   progressMessage: string;
   conversationState: ConversationState;
+  conversationRecovery: ConversationRecoveryItem[];
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -34,6 +42,8 @@ interface VanessaState {
   setCurrentRequestId: (requestId: string | null) => void;
   setCurrentTaskId: (taskId: string | null) => void;
   setConversationState: (state: ConversationState) => void;
+  addConversationRecovery: (item: ConversationRecoveryItem) => void;
+  dismissConversationRecovery: (requestId: string) => void;
 }
 
 export const useVanessaStore = create<VanessaState>((set) => ({
@@ -50,6 +60,7 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   currentTaskId: null,
   progressMessage: "Ready when you are.",
   conversationState: initialConversationState(globalThis.crypto.randomUUID()),
+  conversationRecovery: [],
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),
@@ -84,4 +95,13 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
   setConversationState: (conversationState) => set({ conversationState }),
+  addConversationRecovery: (item) => set((state) => ({
+    conversationRecovery: [
+      ...state.conversationRecovery.filter((existing) => existing.requestId !== item.requestId),
+      { ...item, text: item.text.slice(0, 4000), reason: item.reason.slice(0, 240) },
+    ].slice(-5),
+  })),
+  dismissConversationRecovery: (requestId) => set((state) => ({
+    conversationRecovery: state.conversationRecovery.filter((item) => item.requestId !== requestId),
+  })),
 }));

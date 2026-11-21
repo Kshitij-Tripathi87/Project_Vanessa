@@ -3,7 +3,7 @@ import type { ConversationState } from "@vanessa/protocol/conversation";
 import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, VolumeX, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
-import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
+import type { ConversationRecoveryItem, TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
 
 type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -35,6 +35,8 @@ interface CompactAssistantProps {
   currentRequestId: string | null;
   currentTaskId: string | null;
   conversationState: ConversationState;
+  conversationRecovery: ConversationRecoveryItem[];
+  onDismissConversationRecovery: (requestId: string) => void;
   onOrbClick: () => void;
   onExpand: () => void;
   onCollapse: () => void;
@@ -95,6 +97,8 @@ export function CompactAssistant({
   currentRequestId,
   currentTaskId,
   conversationState,
+  conversationRecovery,
+  onDismissConversationRecovery,
   onOrbClick,
   onExpand,
   onCollapse,
@@ -313,6 +317,25 @@ export function CompactAssistant({
                 New messages · Jump to latest
               </button>
             )}
+          </section>
+        )}
+
+        {conversationRecovery.length > 0 && (
+          <section className="conversation-panel" aria-label="Responses awaiting history recovery">
+            <div className="conversation-heading">
+              <span>Response recovery</span>
+              <span>{conversationRecovery.length} saved</span>
+            </div>
+            {conversationRecovery.map((item) => (
+              <article className="conversation-message message-assistant message-failed" key={item.requestId}>
+                <span className="conversation-speaker">Request {item.requestId}</span>
+                <p>{item.text}</p>
+                <span className="conversation-state">{item.reason}</span>
+                <button className="conversation-latest no-drag" onClick={() => onDismissConversationRecovery(item.requestId)}>
+                  Dismiss recovery copy
+                </button>
+              </article>
+            ))}
           </section>
         )}
 
