@@ -353,6 +353,10 @@ export function engageKillSwitch(): void {
   isKillSwitchEngaged = true;
 }
 
+export function isKillSwitchActive(): boolean {
+  return isKillSwitchEngaged;
+}
+
 export async function triggerKillSwitch(
   excludedTaskIds: ReadonlySet<string> = new Set<string>(),
   previous: Partial<KillSwitchSummary> = {},

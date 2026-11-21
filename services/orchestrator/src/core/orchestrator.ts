@@ -16,6 +16,7 @@ import {
   triggerKillSwitch,
   cancelTaskWithProof,
   engageKillSwitch,
+  isKillSwitchActive,
   type CancellationResolution,
   type KillSwitchSummary,
 } from "./taskRunner.js";
@@ -97,6 +98,28 @@ export class VanessaOrchestrator {
     const requestId = payload.requestId!;
     const existing = this.requests.get(requestId);
     if (existing) return this.executeAcceptedCommand(payload, existing);
+    if (isKillSwitchActive()) {
+      const blocked: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "Emergency stop is active. Vanessa is not accepting new work until all managed operations are resolved.",
+        verification: {
+          verified: false,
+          postconditions: ["The request was rejected while the emergency kill switch was engaged."],
+          outcome: "blocked",
+          details: "No plan was created and no task was started.",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: "request-blocked-during-kill-switch-" + requestId,
+        timestamp: Date.now(),
+        agent: "orchestrator",
+        action: "request.blocked_by_kill_switch",
+        status: "blocked",
+        details: "A new request was rejected while emergency cancellation was active.",
+      });
+      return blocked;
+    }
     if (this.requests.size >= 1000) throw new Error("Too many recent requests; try again later.");
     const request = { controller: new AbortController(), updatedAt: Date.now() };
     this.requests.set(requestId, request);
