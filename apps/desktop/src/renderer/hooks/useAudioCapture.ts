@@ -812,7 +812,8 @@ export function useAudioCapture() {
     pendingBargeAudioRef.current = [];
     preRollRef.current = [];
     bargeResumePendingRef.current = false;
-    activeTextOnlyRequestRef.current = null;
+    // Keep the in-flight request correlation until the orchestrator returns
+    // its actual terminal outcome after task cancellation.
     playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
