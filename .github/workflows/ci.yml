@@ -137,6 +137,9 @@ jobs:
       - name: Test read-only Windows execution vertical slice
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/windowsReadOnlyExecution.integration.test.ts
 
+      - name: Compile opt-in real Windows host acceptance test (skipped on non-Windows hosts)
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/windowsReadOnlyExecution.hostAcceptance.test.ts
+
       - name: Test reviewed agent catalog
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
 

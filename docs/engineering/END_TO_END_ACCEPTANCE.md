@@ -139,7 +139,7 @@ To run the same safe request against a real Windows host, execute from the repos
 pnpm run test:windows:host-acceptance
 ```
 
-This opt-in test fixes only the planner output to the read-only `volume.get` action. The Windows agent uses its real PowerShell/Core Audio implementation and must return a default render device, a volume percentage, mute state and `windows-audio.readback` evidence. It does not change volume or mute state.
+This opt-in test fixes only the planner output to a two-step read-only plan: `ui.inspect` followed by `volume.get`. The Windows agent must inspect bounded foreground-window metadata without reading input values, then use its real PowerShell/Core Audio implementation to return a default render device, volume percentage, mute state and `windows-audio.readback` evidence. It does not click controls or change volume/mute state.
 
 Record the Vanessa commit SHA, Windows version, whether a default playback device was present, test outcome and sanitized evidence. Do not record audio, private transcripts, device serials or credentials. A skipped test is not acceptance evidence.
 
