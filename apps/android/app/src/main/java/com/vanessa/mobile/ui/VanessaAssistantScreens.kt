@@ -70,9 +70,10 @@ import com.vanessa.mobile.ui.components.NeonSecondaryButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.ui.theme.VanessaType
+import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 
 internal data class VanessaChatMessage(
-    val id: Long,
+    val id: String,
     val fromUser: Boolean,
     val text: String,
 )
@@ -100,10 +101,12 @@ internal fun ChatScreen(
     response: String,
     metrics: String,
     speechReady: Boolean,
+    speechPlaybackStatus: OfflineTtsPlaybackStatus,
     onPromptChange: (String) -> Unit,
     onSend: () -> Unit,
     onListen: () -> Unit,
     onSpeakResponse: () -> Unit,
+    onStopSpeechOutput: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -263,8 +266,19 @@ internal fun ChatScreen(
                                                 Spacer(Modifier.weight(1f))
                                             }
                                             if (speechReady) {
-                                                IconButton(onClick = onSpeakResponse, modifier = Modifier.size(34.dp)) {
-                                                    Icon(Icons.Outlined.VolumeUp, contentDescription = "Read response aloud", tint = VanessaPalette.TextSecondary, modifier = Modifier.size(18.dp))
+                                                val playbackActive =
+                                                    speechPlaybackStatus == OfflineTtsPlaybackStatus.STARTING ||
+                                                        speechPlaybackStatus == OfflineTtsPlaybackStatus.SPEAKING
+                                                IconButton(
+                                                    onClick = if (playbackActive) onStopSpeechOutput else onSpeakResponse,
+                                                    modifier = Modifier.size(34.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (playbackActive) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
+                                                        contentDescription = if (playbackActive) "Stop reading aloud" else "Read response aloud",
+                                                        tint = if (playbackActive) VanessaPalette.Cyan else VanessaPalette.TextSecondary,
+                                                        modifier = Modifier.size(18.dp),
+                                                    )
                                                 }
                                             }
                                         }
@@ -292,6 +306,10 @@ internal fun ChatScreen(
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), color = VanessaPalette.Cyan, strokeWidth = 2.dp)
                         }
                     }
+                }
+
+                if (response.startsWith("Vanessa needs calendar access")) {
+                    InlineNotice(response, NoticeTone.INFO)
                 }
 
                 if (!modelLoaded) {
@@ -453,6 +471,7 @@ internal fun ListeningScreen(
     /** Live draft of the current utterance. Empty while nothing is being heard. */
     draft: String,
     onStop: () -> Unit,
+    onCancel: () -> Unit,
     onClose: () -> Unit,
     onTypeInstead: () -> Unit,
 ) {
@@ -479,7 +498,7 @@ internal fun ListeningScreen(
                     icon = Icons.Outlined.Close,
                     contentDescription = "Close voice input",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onClose()
                     },
                     diameter = 44.dp,
@@ -514,7 +533,7 @@ internal fun ListeningScreen(
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 NeonIconButton(
                     icon = Icons.Outlined.Stop,
-                    contentDescription = "Stop listening",
+                    contentDescription = "Finish listening",
                     onClick = onStop,
                     diameter = 66.dp,
                     highlighted = true,
@@ -551,7 +570,7 @@ internal fun ListeningScreen(
                 NeonSecondaryButton(
                     text = if (speechAvailable) "Type instead" else "Type your request instead",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onTypeInstead()
                     },
                     modifier = Modifier.fillMaxWidth(),
