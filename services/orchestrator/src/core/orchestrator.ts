@@ -15,7 +15,10 @@ import {
   runPlan,
   triggerKillSwitch,
   cancelTaskWithProof,
+  engageKillSwitch,
+  isKillSwitchActive,
   type CancellationResolution,
+  type KillSwitchSummary,
 } from "./taskRunner.js";
 import { eventBus } from "./eventBus.js";
 import { memoryPalace } from "../memory/memoryPalace.js";
@@ -95,6 +98,28 @@ export class VanessaOrchestrator {
     const requestId = payload.requestId!;
     const existing = this.requests.get(requestId);
     if (existing) return this.executeAcceptedCommand(payload, existing);
+    if (isKillSwitchActive()) {
+      const blocked: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "Emergency stop is active. Vanessa is not accepting new work until all managed operations are resolved.",
+        verification: {
+          verified: false,
+          postconditions: ["The request was rejected while the emergency kill switch was engaged."],
+          outcome: "blocked",
+          details: "No plan was created and no task was started.",
+        },
+      };
+      eventBus.emitEvent("audit:log", {
+        id: "request-blocked-during-kill-switch-" + requestId,
+        timestamp: Date.now(),
+        agent: "orchestrator",
+        action: "request.blocked_by_kill_switch",
+        status: "blocked",
+        details: "A new request was rejected while emergency cancellation was active.",
+      });
+      return blocked;
+    }
     if (this.requests.size >= 1000) throw new Error("Too many recent requests; try again later.");
     const request = { controller: new AbortController(), updatedAt: Date.now() };
     this.requests.set(requestId, request);
@@ -210,9 +235,38 @@ export class VanessaOrchestrator {
       return result;
     }
 
-    // 2. Execute plan through parallel DAG task runner
+    // 2. A cancellation can overtake planning. A late planner response is not
+    // permission to start work: mark the proposed tasks cancelled and return
+    // without entering runPlan.
     request.plan = plan;
-    if (request.controller.signal.aborted) await this.cancelRequest(requestId!);
+    if (request.controller.signal.aborted) {
+      const cancellation = await this.cancelRequest(requestId!);
+      const result: ExecuteCommandResult = {
+        status: "failed",
+        requestId,
+        spokenSummary: "Request cancelled during planning. No tasks were started.",
+        verification: {
+          verified: false,
+          postconditions: [
+            "The request was cancelled before task execution.",
+            cancellation.cancelled + " proposed task(s) were prevented from starting.",
+            cancellation.terminationUnconfirmed + " process termination(s) remain unconfirmed.",
+          ],
+          outcome: "cancelled",
+          details: "The planner returned after cancellation; runPlan was not invoked.",
+        },
+      };
+      if (idempotencyKey) memoryPalace.completeIdempotentCommand(idempotencyKey, "failed", result);
+      eventBus.emitEvent("audit:log", {
+        id: "request-cancelled-during-planning-" + requestId,
+        timestamp: Date.now(),
+        agent: "orchestrator",
+        action: "request.cancelled_during_planning",
+        status: "cancelled",
+        details: "A late planner result was discarded before runPlan could start any task.",
+      });
+      return result;
+    }
     const tasks = await runPlan(plan);
     plan.tasks = tasks;
 
@@ -286,8 +340,30 @@ export class VanessaOrchestrator {
     return rejectTaskRunner(taskId);
   }
 
-  cancelAll(): Promise<void> {
-    return triggerKillSwitch();
+  async cancelAll(): Promise<KillSwitchSummary> {
+    // Fence new work before awaiting process cancellation. Requests whose planner
+    // is still running receive an abort signal and cannot later enter runPlan.
+    engageKillSwitch();
+    const activeRequests = [...this.requests.entries()]
+      .filter(([, request]) => !request.controller.signal.aborted);
+    const ownedTaskIds = new Set<string>();
+    for (const [, request] of activeRequests) {
+      for (const task of request.plan?.tasks || []) ownedTaskIds.add(task.id);
+    }
+
+    const requestResults = await Promise.all(
+      activeRequests.map(([requestId]) => this.cancelRequest(requestId)),
+    );
+    const previous: KillSwitchSummary = {
+      cancelled: requestResults.reduce((sum, result) => sum + result.cancelled, 0),
+      executionFinished: requestResults.reduce((sum, result) => sum + result.executionFinished, 0),
+      terminationUnconfirmed: requestResults.reduce((sum, result) => sum + result.terminationUnconfirmed, 0),
+      planningOnly: requestResults.filter((result) => result.planningOnly).length,
+    };
+    // The scoped requests above own these task IDs; pass them as exclusions so
+    // they are not cancelled a second time. The kill switch still handles any
+    // orphan task that has no live parent request.
+    return triggerKillSwitch(ownedTaskIds, previous);
   }
 
   getSystemStatus(): SystemStatus {

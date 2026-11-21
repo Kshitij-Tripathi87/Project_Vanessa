@@ -107,8 +107,16 @@ export function useAudioCapture() {
   const isPlayingQueueRef = useRef<boolean>(false);
   const activeSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const playbackGenerationRef = useRef(0);
+  // Once speech is stopped, ignore later chunks/state for this response. A new
+  // user turn resets this fence; it is independent of orchestrator task state.
+  const suppressSpeechOutputRef = useRef(false);
 
   const playNextInQueue = useCallback(async () => {
+    if (suppressSpeechOutputRef.current) {
+      audioQueueRef.current = [];
+      isPlayingQueueRef.current = false;
+      return;
+    }
     if (isPlayingQueueRef.current || audioQueueRef.current.length === 0) {
       return;
     }
@@ -221,6 +229,7 @@ export function useAudioCapture() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: Date.now() }));
     }
+    suppressSpeechOutputRef.current = false;
     pendingBargeAudioRef.current = preRollRef.current;
     preRollRef.current = [];
     bargeResumePendingRef.current = true;
@@ -317,7 +326,9 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "hud_update") {
-            if (msg.state) setVoiceState(msg.state);
+            if (msg.state && !(suppressSpeechOutputRef.current && ["responding", "speaking"].includes(msg.state))) {
+              setVoiceState(msg.state);
+            }
             if (msg.transcript !== undefined) {
               setPartialTranscript(msg.transcript);
               if (msg.state === "responding" || msg.state === "speaking") {
@@ -331,7 +342,10 @@ export function useAudioCapture() {
           if (msg.type === "state_change") {
             // Synthesis can finish before local playback; do not mark the UI
             // idle or disable barge-in while the audio queue is still playing.
-            if (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0)) setVoiceState(msg.state);
+            const speechStateSuppressed = suppressSpeechOutputRef.current && ["responding", "speaking"].includes(msg.state);
+            if (!speechStateSuppressed && (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0))) {
+              setVoiceState(msg.state);
+            }
             if (msg.state === "listening" && bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
               for (const frame of pendingBargeAudioRef.current) ws.send(frame);
               pendingBargeAudioRef.current = [];
@@ -376,7 +390,7 @@ export function useAudioCapture() {
 
           // Low-latency streaming TTS sentence chunk
           if (msg.type === "tts_chunk") {
-            if (pttActiveRef.current || bargeResumePendingRef.current) return;
+            if (suppressSpeechOutputRef.current || pttActiveRef.current || bargeResumePendingRef.current) return;
             setVoiceState("speaking");
             audioQueueRef.current.push({
               text: msg.text,
@@ -395,11 +409,16 @@ export function useAudioCapture() {
             if (msg.state === "thinking") {
               setVoiceState("thinking");
             } else if (msg.state === "speaking") {
-              setVoiceState("speaking");
               setLastResponse(msg.spokenSummary);
               if (msg.plan) {
                 setActivePlan(msg.plan);
               }
+              if (suppressSpeechOutputRef.current) {
+                // Keep the written response but do not restart playback after Stop speaking.
+                setVoiceState("idle");
+                return;
+              }
+              setVoiceState("speaking");
 
               // Fallback for non-chunked response if queue is empty
               if (audioQueueRef.current.length === 0 && !isPlayingQueueRef.current && msg.spokenSummary) {
@@ -443,6 +462,7 @@ export function useAudioCapture() {
       return false;
     }
 
+    suppressSpeechOutputRef.current = false;
     // If voice is explicitly disabled or still disconnected, keep typing independent of
     // the voice WebSocket and route straight through the trusted desktop IPC/orchestrator.
     const voiceSocketOpen = wsRef.current?.readyState === WebSocket.OPEN;
@@ -487,7 +507,7 @@ export function useAudioCapture() {
             import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
             Boolean(result.spokenSummary?.trim()) &&
             "speechSynthesis" in window;
-          if (canSpeakFallback) {
+          if (canSpeakFallback && !suppressSpeechOutputRef.current) {
             audioQueueRef.current.push({
               text: result.spokenSummary,
               fallbackSpeech: true,
@@ -513,6 +533,7 @@ export function useAudioCapture() {
       return true;
     }
 
+    suppressSpeechOutputRef.current = false;
     const command = {
       type: "transcript_final" as const,
       text,
@@ -820,7 +841,23 @@ export function useAudioCapture() {
   }, []);
   stopCaptureRef.current = stopRecording;
 
+  const stopSpeaking = useCallback(() => {
+    suppressSpeechOutputRef.current = true;
+    playbackGenerationRef.current += 1;
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
+    if (activeSourceNodeRef.current) {
+      try { activeSourceNodeRef.current.stop(); } catch {}
+      activeSourceNodeRef.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (voiceStateRef.current === "speaking" || voiceStateRef.current === "responding") {
+      setVoiceState("idle");
+    }
+  }, [setVoiceState]);
+
   const cancelVoice = useCallback(() => {
+    suppressSpeechOutputRef.current = true;
     pttActiveRef.current = false;
     activatedSocketRef.current = null;
     pendingBargeAudioRef.current = [];
@@ -865,6 +902,8 @@ export function useAudioCapture() {
       // Keep audio local while Vanessa responds so onset detection can support
       // barge-in; PCM is sent to ASR only while PTT is active.
     } else {
+      // A new user turn is allowed to speak even if the previous response was silenced.
+      suppressSpeechOutputRef.current = false;
       // Acquire the microphone only after an explicit PTT action.
       await startRecording();
       if (!mediaStreamRef.current) return;
@@ -917,6 +956,7 @@ export function useAudioCapture() {
     wakeWordActive,
     submitTextCommand,
     cancelVoice,
+    stopSpeaking,
     startRecording,
     stopRecording,
     toggleRecording,

@@ -17,6 +17,10 @@ function stageForStatus(status: string): { stage: TaskStage; message: string } |
       return { stage: "executing", message: "I need your approval before continuing." };
     case "verifying":
       return { stage: "verifying", message: "Checking that the result is real." };
+    case "cancel_requested":
+      return { stage: "cancelling", message: "Cancellation requested; checking process termination." };
+    case "termination_unconfirmed":
+      return { stage: "termination_unconfirmed", message: "Process termination could not be verified. The task remains unresolved." };
     case "success":
     case "succeeded":
       return { stage: "verifying", message: "Step finished. Checking the overall result." };
