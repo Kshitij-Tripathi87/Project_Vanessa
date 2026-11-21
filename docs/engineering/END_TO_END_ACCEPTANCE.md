@@ -1,98 +1,129 @@
 # End-to-end acceptance
 
-**Status:** the gates are defined; most are not met. This file records what a
-green run is allowed to mean, so that no future summary can quietly upgrade
-"compiled" into "works".
+**Status as of 20 November 2026:** PR #70 is merged. The emulator CI gate is now executing instrumented tests. Five existing navigation/basic-flow journeys passed on the PR #70 head. The full voice → conversation journey and the real Android ↔ Windows PC journey remain unverified.
+
+This document distinguishes compilation, JVM tests, emulator navigation, integrated conversation behavior and physical-device acceptance. A green build must never be upgraded into a broader product claim.
 
 ## What each signal proves
 
 | Signal | Proves | Does **not** prove |
 |---|---|---|
-| `build-and-test` | TypeScript/protocol packages typecheck and their unit tests pass | anything about Android |
-| `debug-apk` | The Android app compiles, JVM unit tests pass (including all 59 reducer tests), the verified native APK builds | that any screen renders, that a journey works |
-| `windows-installer` | The Windows installer builds | that the PC side runs a task |
-| `Android emulator user journeys` | — | **currently nothing: this job fails before instrumentation starts** |
-| A reducer unit test | the state machine | the socket, the Activity, or the pixels |
+| `build-and-test` | TypeScript/protocol packages build and their tests pass; generated conversation and legacy protocol artifacts are current; orchestrator/voice-agent checks in this job pass | Android screen behavior or physical-device speech quality |
+| `debug-apk` | Android modules compile, configured JVM tests pass, the development APK builds and the configured approval checks pass | that a complete conversation journey works on a device |
+| `windows-installer` | Windows workspace/installer build and its configured smoke tests pass | that a paired real PC has completed a remote operation from Android |
+| `Android emulator user journeys` | The emulator boots, instrumentation executes and the reported Compose/UI journeys pass | real microphone/voice quality, installed-user-model execution, TTS voice quality or real-PC task execution |
+| Shared TypeScript/Kotlin reducer fixtures | The contract codecs and reducers agree on the shared cases | Android Activity wiring, recognizer callbacks, audio playback or durable state |
+| Controller/unit tests (once implemented) | Controller correlation, event ordering and generation fences under deterministic test conditions | Android platform behavior unless separately exercised through instrumentation |
+| Physical-device acceptance | Only the exact device, model, permissions, ASR/TTS and PC paths exercised in the recorded run | other hardware or untested product capabilities |
 
-## The emulator gate
+## Emulator gate — now operational
 
-`android-ui-qa.yml` runs `reactivecircus/android-emulator-runner` and
-`connectedDebugAndroidTest`, then uploads
-`app/build/reports/androidTests/connected/**`. On `main` that job has failed since
-#62 and the artefact is empty, so **no instrumented test has executed**.
+The earlier statement that the emulator job executed no tests is obsolete.
 
-Required change, in this order:
+PR #70 verification recorded the following successful runs:
 
-1. Classify the failure from the runner log: infrastructure, boot, ADB,
-   installation, or instrumentation. They have different fixes and guessing has
-   already cost several attempts.
-2. Make a missing test report a **failure**, not a warning. A workflow that
-   uploads nothing and calls itself QA is worse than no workflow, because it is
-   cited as evidence.
-3. Require at least one executed test in the XML before the job goes green.
+| Job | Result | Evidence |
+|---|---|---|
+| `build-and-test` | success | [Run 44726068881](https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44726068881) |
+| `debug-apk` | success | [Run 44726068653](https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44726068653) |
+| `Android emulator user journeys` | success | [Run 44726068796](https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44726068796) |
+| `windows-installer` | success | [Run 44726068610](https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44726068610) |
 
-Until 1–3 are done, no PR may claim UI acceptance on the strength of this job.
+The PR #70 description reports **5 instrumented tests executed, 0 failing, from 1 result XML**. The emulator job steps include AVD creation, boot, UI journey execution, report upload and instrumented-result reporting. The PR author also reports that the three applicable post-merge checks on main passed.
 
-### Classification so far
+The result is real emulator evidence, but it is scoped to the tests that were actually present. It does not mean the conversation reducer is wired into Android.
 
-Steps 1–3 are done: the job now fails on a missing or empty report, and its
-annotations state the boundary instead of leaving it to a log.
+### What the five existing instrumented tests cover
 
-What the evidence says, as of the run on `62addadb`:
+The tests are in `apps/android/app/src/androidTest/java/com/vanessa/mobile/ui/VanessaNavigationTest.kt`.
 
-- All setup steps succeed: checkout, JDK 17, SDK, KVM rule, SDK packages, Gradle.
-- The emulator step fails after roughly **2–3 minutes**, well under the 900 s
-  boot ceiling, so this is not a hung boot.
-- At failure time the diagnostic reports **`adb sees 0 device(s); AVDs: none`**.
-  The action may have cleaned up its AVD by then, so this shows the emulator is
-  not running — not *why* it did not start.
-- No `androidTest-results` directory is produced at all, so instrumentation never
-  began.
+| Test | Current evidence | Boundary |
+|---|---|---|
+| `firstRunFlowReachesTheAssistantWithoutClaimingAModel` | First-run route reaches Assistant and reports no active model honestly | Does not run inference |
+| `typedInputIsAcceptedButCannotRunWithoutAModel` | Typed text is accepted, while send/execution remains unavailable without a model | Does not prove successful planner execution |
+| `voiceSurfaceIsReachableAndDismissible` | Voice screen can be opened and closed; test tolerates unavailable on-device recognizer | Does not prove microphone capture or ASR transcript delivery |
+| `settingsIsReachableAndScrollable` | Settings route and scroll regions are reachable | Does not prove model import/load on physical hardware |
+| `pcDashboardKeepsTheRealRemoteControlEntryPoint` | PC dashboard and pairing entry point remain reachable | Does not pair with a real PC or execute a remote task |
 
-The root cause is **not yet identified**: job logs are served from blob storage
-and were not retrievable from the environment that made these changes, so the
-action's own error text has not been read. The next person should open the failed
-step's log (Actions UI, "Run UI journeys on a clean Android emulator") before
-changing any emulator parameter — the current values (API 35, `google_apis`,
-x86_64, swiftshader) are internally consistent, and the last two edits to this
-job were guesses that did not help.
+The emulator gate must continue to fail if:
+- the AVD fails to boot;
+- connected instrumentation does not start;
+- test XML is missing or empty;
+- expected test methods do not execute;
+- a test fails.
 
-Discarded hypotheses, so they are not retried blind:
+An infrastructure failure is not a code pass. A debug APK pass is not an emulator pass. Do not use a skipped or filtered test as proof that the journey ran.
 
-- Not a macOS/HVF problem — this job runs on `ubuntu-latest` with `/dev/kvm`
-  verified by an explicit pre-step.
-- Not a missing emulator package — installing it explicitly in the SDK step
-  changed nothing.
-- Not a boot timeout — the step dies far too quickly.
+## Journey status
 
-## Journey gates
-
-Each journey below needs a recorded artefact (log or screenshots) before it can
-be ticked. See `NAVIGATION_AND_JOURNEYS.md` for what each one involves.
-
-| # | Journey | Gate | Status |
+| # | Journey | Current status | What is still needed |
 |---|---|---|---|
-| 1 | First-time user, including restart persistence | emulator | blocked on the emulator gate |
-| 2 | Local assistant with an installed GGUF | device | not started (P4) |
-| 3 | Remote PC execution: pair → submit → result | device + real PC over Tailscale | not started (P4) |
-| 4 | Protected operation with biometric approval | device with enrolled biometric | not started (P4) |
-| 5 | Interrupted task: disconnect, process death, recovery | device + real PC | reducer covered; socket half not started |
-| 6 | Agent orchestration through the UI | device + orchestrator | no UI exists |
+| 1 | Clean install → first-run flow → Assistant | **PASS (emulator)** | Restart/persistence acceptance remains a separate test |
+| 2 | Typed request with no GGUF | **PASS (emulator, negative path)** | Successful local inference on a device with a supported installed model |
+| 3 | Voice surface reach/dismiss | **PASS (emulator, navigation only)** | Fake-ASR event integration and physical microphone acceptance |
+| 4 | Settings reach/scroll | **PASS (emulator)** | Physical model import/load acceptance |
+| 5 | PC dashboard entry point | **PASS (emulator, navigation only)** | Authenticated pairing with a real Windows PC |
+| 6 | Live ASR partial → final user turn | **NOT YET PROVEN** | ConversationController wiring and instrumented fake-ASR journey |
+| 7 | Typed and voice input share one reducer | **NOT IMPLEMENTED** | PR C and PR E |
+| 8 | Completed prior turns become planner context from reducer state | **NOT IMPLEMENTED** | Controller projection and planner integration |
+| 9 | Validated assistant response → reducer chunks → completion | **NOT IMPLEMENTED** | PR D |
+| 10 | Opt-in offline TTS playback lifecycle | **PARTIAL** | Existing one-string Read Aloud exists; progress queue and callback fencing remain |
+| 11 | Conversation interruption while preserving task authority | **NOT PROVEN END TO END** | Controller and adapter lifecycle tests |
+| 12 | Remote PC pair → submit → approve → result | **NOT STARTED (physical end-to-end)** | Device + real PC + authenticated connection + recorded evidence |
+| 13 | Disconnect/process-death recovery | **PARTIAL** | Reducer/task-state tests exist; full socket/real-device recovery evidence remains |
+| 14 | Full agent orchestration through user-facing Android journey | **NOT PROVEN END TO END** | Real device + orchestrator + permitted action + verification evidence |
 
-## Release blockers, stated plainly
+## Three-day Conversation Runtime milestone
 
-- Physical-device acceptance has not been performed.
-- The emulator job does not execute tests.
-- Visual acceptance (P2) has never been done on any screen; the P0 and P1 work
-  shipped without a single rendered check.
-- Offline TTS, GGUF import and Tailscale pairing have not been exercised on
-  hardware in this phase.
+The implementation target and acceptance breakdown live in [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md).
 
-## Definition of done for a PR in this repository
+For this milestone, the Android conversation journey can be considered complete only when:
+1. ConversationController owns reducer-backed state.
+2. Typed and voice input publish into that controller.
+3. Voice partials update one existing turn and final transcript is accepted once.
+4. Planner context is derived from completed controller turns and excludes the active request.
+5. Assistant output is validated in full before bounded response chunks are published.
+6. Offline TTS remains opt-in and its playback lifecycle is separate from conversation completion.
+7. UI history and draft are projections of reducer state, not duplicate authoritative stores.
+8. New deterministic fake-ASR/TTS and Compose instrumented journeys execute on emulator.
+9. All four required CI jobs pass on the final PR head.
 
-1. `debug-apk` green, and any new state logic has unit tests that fail without the
-   change.
-2. No new dead control, no new status the app cannot substantiate.
-3. Any claim of UI working is backed by a run, not by compilation.
-4. Docs in this directory updated when behaviour changes — the state machine file
-   and the screen inventory in particular.
+This milestone does not complete durable memory, clarification, task handoff, desktop integration, native token streaming or the real-PC physical acceptance journey.
+
+## Physical-device and remote-PC gates
+
+The following remain open even while emulator CI is green:
+
+- Test the installed local GGUF model and actual llama.cpp inference on a representative Android device.
+- Verify the device's on-device speech recognition language pack and microphone lifecycle.
+- Verify that the selected TTS voice is installed, reports no network requirement and speaks correctly on hardware.
+- Test Activity background/foreground, rotation or recreation as applicable, screen lock, permission denial and process teardown.
+- Pair a physical Android device with the real Windows companion over the supported authenticated path.
+- Execute a safe, explicitly approved remote action, observe its task state, interrupt speech without cancelling the task, and verify the result.
+- Disconnect/reconnect and demonstrate task recovery from the real runtime rather than from reducer fixtures alone.
+
+Record device model, Android version, model checksum/version where applicable, app commit SHA, PC commit SHA, test steps, test outcome and sanitized evidence. Do not log audio, private transcript content or credentials.
+
+## Release blockers and truthful reporting
+
+Before the Conversation Runtime milestone is declared complete:
+- the controller and adapter lifecycle tests must pass;
+- the new emulator journeys must be present and executed;
+- the current five navigation journeys must remain green;
+- all required CI jobs must pass on the same final PR head;
+- review comments affecting event ordering, ID pairing, privacy, task cancellation or stale callbacks must be resolved.
+
+Before the overall Vanessa application is declared end-to-end complete:
+- physical-device acceptance is required;
+- the real Android ↔ Windows PC journey is required;
+- agent orchestration, approval and outcome verification must be demonstrated through the actual application;
+- memory, clarification, task handoff and durable supervisor authority must be implemented and tested.
+
+## Definition of done for any PR
+
+1. `debug-apk` is green, and changed state logic has tests that fail when the behavior is removed.
+2. If UI behavior changes, the relevant emulator test actually executes and produces a nonempty report.
+3. A claim about real-device or PC behavior has recorded physical acceptance evidence.
+4. No new dead control or status that the app cannot substantiate.
+5. No unreviewed coupling between conversation interruption and task cancellation.
+6. Documentation is updated when behavior changes; the status page describes code, while plans describe intended work.

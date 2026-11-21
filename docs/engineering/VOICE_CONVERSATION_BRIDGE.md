@@ -1,9 +1,12 @@
 # Voice → Conversation Bridge — Engineering Plan and Implementation Specification
 
-> **Design snapshot:** This proposal describes the baseline at PR #69 and its
-> planned follow-on work. Its status and unchecked lists record the plan as
-> authored, not a live implementation report. See [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md)
-> for current code, verification, and outstanding gaps.
+> **Historical design snapshot:** This proposal describes the pre-PR #70 baseline at PR #69.
+> PR #70 has since delivered the generated Kotlin conversation contract, strict codec,
+> Kotlin reducer and shared conformance fixtures. The remaining implementation sequence
+> is superseded by [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md).
+> The [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) page remains the live source of truth
+> for what is implemented, verified and still open. Checkboxes and status text in this file
+> are preserved as design-history context, not as the current execution tracker.
 
 - **Repository:** `Kshitij-Tripathi87/Project_Vanessa`
 - **Target branch baseline:** `main` at merge commit `103965030139a12d6ec391874e9a64d90014a515` (PR #69)
