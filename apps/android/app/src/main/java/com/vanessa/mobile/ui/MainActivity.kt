@@ -82,11 +82,6 @@ class MainActivity : ComponentActivity() {
     private var assistantBusy by mutableStateOf(false)
     private var speechStatus by mutableStateOf("Checking offline speech output…")
 
-    /**
-     * The draft of the sentence being spoken. Cleared when a turn ends, so a
-     * stale draft can never be mistaken for the current utterance.
-     */
-    private var voiceDraft by mutableStateOf("")
     private var speechReady by mutableStateOf(false)
     private var speechInputStatus by mutableStateOf("Checking on-device speech support…")
     private var onDeviceSpeechAvailable by mutableStateOf(false)
