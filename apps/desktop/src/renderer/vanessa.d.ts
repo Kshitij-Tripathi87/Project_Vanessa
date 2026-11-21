@@ -37,7 +37,7 @@ declare global {
         cancelled?: number;
         executionFinished?: number;
         terminationUnconfirmed?: number;
-        planningOnly?: boolean;
+        planningOnly?: boolean | number;
         message?: string;
         error?: string;
       }>;

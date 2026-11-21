@@ -251,11 +251,13 @@ fastify.post("/api/cancel", async (_request, reply) => {
     ...result,
     message: result.terminationUnconfirmed > 0
       ? "Emergency cancellation processed, but one or more process trees could not be verified stopped. Their conflicting resource locks remain held."
-      : result.executionFinished > 0
-        ? "Emergency cancellation processed. Some operations had already finished and retain their actual result."
-        : result.cancelled > 0
-          ? "Emergency cancellation completed; the affected operations were confirmed stopped."
-          : "No active operations required cancellation.",
+      : result.planningOnly > 0
+        ? result.planningOnly + " request(s) were cancelled during planning; late planner results cannot start work."
+        : result.executionFinished > 0
+          ? "Emergency cancellation processed. Some operations had already finished and retain their actual result."
+          : result.cancelled > 0
+            ? "Emergency cancellation completed; the affected operations were confirmed stopped."
+            : "No active operations required cancellation.",
   });
 });
 

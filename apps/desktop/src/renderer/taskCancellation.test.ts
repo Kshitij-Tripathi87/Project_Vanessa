@@ -32,6 +32,19 @@ test("a cancellation tombstone before planning is safe to clear", () => {
   assert.equal(result.clearRequest, true);
 });
 
+test("global emergency cancellation reports requests stopped during planning", () => {
+  const result = presentTaskCancellation({
+    success: true,
+    cancelled: 0,
+    executionFinished: 0,
+    terminationUnconfirmed: 0,
+    planningOnly: 2,
+  });
+  assert.equal(result.stage, "cancelled");
+  assert.equal(result.clearRequest, true);
+  assert.match(result.message, /2 request\(s\) was cancelled during planning/);
+});
+
 test("already-finished work remains in result verification rather than being relabeled stopped", () => {
   const result = presentTaskCancellation({
     success: true,
