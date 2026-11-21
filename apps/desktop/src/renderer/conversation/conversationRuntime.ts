@@ -168,6 +168,13 @@ export class DesktopConversationRuntime {
 
   private beginAssistantTurn(request: ConversationRequestHandle): string | null {
     if (request.conversationId !== this.currentState.conversationId) return null;
+    // Adding a turn at the reducer's limit drops the oldest turn. Never evict
+    // unfinished work or the user turn that the new response must reference.
+    const turns = this.currentState.turns;
+    if (turns.length >= MAX_CONVERSATION_TURNS) {
+      const oldest = turns[0];
+      if (!oldest || !isTerminalTurnStatus(oldest.status) || oldest.turnId === request.userTurnId) return null;
+    }
     const userTurn = this.currentState.turns.find((turn) =>
       turn.turnId === request.userTurnId &&
       turn.requestId === request.requestId &&
