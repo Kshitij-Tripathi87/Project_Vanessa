@@ -188,7 +188,7 @@ test("sandbox starts the real voice-agent server and completes ASR -> orchestrat
 
     assert.equal(orchestratorBody?.source, "voice");
     assert.equal(orchestratorBody?.command, "report the sandbox voice service status");
-    assert.match(String(orchestratorBody?.requestId), /^voice-[a-f0-9]{32}$/);
+    assert.match(String(orchestratorBody?.requestId), /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(orchestratorBody?.idempotencyKey, "voice:" + orchestratorBody?.requestId);
     assert.deepEqual(
       ttsMessages.map((message) => message.event),

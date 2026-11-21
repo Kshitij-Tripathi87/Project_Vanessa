@@ -294,7 +294,12 @@ export async function createVoiceAgentServer() {
         } else {
           const json = JSON.parse(data.toString());
           console.log(`[Voice] control=${String(json.type).replace(/[^a-z_]/gi, "").slice(0, 40)}`);
-          if (json.type === "activate" || json.type === "reset") {
+          if (json.type === "conversation_context") {
+            const accepted = session.setConversationContext(json.turns);
+            sendJson(socket, accepted
+              ? { type: "conversation_context_ready" }
+              : { type: "conversation_context_rejected", message: "Conversation context was malformed or exceeded its bounds." });
+          } else if (json.type === "activate" || json.type === "reset") {
             accumulator.reset();
             try {
               await session.activateSession(25000);
