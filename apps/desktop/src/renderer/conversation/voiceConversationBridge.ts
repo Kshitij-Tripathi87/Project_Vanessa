@@ -43,6 +43,15 @@ export class DesktopVoiceConversationBridge {
     return failed;
   }
 
+  failPendingResponses(reason: string): number {
+    let failed = 0;
+    for (const [requestId, request] of this.requests) {
+      if (this.runtime.failAssistant(request, reason)) failed += 1;
+      this.requests.delete(requestId);
+    }
+    return failed;
+  }
+
   buildContextFrame(): {
     type: "conversation_context";
     turns: PlannerConversationTurn[];
