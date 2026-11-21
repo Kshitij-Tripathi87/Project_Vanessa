@@ -232,7 +232,7 @@ test("voice final and response HUD events carry the same request ID and bounded 
   assert.ok(submitted[0].conversationContext.length <= 6);
   assert.ok(submitted[0].conversationContext.every((turn) => turn.content.length <= 240));
   assert.ok(submitted[0].conversationContext.some((turn) => turn.content === "What is my next meeting?"));
-  assert.ok(submitted[0].conversationContext.every((turn) => !/\\s{2,}|\\n/.test(turn.content)));
+  assert.ok(submitted[0].conversationContext.every((turn) => !/\s{2,}|\n/.test(turn.content)));
 
   const responding = hudUpdates.find((update) => update.state === "responding");
   assert.ok(responding);
