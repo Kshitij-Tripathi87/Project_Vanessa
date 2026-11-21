@@ -30,6 +30,8 @@ class AndroidOnDeviceSpeechInput(
 ) {
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
+    /** Fences delayed callbacks from a recognizer that has been stopped or replaced. */
+    private var generation: Long = 0L
 
     fun isAvailable(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -40,10 +42,15 @@ class AndroidOnDeviceSpeechInput(
             onState("On-device speech recognition is unavailable on this device. Type your request instead.")
             return false
         }
+
+        // Advance before destroying the prior recognizer. Its listener may still
+        // deliver a queued callback after destroy(); that callback is now stale.
+        generation += 1L
+        val captureGeneration = generation
         return try {
-            stopAndDestroy()
+            destroyRecognizer(cancel = true, invalidateGeneration = false)
             @Suppress("NewApi")
-            createOnDeviceRecognizer()
+            createOnDeviceRecognizer(captureGeneration)
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
@@ -52,35 +59,44 @@ class AndroidOnDeviceSpeechInput(
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
             onState("Listening with the on-device recognizer…")
-            recognizer?.startListening(intent) ?: return false
+            recognizer?.startListening(intent) ?: run {
+                finishGeneration(captureGeneration)
+                return false
+            }
             true
         } catch (error: Exception) {
+            if (generation == captureGeneration) finishGeneration(captureGeneration)
             onState("Could not start offline speech recognition: ${error.message ?: "unknown error"}")
             false
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    private fun createOnDeviceRecognizer() {
+    private fun createOnDeviceRecognizer(captureGeneration: Long) {
         val instance = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
         recognizer = instance
         instance.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = onState("Listening…")
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (isCurrent(captureGeneration)) onState("Listening…")
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() = onState("Processing speech locally…")
+            override fun onEndOfSpeech() {
+                if (isCurrent(captureGeneration)) onState("Processing speech locally…")
+            }
             override fun onError(error: Int) {
+                if (!finishGeneration(captureGeneration)) return
                 onState("Offline speech recognition failed (code ${error}). You can type the request.")
-                destroyRecognizer(cancel = false)
             }
             override fun onResults(results: Bundle?) {
+                if (!isCurrent(captureGeneration)) return
                 val transcript = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     ?.trim()
                     .orEmpty()
-                destroyRecognizer(cancel = false)
+                if (!finishGeneration(captureGeneration)) return
                 if (transcript.isBlank()) {
                     onState("No speech was recognized. Try again or type your request.")
                 } else {
@@ -89,6 +105,7 @@ class AndroidOnDeviceSpeechInput(
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
+                if (!isCurrent(captureGeneration)) return
                 val draft = partialResults
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
@@ -110,9 +127,20 @@ class AndroidOnDeviceSpeechInput(
         stopAndDestroy()
     }
 
+    private fun isCurrent(captureGeneration: Long): Boolean = generation == captureGeneration
+
+    /** Invalidate the generation before platform teardown can emit late callbacks. */
+    private fun finishGeneration(captureGeneration: Long): Boolean {
+        if (!isCurrent(captureGeneration)) return false
+        generation += 1L
+        destroyRecognizer(cancel = false, invalidateGeneration = false)
+        return true
+    }
+
     private fun stopAndDestroy() = destroyRecognizer(cancel = true)
 
-    private fun destroyRecognizer(cancel: Boolean) {
+    private fun destroyRecognizer(cancel: Boolean, invalidateGeneration: Boolean = true) {
+        if (invalidateGeneration) generation += 1L
         val active = recognizer
         recognizer = null
         if (active != null) {
