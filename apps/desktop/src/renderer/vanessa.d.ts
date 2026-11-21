@@ -32,7 +32,15 @@ declare global {
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
       approveTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
-      cancelTask: (requestId?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+      cancelTask: (requestId?: string) => Promise<{
+        success: boolean;
+        cancelled?: number;
+        executionFinished?: number;
+        terminationUnconfirmed?: number;
+        planningOnly?: boolean;
+        message?: string;
+        error?: string;
+      }>;
       getMobileAudit?: (limit?: number) => Promise<Array<{ seq: number; at: number; taskId: string; requestId: string; tool: string; args: string; tier: number; state: string; resultSummary?: string; durationMs?: number }>>;
       onEvent: (callback: (event: VanessaEvent) => void) => () => void;
       onTriggerPTT?: (callback: () => void) => () => void;
