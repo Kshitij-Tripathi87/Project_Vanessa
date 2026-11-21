@@ -291,8 +291,8 @@ export function CompactAssistant({
             <strong>{pendingApproval.action}</strong>
             <p>{pendingApproval.spokenSummary || pendingApproval.acceptanceCriteria?.[0] || "Vanessa is ready to perform this action."}</p>
             <div className="approval-actions no-drag">
-              <button className="button button-primary" onClick={() => onApprove(pendingApproval.id)}><Check size={14} /> Allow</button>
-              <button className="button button-quiet" onClick={() => onReject(pendingApproval.id)}><X size={14} /> Decline</button>
+              <button className="button button-primary" onClick={() => onApprove(pendingApproval.id)} disabled={taskStage === "cancelling" || taskStage === "termination_unconfirmed"}><Check size={14} /> Allow</button>
+              <button className="button button-quiet" onClick={() => onReject(pendingApproval.id)} disabled={taskStage === "cancelling" || taskStage === "termination_unconfirmed"}><X size={14} /> Decline</button>
             </div>
           </div>
         )}
@@ -326,7 +326,7 @@ export function CompactAssistant({
             ? <button className="stop-button" onClick={onStop} disabled={taskStage === "cancelling"}>
                 <CircleStop size={16} /> {taskStage === "cancelling" ? "Cancelling…" : taskStage === "termination_unconfirmed" ? "Retry cancel" : "Cancel task"}
               </button>
-            : <button className="send-button" onClick={onExecute} aria-label="Send request">Send</button>}
+            : <button className="send-button" onClick={onExecute} aria-label="Send request" disabled={voiceBusy}>Send</button>}
         </div>
         <div className="footer-hint">
           <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : wakeWordActive ? "Wake-word listener active · say Hey Vanessa" : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>
