@@ -58,6 +58,19 @@ test("folder.create creates only the requested directory under an approved root"
   });
 });
 
+test("folder.create reports an existing approved folder without modifying its contents", async () => {
+  await withApprovedRoot("vanessa-folder-existing-", async (root) => {
+    const target = path.join(root, "existing");
+    await fs.mkdir(target);
+    await fs.writeFile(path.join(target, "keep.txt"), "keep", "utf8");
+    const result = await new FileAgent().execute("folder.create", { name: "existing", basePath: root });
+    assert.equal(result.success, true);
+    assert.match(result.summary, /already exists/);
+    assert.equal((result.data as any).verifiedFilesystemResults.actualStateChanged, false);
+    assert.deepEqual(await fs.readdir(target), ["keep.txt"]);
+  });
+});
+
 test("folder.create rejects an absolute target outside approved roots before creating it", async () => {
   const approved = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-folder-approved-"));
   const outside = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-folder-outside-"));
@@ -170,6 +183,26 @@ test("file.rename refuses destinations outside approved roots", async () => {
   }
 });
 
+test("file.rename refuses an unapproved source even when the destination is approved", async () => {
+  const approved = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-rename-source-approved-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-rename-source-outside-"));
+  privacyGuard.addAllowedFolder(approved);
+  const source = path.join(outside, "outside.txt");
+  const destination = path.join(approved, "inside.txt");
+  try {
+    await fs.writeFile(source, "private", "utf8");
+    await assert.rejects(
+      () => new FileAgent().execute("file.rename", { oldPath: source, newPath: destination }),
+      /rename source is outside approved filesystem roots/i,
+    );
+    assert.equal(await fs.readFile(source, "utf8"), "private");
+    await assert.rejects(() => fs.stat(destination), { code: "ENOENT" });
+  } finally {
+    await fs.rm(approved, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("file.rename refuses directories rather than using an unverified recursive move", async () => {
   await withApprovedRoot("vanessa-rename-directory-", async (root) => {
     const source = path.join(root, "folder");
@@ -202,6 +235,41 @@ test("file.zip rejects an unapproved source before invoking the archive tool", a
     await fs.rm(approved, { recursive: true, force: true });
     await fs.rm(outside, { recursive: true, force: true });
   }
+});
+
+test("file.zip rejects an unapproved destination before invoking the archive tool", async () => {
+  const approved = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-zip-source-approved-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "vanessa-zip-destination-outside-"));
+  privacyGuard.addAllowedFolder(approved);
+  try {
+    await fs.writeFile(path.join(approved, "source.txt"), "data", "utf8");
+    await assert.rejects(
+      () => new FileAgent().execute("file.zip", {
+        sourceDir: approved,
+        destinationDir: outside,
+        zipName: "archive.zip",
+      }),
+      /archive destination directory is outside approved filesystem roots/i,
+    );
+    assert.deepEqual(await fs.readdir(outside), []);
+  } finally {
+    await fs.rm(approved, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("file.zip rejects archive names that contain path components", async () => {
+  await withApprovedRoot("vanessa-zip-name-", async (root) => {
+    await fs.writeFile(path.join(root, "source.txt"), "data", "utf8");
+    await assert.rejects(
+      () => new FileAgent().execute("file.zip", {
+        sourceDir: root,
+        destinationDir: root,
+        zipName: "../escape.zip",
+      }),
+      /zipName must be a filename, not a path/i,
+    );
+  });
 });
 
 test("legacy Drive actions never fabricate upload or share-link success", async () => {
