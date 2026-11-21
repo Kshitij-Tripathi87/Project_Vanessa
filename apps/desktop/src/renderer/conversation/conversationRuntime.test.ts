@@ -21,26 +21,28 @@ function makeRuntime() {
 }
 
 test("typed submit creates one completed user turn with stable canonical IDs", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   const request = runtime.submitTyped("  What is my default audio device?  ");
   assert.ok(request);
   assert.match(request.requestId, /^[0-9a-f-]{36}$/);
   assert.match(request.userTurnId, /^[0-9a-f-]{36}$/);
-  assert.equal(state.turns.length, 1);
-  assert.equal(state.turns[0].role, "user");
-  assert.equal(state.turns[0].text, "What is my default audio device?");
-  assert.equal(state.turns[0].status, "completed");
-  assert.equal(state.turns[0].requestId, request.requestId);
+  assert.equal(fixture.state.turns.length, 1);
+  assert.equal(fixture.state.turns[0].role, "user");
+  assert.equal(fixture.state.turns[0].text, "What is my default audio device?");
+  assert.equal(fixture.state.turns[0].status, "completed");
+  assert.equal(fixture.state.turns[0].requestId, request.requestId);
 });
 
 test("assistant response shares the request ID and completes through bounded chunks", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   const request = runtime.submitTyped("Summarize this result");
   assert.ok(request);
   const response = "a".repeat(511) + "😀" + "b".repeat(40);
   assert.equal(runtime.completeAssistant(request, response), true);
-  const user = state.turns[0];
-  const assistant = state.turns[1];
+  const user = fixture.state.turns[0];
+  const assistant = fixture.state.turns[1];
   assert.equal(assistant.role, "assistant");
   assert.equal(assistant.requestId, user.requestId);
   assert.equal(assistant.status, "completed");
@@ -49,22 +51,24 @@ test("assistant response shares the request ID and completes through bounded chu
 });
 
 test("duplicate assistant completion cannot manufacture another response turn", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   const request = runtime.submitTyped("One request");
   assert.ok(request);
   assert.equal(runtime.completeAssistant(request, "First response"), true);
   assert.equal(runtime.completeAssistant(request, "Duplicate response"), false);
-  assert.equal(state.turns.filter((turn) => turn.role === "assistant").length, 1);
-  assert.equal(state.turns[1].text, "First response");
+  assert.equal(fixture.state.turns.filter((turn) => turn.role === "assistant").length, 1);
+  assert.equal(fixture.state.turns[1].text, "First response");
 });
 
 test("failed orchestrator response remains an explicit failed assistant turn", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   const request = runtime.submitTyped("Open the report");
   assert.ok(request);
   assert.equal(runtime.failAssistant(request, "The orchestrator is unavailable."), true);
-  assert.equal(state.turns[1].status, "failed");
-  assert.equal(state.turns[1].text, "The orchestrator is unavailable.");
+  assert.equal(fixture.state.turns[1].status, "failed");
+  assert.equal(fixture.state.turns[1].text, "The orchestrator is unavailable.");
 });
 
 test("planner context contains only the six newest completed turns and excludes the current request", () => {
@@ -80,7 +84,7 @@ test("planner context contains only the six newest completed turns and excludes 
   assert.ok(current);
   const context = runtime.plannerContext(current.requestId);
   assert.deepEqual(context.map((turn) => turn.content), [
-    "Answer 6", "Question 7", "Answer 7", "Question 8", "Answer 8",
+    "Question 6", "Answer 6", "Question 7", "Answer 7", "Question 8", "Answer 8",
   ]);
   assert.ok(context.every((turn) => !turn.content.includes("Current request")));
 });
@@ -98,17 +102,19 @@ test("planner context collapses and bounds each turn", () => {
 });
 
 test("blank and over-limit requests do not create transcript turns", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   assert.equal(runtime.submitTyped("   "), null);
   assert.equal(runtime.submitTyped("x".repeat(4001)), null);
-  assert.equal(state.turns.length, 0);
+  assert.equal(fixture.state.turns.length, 0);
 });
 
 test("an over-limit assistant response fails rather than publishing a truncated success", () => {
-  const { runtime, state } = makeRuntime();
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
   const request = runtime.submitTyped("Generate a very long response");
   assert.ok(request);
   assert.equal(runtime.completeAssistant(request, "x".repeat(4001)), true);
-  assert.equal(state.turns[1].status, "failed");
-  assert.match(state.turns[1].text, /exceeded the conversation limit/);
+  assert.equal(fixture.state.turns[1].status, "failed");
+  assert.match(fixture.state.turns[1].text, /exceeded the conversation limit/);
 });
