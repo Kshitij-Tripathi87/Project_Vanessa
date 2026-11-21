@@ -294,6 +294,10 @@ internal fun ChatScreen(
                     }
                 }
 
+                if (response.startsWith("Vanessa needs calendar access")) {
+                    InlineNotice(response, NoticeTone.INFO)
+                }
+
                 if (!modelLoaded) {
                     InlineNotice(
                         if (modelBusy) "The local model is being installed or loaded. Requests will not run until that finishes."
