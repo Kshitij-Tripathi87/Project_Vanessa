@@ -3,6 +3,7 @@ import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal 
 import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 import { DesktopConversationRuntime } from "../conversation/conversationRuntime.js";
+import { DesktopVoiceConversationBridge } from "../conversation/voiceConversationBridge.js";
 
 export interface SentimentData {
   valence: number;
@@ -94,6 +95,10 @@ export function useAudioCapture() {
   const conversationRuntimeRef = useRef<DesktopConversationRuntime | null>(null);
   if (!conversationRuntimeRef.current) {
     conversationRuntimeRef.current = new DesktopConversationRuntime(conversationState, setConversationState);
+  }
+  const voiceConversationBridgeRef = useRef<DesktopVoiceConversationBridge | null>(null);
+  if (!voiceConversationBridgeRef.current && conversationRuntimeRef.current) {
+    voiceConversationBridgeRef.current = new DesktopVoiceConversationBridge(conversationRuntimeRef.current);
   }
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
@@ -245,6 +250,10 @@ export function useAudioCapture() {
   const activateConnectedSocket = useCallback((socket: WebSocket) => {
     if (pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
       bargeResumePendingRef.current = true;
+      // Context arrives before capture activation, so the first recognized
+      // utterance already has the same history as the typed composer.
+      const contextFrame = voiceConversationBridgeRef.current?.buildContextFrame();
+      if (contextFrame) socket.send(JSON.stringify(contextFrame));
       socket.send(JSON.stringify({ type: "activate" }));
       activatedSocketRef.current = socket;
     }
@@ -281,6 +290,8 @@ export function useAudioCapture() {
           const msg = JSON.parse(event.data);
 
           if (msg.type === "session_ready" && msg.providers) {
+            const contextFrame = voiceConversationBridgeRef.current?.buildContextFrame();
+            if (contextFrame) ws.send(JSON.stringify(contextFrame));
             setProviderStatus(msg.providers);
             setWakeWordModeAvailable(msg.wakeWord?.enabled === true && msg.wakeWord?.mode === "local-whisper");
             if (msg.wakeWord?.enabled !== true || msg.wakeWord?.mode !== "local-whisper") {
@@ -301,12 +312,29 @@ export function useAudioCapture() {
             return;
           }
 
+          if (msg.type === "conversation_context_rejected") {
+            setMicError(msg.message || "The voice service rejected conversation context.");
+            return;
+          }
+
           if (msg.type === "hud_update") {
             if (msg.state) setVoiceState(msg.state);
             if (msg.transcript !== undefined) {
-              setPartialTranscript(msg.transcript);
-              if (msg.state === "responding" || msg.state === "speaking") {
+              if (msg.state === "responding" && typeof msg.requestId === "string") {
+                const committed = voiceConversationBridgeRef.current?.completeAssistantResponse(
+                  msg.requestId,
+                  msg.transcript,
+                ) === true;
+                if (committed) {
+                  setPartialTranscript("");
+                  setLastResponse(msg.transcript);
+                }
+              } else if (msg.state === "speaking" || msg.state === "responding") {
+                // Older voice servers may not provide correlation. Keep their
+                // status visible, but never attach an uncorrelated answer to a turn.
                 setLastResponse(msg.transcript);
+              } else {
+                setPartialTranscript(msg.transcript);
               }
             }
             if (msg.plan) setActivePlan(msg.plan);
@@ -351,8 +379,16 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "transcript_final") {
-            setPartialTranscript(msg.text);
-            if (typeof msg.requestId === "string") setCurrentRequestId(msg.requestId);
+            const accepted = voiceConversationBridgeRef.current?.acceptFinalTranscript(
+              msg.text,
+              msg.requestId,
+            ) === true;
+            if (accepted && typeof msg.requestId === "string") {
+              setCurrentRequestId(msg.requestId);
+              setPartialTranscript("");
+            } else {
+              setMicError("The recognized voice turn could not be correlated with this conversation. No transcript was added.");
+            }
             // Fish may commit before PTT release. Stop cloud streaming while
             // retaining local capture for an interruption during TTS playback.
             pttActiveRef.current = false;
@@ -774,6 +810,8 @@ export function useAudioCapture() {
     void startRecording().then(() => {
       const socket = wsRef.current;
       if (mediaStreamRef.current && socket?.readyState === WebSocket.OPEN) {
+        const contextFrame = voiceConversationBridgeRef.current?.buildContextFrame();
+        if (contextFrame) socket.send(JSON.stringify(contextFrame));
         socket.send(JSON.stringify({ type: "enable_wake_word" }));
       } else {
         wakeWordModeRef.current = false;
