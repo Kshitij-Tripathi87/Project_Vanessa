@@ -15,7 +15,13 @@ export class DesktopVoiceConversationBridge {
     if (typeof text !== "string" || typeof requestId !== "string") return false;
     const request = this.runtime.submitVoiceFinal(text, requestId);
     if (!request) return false;
-    this.requests.set(request.requestId, request);
+
+    // A replay after the assistant response is already committed remains
+    // idempotently accepted, but must not recreate a pending-response entry.
+    const hasAssistantTurn = this.runtime.state.turns.some((turn) =>
+      turn.requestId === requestId && turn.role === "assistant"
+    );
+    if (!hasAssistantTurn) this.requests.set(request.requestId, request);
     return true;
   }
 
