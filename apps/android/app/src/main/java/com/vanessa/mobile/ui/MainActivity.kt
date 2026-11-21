@@ -37,8 +37,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import com.vanessa.mobile.ui.theme.VanessaTheme
-import com.vanessa.protocol.conversation.ConversationTurnRole
-import com.vanessa.protocol.conversation.ConversationTurnStatus
 import com.vanessa.protocol.conversation.ConversationTurnSource
 import java.util.UUID
 import kotlinx.coroutines.flow.collect
@@ -70,31 +68,12 @@ class MainActivity : ComponentActivity() {
     private val conversationController = ConversationController(UUID.randomUUID().toString())
     private var conversationState by mutableStateOf(conversationController.state.value)
 
-    /** UI message list is a projection; ConversationController owns the transcript. */
+    /** UI is a projection of reducer state; no parallel transcript/draft is stored here. */
     private val chatMessages: List<VanessaChatMessage>
-        get() = conversationState.turns
-            .filter { turn ->
-                turn.text.isNotBlank() && when (turn.role) {
-                    ConversationTurnRole.USER -> turn.status == ConversationTurnStatus.COMPLETED
-                    ConversationTurnRole.ASSISTANT -> turn.isFinal
-                }
-            }
-            .takeLast(100)
-            .map { turn ->
-                VanessaChatMessage(
-                    id = turn.turnId,
-                    fromUser = turn.role == ConversationTurnRole.USER,
-                    text = turn.text,
-                )
-            }
+        get() = ConversationUiProjection.messages(conversationState)
 
-    /** Live ASR text is projected from the active, non-final reducer turn. */
     private val voiceDraft: String
-        get() = conversationState.turns.lastOrNull { turn ->
-            turn.role == ConversationTurnRole.USER &&
-                !turn.isFinal &&
-                turn.status in setOf(ConversationTurnStatus.RECEIVED, ConversationTurnStatus.PROCESSING)
-        }?.text.orEmpty()
+        get() = ConversationUiProjection.voiceDraft(conversationState)
 
     private var activeCaptureLease: CaptureLease? = null
     private var pendingConversationRequest: ConversationRequestHandle? = null
