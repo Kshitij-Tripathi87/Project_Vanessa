@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import type { ConversationState } from "@vanessa/protocol";
+import { initialConversationState } from "@vanessa/protocol";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
@@ -17,6 +19,7 @@ interface VanessaState {
   currentRequestId: string | null;
   currentTaskId: string | null;
   progressMessage: string;
+  conversationState: ConversationState;
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -30,6 +33,7 @@ interface VanessaState {
   setTaskStage: (stage: TaskStage, message?: string) => void;
   setCurrentRequestId: (requestId: string | null) => void;
   setCurrentTaskId: (taskId: string | null) => void;
+  setConversationState: (state: ConversationState) => void;
 }
 
 export const useVanessaStore = create<VanessaState>((set) => ({
@@ -45,6 +49,7 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   currentRequestId: null,
   currentTaskId: null,
   progressMessage: "Ready when you are.",
+  conversationState: initialConversationState(globalThis.crypto.randomUUID()),
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),
@@ -78,4 +83,5 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   })),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
+  setConversationState: (conversationState) => set({ conversationState }),
 }));
