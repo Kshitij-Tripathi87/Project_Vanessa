@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { initialConversationState } from "@vanessa/protocol";
+import { initialConversationState } from "@vanessa/protocol/conversation";
 import { DesktopConversationRuntime } from "./conversationRuntime.js";
 
 const CONVERSATION_ID = "00000000-0000-4000-8000-000000000001";
