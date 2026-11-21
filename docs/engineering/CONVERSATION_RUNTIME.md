@@ -35,8 +35,16 @@ complete response. Calendar-permission retry retains the same request handle.
 The Android recognizer now fences late callbacks from a stopped/replaced capture
 generation. The Listening screen distinguishes Finish (request the final
 transcript) from Cancel (invalidate the lease before recognizer teardown).
-Offline TTS remains explicitly user-triggered. PR #82 still needs required
-Android foundation and emulator UI QA to pass before this can be called verified.
+Offline TTS remains explicitly user-triggered. PR #82 passed Agent Workflow CI,
+Android foundation, Android emulator QA and Windows Release on its latest
+validated head. The emulator report contained seven executed instrumented tests,
+zero failures and zero skipped cases. No physical-device microphone acceptance
+has been recorded.
+
+PR #83 adds a generation-gated offline TTS playback lifecycle (starting,
+speaking, completed, stopped and error), a response-card Stop-reading control,
+and explicit preemption when a new voice or typed request starts. Its Android
+unit and emulator checks are still pending.
 
 Desktop typed conversation and the voice bridge are in PRs #80 and #81, also
 open and unmerged at this status cut. The desktop and Android branches share the
@@ -182,8 +190,9 @@ Native llama.cpp still returns completed strings, not model-token streams.
 The controller publishes assistant output only after the complete response has
 been produced and passed to its bounded response publisher; this is not
 incremental model-token streaming. Offline TTS remains a user-triggered complete
-string operation; playback progress, a managed sentence queue and Android
-barge-in are not yet connected. Memory Palace retrieval, explicit clarification,
+string operation; playback start/completion/stop/error are now connected in
+stacked PR #83, including stale-callback rejection. A sentence queue, streaming
+model-token synthesis and acoustic Android barge-in are still not connected. Memory Palace retrieval, explicit clarification,
 task handoff, shared durable desktop/Android sessions, and the full end-to-end
 hear → understand → remember → clarify → plan → act → verify → respond journey
 remain open.
