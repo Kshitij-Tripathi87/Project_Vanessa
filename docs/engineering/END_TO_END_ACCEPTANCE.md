@@ -33,9 +33,9 @@ The PR #70 description reports **5 instrumented tests executed, 0 failing, from 
 
 The result is real emulator evidence, but it is scoped to the tests that were actually present. It does not mean the conversation reducer is wired into Android.
 
-### What the five existing instrumented tests cover
+### What the five PR #70 instrumented tests covered
 
-The tests are in `apps/android/app/src/androidTest/java/com/vanessa/mobile/ui/VanessaNavigationTest.kt`.
+Those tests are in `apps/android/app/src/androidTest/java/com/vanessa/mobile/ui/VanessaNavigationTest.kt`. The current suite additionally includes a suggestion/composer regression and `MyPcPairingInputTest` for accessible pasted pairing data. Check the current run's XML-derived results for their outcome rather than extending the historic PR #70 claim.
 
 | Test | Current evidence | Boundary |
 |---|---|---|
@@ -49,8 +49,8 @@ The emulator gate must continue to fail if:
 - the AVD fails to boot;
 - connected instrumentation does not start;
 - test XML is missing or empty;
-- expected test methods do not execute;
-- a test fails.
+- an expected test method does not execute or a case is skipped;
+- result XML is malformed or a test fails.
 
 An infrastructure failure is not a code pass. A debug APK pass is not an emulator pass. Do not use a skipped or filtered test as proof that the journey ran.
 
