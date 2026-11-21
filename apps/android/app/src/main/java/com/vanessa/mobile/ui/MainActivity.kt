@@ -249,6 +249,9 @@ class MainActivity : ComponentActivity() {
                         runAssistant(submitted)
                     },
                     onSpeakRequest = {
+                        // An explicit microphone request preempts read-aloud only.
+                        // It does not cancel any conversation task.
+                        offlineTts?.stop()
                         destination = VanessaDestination.LISTENING
                         requestSpeechInput()
                     },
@@ -730,6 +733,10 @@ class MainActivity : ComponentActivity() {
             assistantResponse = "A conversation turn could not be created. The existing conversation is unchanged."
             return
         }
+
+        // A new user request must not overlap speech from the previous response.
+        // This stops TTS playback only; task execution remains owned by its supervisor.
+        offlineTts?.stop()
 
         if (assistantBusy) {
             assistantResponse = "Vanessa is already completing another request on this device."
