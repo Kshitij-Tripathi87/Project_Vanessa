@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { presentTaskCancellation } from "./taskCancellation.js";
 
-test("confirmed process cancellation is the only ordinary stopped outcome", () => {
+test("confirmed child cancellation remains pending until the overall plan resolves", () => {
   assert.deepEqual(
     presentTaskCancellation({
       success: true,
@@ -12,10 +12,10 @@ test("confirmed process cancellation is the only ordinary stopped outcome", () =
       planningOnly: false,
     }),
     {
-      stage: "cancelled",
-      message: "2 operation(s) were confirmed cancelled by the process supervisor.",
+      stage: "cancelling",
+      message: "2 operation(s) were confirmed cancelled. Waiting for the overall plan outcome.",
       clearApproval: true,
-      clearRequest: true,
+      clearRequest: false,
     },
   );
 });

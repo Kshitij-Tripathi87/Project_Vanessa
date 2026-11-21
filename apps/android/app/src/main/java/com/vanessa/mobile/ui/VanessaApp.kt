@@ -84,6 +84,7 @@ import com.vanessa.mobile.ui.components.NeonIconButton
 import com.vanessa.mobile.ui.components.NeonTextField
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
+import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -117,6 +118,7 @@ internal fun VanessaApp(
     assistantBusy: Boolean,
     speechReady: Boolean,
     speechStatus: String,
+    speechPlaybackStatus: OfflineTtsPlaybackStatus,
     speechInputStatus: String,
     /** Draft of the sentence being spoken, or empty when nothing is being heard. */
     voiceDraft: String,
@@ -131,7 +133,9 @@ internal fun VanessaApp(
     onRunAssistant: () -> Unit,
     onSpeakRequest: () -> Unit,
     onStopSpeech: () -> Unit,
+    onCancelSpeech: () -> Unit,
     onSpeakResponse: () -> Unit,
+    onStopSpeechOutput: () -> Unit,
     onRefresh: () -> Unit,
     onImportModel: (String) -> Unit,
     onStartPairing: () -> Unit,
@@ -182,6 +186,7 @@ internal fun VanessaApp(
                             status = speechInputStatus,
                             draft = voiceDraft,
                             onStop = onStopSpeech,
+                            onCancel = onCancelSpeech,
                             onClose = { onNavigate("HOME") },
                             onTypeInstead = { onNavigate("HOME") },
                         )
@@ -221,10 +226,12 @@ internal fun VanessaApp(
                             response = assistantResponse,
                             metrics = assistantMetrics,
                             speechReady = speechReady,
+                            speechPlaybackStatus = speechPlaybackStatus,
                             onPromptChange = onPromptChange,
                             onSend = onRunAssistant,
                             onListen = onSpeakRequest,
                             onSpeakResponse = onSpeakResponse,
+                            onStopSpeechOutput = onStopSpeechOutput,
                             onNavigate = onNavigate,
                         )
                     }

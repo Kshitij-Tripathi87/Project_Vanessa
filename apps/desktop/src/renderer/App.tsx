@@ -17,6 +17,8 @@ export function App() {
     currentRequestId,
     currentTaskId,
     conversationState,
+    conversationRecovery,
+    dismissConversationRecovery,
     activePlan,
     tasks,
     pendingApproval,
@@ -98,34 +100,35 @@ export function App() {
   }, [setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage]);
 
   const handleStop = useCallback(async () => {
-    const requestId = currentRequestId;
-    // Silence local output and release local PTT capture without deactivating the
-    // voice session; the orchestrator request below is the single task-cancel path.
+    // This control always stops local speech/capture. Task cancellation is a
+    // separate operation and is only sent while a task is actually active.
     stopSpeaking();
     if (!wakeWordActive) stopRecording();
+    const activeStages = ["accepted", "planning", "executing", "verifying", "cancelling", "termination_unconfirmed"];
+    if (!activeStages.includes(taskStage)) return;
 
+    const requestId = currentRequestId;
     if (!requestId) {
-      // Before the server has returned a request ID, the voice session is the only
-      // owner able to fence that not-yet-committed turn. It does not prove process
-      // termination, so keep the UI explicitly unresolved until task events arrive.
-      cancelVoice();
-      const message = "Voice session deactivated, but no request ID was available to verify task cancellation. Check the task timeline.";
-      setTaskStage("termination_unconfirmed", message);
-      setLastResponse(message);
+      setLastResponse("Local audio stopped. No task cancellation was sent because the active request ID is unavailable; task state remains unresolved.");
+      setTaskStage(taskStage, "Task state is unchanged; cancellation was not sent.");
       return;
     }
 
-    setTaskStage("cancelling", "Requesting cancellation and checking process termination…");
+    setTaskStage("cancelling", "Cancellation requested. Waiting for the overall plan outcome.");
+    let result: TaskCancellationResult | null | undefined;
     try {
-      const result = await window.vanessa?.cancelTask?.(requestId);
-      applyCancellationResult(result);
+      result = await window.vanessa?.cancelTask?.(requestId);
     } catch (error) {
-      applyCancellationResult({
+      result = {
         success: false,
         error: error instanceof Error ? error.message : "The cancellation request failed. Execution may still be active.",
-      });
+      };
     }
-  }, [applyCancellationResult, cancelVoice, currentRequestId, setLastResponse, setTaskStage, stopRecording, stopSpeaking, wakeWordActive]);
+
+    const latest = useVanessaStore.getState();
+    if (latest.currentRequestId !== requestId || !activeStages.includes(latest.taskStage)) return;
+    applyCancellationResult(result);
+  }, [applyCancellationResult, currentRequestId, setLastResponse, setTaskStage, stopRecording, stopSpeaking, taskStage, wakeWordActive]);
 
 
 
@@ -209,6 +212,8 @@ export function App() {
       currentRequestId={currentRequestId}
       currentTaskId={currentTaskId}
       conversationState={conversationState}
+      conversationRecovery={conversationRecovery}
+      onDismissConversationRecovery={dismissConversationRecovery}
       onOrbClick={handleOrbClick}
       onExpand={openPanel}
       onCollapse={collapsePanel}

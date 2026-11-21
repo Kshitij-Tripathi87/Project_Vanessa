@@ -70,6 +70,7 @@ export function useAudioCapture() {
     setCurrentRequestId,
     setTaskStage,
     setPendingApproval,
+    addConversationRecovery,
   } = useVanessaStore();
 
   const [isMicActive, setIsMicActive] = useState(false);
@@ -98,7 +99,10 @@ export function useAudioCapture() {
   }
   const voiceConversationBridgeRef = useRef<DesktopVoiceConversationBridge | null>(null);
   if (!voiceConversationBridgeRef.current && conversationRuntimeRef.current) {
-    voiceConversationBridgeRef.current = new DesktopVoiceConversationBridge(conversationRuntimeRef.current);
+    voiceConversationBridgeRef.current = new DesktopVoiceConversationBridge(
+      conversationRuntimeRef.current,
+      (requestId, text, reason) => addConversationRecovery({ requestId, text, reason, createdAt: Date.now() }),
+    );
   }
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
@@ -510,7 +514,12 @@ export function useAudioCapture() {
       .then((result) => {
         if (result.requestId !== requestId) {
           const detail = "The orchestrator response did not match the submitted request. Its result was not attached to this conversation.";
-          conversation.failAssistant(request, detail);
+          const published = conversation.failAssistant(request, detail);
+          if (!published) addConversationRecovery({
+            requestId, text: detail,
+            reason: "The request correlation failure could not be added to bounded conversation history.",
+            createdAt: Date.now(),
+          });
           if (activeTextOnlyRequestRef.current !== requestId) return;
           activeTextOnlyRequestRef.current = null;
           setLastResponse(detail);
@@ -527,7 +536,12 @@ export function useAudioCapture() {
           "The orchestrator returned without an assistant summary.";
         // Append to the originating turn even when a newer request has taken
         // focus. Only update the global task/voice surface for the current one.
-        conversation.completeAssistant(request, responseText);
+        const published = conversation.completeAssistant(request, responseText);
+        if (!published) addConversationRecovery({
+          requestId, text: responseText,
+          reason: "The assistant response arrived, but bounded conversation history could not accept it. This copy is retained here for recovery.",
+          createdAt: Date.now(),
+        });
         if (activeTextOnlyRequestRef.current !== requestId) return;
         activeTextOnlyRequestRef.current = null;
         setLastResponse(responseText);
@@ -566,7 +580,12 @@ export function useAudioCapture() {
       .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : "Unknown connection error";
         const message = `Orchestrator request failed: ${detail}`;
-        conversation.failAssistant(request, message);
+        const published = conversation.failAssistant(request, message);
+        if (!published) addConversationRecovery({
+          requestId, text: message,
+          reason: "The failure response could not be added to bounded conversation history. This copy is retained here for recovery.",
+          createdAt: Date.now(),
+        });
         if (activeTextOnlyRequestRef.current !== requestId) return;
         activeTextOnlyRequestRef.current = null;
         setLastResponse(message);
@@ -575,7 +594,7 @@ export function useAudioCapture() {
         setVoiceState("error");
       });
     return true;
-  }, [playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+  }, [playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState, addConversationRecovery]);
 
   // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
   const testMicrophone = useCallback(async () => {

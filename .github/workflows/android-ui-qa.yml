@@ -11,6 +11,9 @@ on:
     branches:
       - main
       - feat/remote-v2-authenticated-gateway
+      - feat/desktop-shared-conversation-runtime
+      - integration/desktop-voice-conversation
+      - feat/android-shared-conversation-runtime
     paths:
       - 'apps/android/**'
       - '.github/workflows/android-ui-qa.yml'
