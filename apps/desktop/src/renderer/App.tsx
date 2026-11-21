@@ -106,10 +106,15 @@ export function App() {
       response = { success: false, error: error instanceof Error ? error.message : "Cancellation request failed." };
     }
 
+    // Task events may win the race with the HTTP response. Never let a late
+    // cancellation response resurrect a finished task or overwrite a newer one.
+    const latest = useVanessaStore.getState();
+    if (latest.currentRequestId !== requestId || !isActiveTaskStage(latest.taskStage)) return;
+
     const outcome = classifyCancellationResponse(response);
     if (outcome.kind === "request_failed" || outcome.kind === "invalid_response") {
       setLastResponse(outcome.message);
-      setTaskStage(taskStage, "Cancellation was not confirmed. The task state is unchanged.");
+      setTaskStage(latest.taskStage, "Cancellation was not confirmed. The task state is unchanged.");
       return;
     }
 
@@ -131,21 +136,20 @@ export function App() {
     }
 
     const outcome = classifyCancellationResponse(response);
+    const latest = useVanessaStore.getState();
+    if (!isActiveTaskStage(latest.taskStage)) return;
+
     if (outcome.kind === "request_failed" || outcome.kind === "invalid_response") {
       setLastResponse(outcome.message);
-      if (isActiveTaskStage(taskStage)) {
-        setTaskStage(taskStage, "Emergency cancellation was not confirmed. Task state is unchanged.");
-      }
+      setTaskStage(latest.taskStage, "Emergency cancellation was not confirmed. Task state is unchanged.");
       return;
     }
 
-    if (isActiveTaskStage(taskStage)) {
-      setTaskStage(outcome.stage, outcome.message);
-      if (outcome.kind === "termination_unconfirmed") setLastResponse(outcome.message);
-      if (outcome.clearPendingApproval) setPendingApproval(null);
-    } else if (outcome.kind === "termination_unconfirmed" || outcome.kind === "no_active_work") {
+    setTaskStage(outcome.stage, outcome.message);
+    if (outcome.kind === "termination_unconfirmed" || outcome.kind === "no_active_work") {
       setLastResponse(outcome.message);
     }
+    if (outcome.clearPendingApproval) setPendingApproval(null);
   }, [cancelVoice, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
 
   const execute = useCallback((value = command) => {
