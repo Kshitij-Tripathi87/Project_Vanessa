@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { ConversationState } from "@vanessa/protocol";
-import { initialConversationState } from "@vanessa/protocol";
+import type { ConversationState } from "@vanessa/protocol/conversation";
+import { initialConversationState } from "@vanessa/protocol/conversation";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
