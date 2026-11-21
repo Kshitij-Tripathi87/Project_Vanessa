@@ -21,6 +21,7 @@ there.
 | [AGENTIC_PC_FIRST_ARCHITECTURE.md](AGENTIC_PC_FIRST_ARCHITECTURE.md) | Proposed Windows-first execution and remote-access architecture | proposal; verified PC execution and Android/voice connection still pending |
 | [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Detailed Android-first bridge architecture and original PR #69 design snapshot | historical design snapshot; current status is in the runtime document |
 | [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | CI evidence, emulator journeys, physical-device and release gates | five existing emulator journeys pass; integrated conversation and physical PC journeys remain open |
+| [VANESSA_APPLICATION_BUILD_PLAN.md](VANESSA_APPLICATION_BUILD_PLAN.md) | File-by-file application build sequence, cross-platform ownership, SDLC gates and acceptance evidence | active implementation plan; milestones remain incomplete until verified |
 
 ## Plans and delivery order
 
