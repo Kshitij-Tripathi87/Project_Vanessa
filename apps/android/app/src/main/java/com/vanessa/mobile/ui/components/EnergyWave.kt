@@ -156,8 +156,8 @@ private fun DrawScope.drawWaveform(time: Float, intensity: Float) {
  */
 @Composable
 internal fun ProgressRing(
+    progress: Float,
     modifier: Modifier = Modifier,
-    progress: Float = 0.42f,
 ) {
     val clock = rememberMotionClock()
     Canvas(modifier = modifier) {
