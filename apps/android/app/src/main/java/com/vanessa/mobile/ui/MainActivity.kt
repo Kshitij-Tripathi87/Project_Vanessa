@@ -31,6 +31,7 @@ import com.vanessa.mobile.profile.DeviceProfile
 import com.vanessa.mobile.tools.CalendarSearchTool
 import com.vanessa.mobile.voice.AndroidOnDeviceSpeechInput
 import com.vanessa.mobile.voice.OfflineTtsController
+import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private var assistantMetrics by mutableStateOf("")
     private var assistantBusy by mutableStateOf(false)
     private var speechStatus by mutableStateOf("Checking offline speech output…")
+    private var speechPlaybackStatus by mutableStateOf(OfflineTtsPlaybackStatus.IDLE)
 
     private var speechReady by mutableStateOf(false)
     private var speechInputStatus by mutableStateOf("Checking on-device speech support…")
@@ -226,6 +228,7 @@ class MainActivity : ComponentActivity() {
                     assistantBusy = assistantBusy,
                     speechReady = speechReady,
                     speechStatus = speechStatus,
+                    speechPlaybackStatus = speechPlaybackStatus,
                     speechInputStatus = speechInputStatus,
                     voiceDraft = voiceDraft,
                     onDeviceSpeechAvailable = onDeviceSpeechAvailable,
@@ -252,6 +255,7 @@ class MainActivity : ComponentActivity() {
                     onStopSpeech = ::stopSpeechInput,
                     onCancelSpeech = ::cancelSpeechInput,
                     onSpeakResponse = ::speakAssistantResponse,
+                    onStopSpeechOutput = ::stopSpeakingResponse,
                     onRefresh = ::refreshProfile,
                     onImportModel = { checksum ->
                         val installed = installedModel
@@ -293,12 +297,28 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        offlineTts = OfflineTtsController(applicationContext) { ready, message ->
-            runOnUiThread {
-                speechReady = ready
-                speechStatus = message
-            }
-        }
+        offlineTts = OfflineTtsController(
+            context = applicationContext,
+            onState = { ready, message ->
+                runOnUiThread {
+                    speechReady = ready
+                    speechStatus = message
+                }
+            },
+            onPlaybackEvent = { event ->
+                runOnUiThread {
+                    speechPlaybackStatus = event.status
+                    speechStatus = event.detail ?: when (event.status) {
+                        OfflineTtsPlaybackStatus.IDLE -> speechStatus
+                        OfflineTtsPlaybackStatus.STARTING -> "Preparing offline speech…"
+                        OfflineTtsPlaybackStatus.SPEAKING -> "Reading response aloud…"
+                        OfflineTtsPlaybackStatus.COMPLETED -> "Read-aloud finished."
+                        OfflineTtsPlaybackStatus.STOPPED -> "Read-aloud stopped."
+                        OfflineTtsPlaybackStatus.ERROR -> "Offline speech playback failed. The text response remains available."
+                    }
+                }
+            },
+        )
 
         onDeviceSpeechInput = AndroidOnDeviceSpeechInput(
             applicationContext,
@@ -661,8 +681,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun speakAssistantResponse() {
-        if (assistantResponse.isBlank() || offlineTts?.speak(assistantResponse) != true) {
-            speechStatus = "An offline TTS voice is not ready. The text response is still available."
+        val responseText = conversationState.turns.lastOrNull { turn ->
+            turn.role == com.vanessa.protocol.conversation.ConversationTurnRole.ASSISTANT &&
+                turn.isFinal
+        }?.text?.takeIf { it.isNotBlank() } ?: assistantResponse
+
+        if (responseText.isBlank() || offlineTts?.speak(responseText) != true) {
+            speechPlaybackStatus = OfflineTtsPlaybackStatus.ERROR
+            speechStatus = "Offline speech could not start. The text response remains available."
+        }
+    }
+
+    private fun stopSpeakingResponse() {
+        if (offlineTts?.stop() != true) {
+            speechStatus = "No read-aloud playback is active."
         }
     }
 
