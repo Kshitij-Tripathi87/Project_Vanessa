@@ -13,7 +13,7 @@ export interface ConversationRequestHandle {
   conversationId: string;
   requestId: string;
   userTurnId: string;
-  source: "text";
+  source: "text" | "voice";
 }
 
 export interface PlannerConversationTurn {
@@ -40,6 +40,7 @@ const MAX_CONTEXT_CHARS = 1200;
  */
 export class DesktopConversationRuntime {
   private currentState: ConversationState;
+  private readonly activeRequests = new Set<string>();
 
   constructor(
     initialState: ConversationState,
@@ -60,9 +61,42 @@ export class DesktopConversationRuntime {
   /** Creates one completed user turn for a typed request. */
   submitTyped(text: string): ConversationRequestHandle | null {
     const content = text.trim();
-    if (!content || content.length > MAX_TURN_CONTENT || !this.canReceiveTurn()) return null;
+    if (!content || content.length > MAX_TURN_CONTENT) return null;
+    return this.createUserTurn(content, this.nextId(), "text");
+  }
 
-    const requestId = this.nextId();
+  /**
+   * Commits the final transcript of a voice request. The voice service supplies
+   * the canonical request ID used by its orchestrator submission so the user
+   * turn, task timeline and assistant response share one correlation key.
+   * Duplicate delivery returns the existing handle only when the final text is
+   * identical; it can never create a second transcript turn.
+   */
+  submitVoiceFinal(text: string, requestId: string): ConversationRequestHandle | null {
+    const content = text.trim();
+    if (!content || content.length > MAX_TURN_CONTENT || !UUID.test(requestId)) return null;
+
+    const existing = this.currentState.turns.find((turn) =>
+      turn.requestId === requestId && turn.role === "user" && turn.source === "voice"
+    );
+    if (existing) {
+      if (existing.text !== content) return null;
+      return {
+        conversationId: this.currentState.conversationId,
+        requestId,
+        userTurnId: existing.turnId,
+        source: "voice",
+      };
+    }
+    return this.createUserTurn(content, requestId, "voice");
+  }
+
+  private createUserTurn(
+    content: string,
+    requestId: string,
+    source: "text" | "voice",
+  ): ConversationRequestHandle | null {
+    if (!this.canReceiveTurn() || this.activeRequests.has(requestId)) return null;
     const userTurnId = this.nextId();
     const received = this.dispatch({
       type: "turn.received",
@@ -70,7 +104,7 @@ export class DesktopConversationRuntime {
       turnId: userTurnId,
       requestId,
       role: "user",
-      source: "text",
+      source,
       createdAt: this.now(),
     });
     if (!received) return null;
@@ -83,11 +117,12 @@ export class DesktopConversationRuntime {
     });
     if (!finalized) return null;
 
+    this.activeRequests.add(requestId);
     return {
       conversationId: this.currentState.conversationId,
       requestId,
       userTurnId,
-      source: "text",
+      source,
     };
   }
 
@@ -105,12 +140,14 @@ export class DesktopConversationRuntime {
       const reason = !content
         ? "No validated assistant response is available."
         : "Assistant response exceeded the conversation limit.";
-      return this.dispatch({
+      const failed = this.dispatch({
         type: "turn.failed",
         conversationId: this.currentState.conversationId,
         turnId: assistantTurnId,
         reason,
       });
+      if (failed) this.activeRequests.delete(request.requestId);
+      return failed;
     }
 
     for (const chunk of splitResponse(content)) {
@@ -122,11 +159,30 @@ export class DesktopConversationRuntime {
       })) return false;
     }
 
-    return this.dispatch({
+    const completed = this.dispatch({
       type: "response.completed",
       conversationId: this.currentState.conversationId,
       turnId: assistantTurnId,
     });
+    if (completed) this.activeRequests.delete(request.requestId);
+    return completed;
+  }
+
+  /** Ends the response turn without changing the task's execution state. */
+  interruptAssistant(
+    request: ConversationRequestHandle,
+    reason: "barge_in" | "user_cancel" = "user_cancel",
+  ): boolean {
+    const assistantTurnId = this.beginAssistantTurn(request);
+    if (!assistantTurnId) return false;
+    const interrupted = this.dispatch({
+      type: "turn.interrupted",
+      conversationId: this.currentState.conversationId,
+      turnId: assistantTurnId,
+      reason,
+    });
+    if (interrupted) this.activeRequests.delete(request.requestId);
+    return interrupted;
   }
 
   /** Adds an explicit failed assistant turn without inventing a task result. */
@@ -134,12 +190,14 @@ export class DesktopConversationRuntime {
     const assistantTurnId = this.beginAssistantTurn(request);
     if (!assistantTurnId) return false;
     const safeReason = reason.trim().slice(0, 300) || "The assistant response failed.";
-    return this.dispatch({
+    const failed = this.dispatch({
       type: "turn.failed",
       conversationId: this.currentState.conversationId,
       turnId: assistantTurnId,
       reason: safeReason,
     });
+    if (failed) this.activeRequests.delete(request.requestId);
+    return failed;
   }
 
   /**
@@ -149,6 +207,7 @@ export class DesktopConversationRuntime {
   plannerContext(excludingRequestId?: string): PlannerConversationTurn[] {
     const completed = this.currentState.turns
       .filter((turn) => turn.status === "completed" && turn.text.trim())
+      .filter((turn) => !this.activeRequests.has(turn.requestId))
       .filter((turn) => !excludingRequestId || turn.requestId !== excludingRequestId)
       .slice(-MAX_CONTEXT_TURNS);
 
@@ -186,7 +245,7 @@ export class DesktopConversationRuntime {
       turnId,
       requestId: request.requestId,
       role: "assistant",
-      source: "text",
+      source: request.source,
       createdAt: this.now(),
     });
     return accepted ? turnId : null;
