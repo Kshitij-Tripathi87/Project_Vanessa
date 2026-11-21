@@ -3,6 +3,7 @@ import { useVanessaStore } from "./stores/vanessaStore.js";
 import { useTaskStream } from "./hooks/useTaskStream.js";
 import { useAudioCapture } from "./hooks/useAudioCapture.js";
 import { CompactAssistant } from "./components/CompactAssistant.js";
+import { classifyCancellationResponse, isActiveTaskStage } from "./taskCancellation.js";
 
 const PANEL_SIZE = { width: 360, height: 440 };
 const ORB_SIZE = { width: 90, height: 90 };
@@ -85,43 +86,67 @@ export function App() {
   }, [expanded, openPanel, resumeAudio, toggleRecording]);
 
   const handleStop = useCallback(async () => {
-    const requestId = currentRequestId;
-    const taskWasActive = ["accepted", "planning", "executing", "verifying"].includes(taskStage);
-    // Stop the local voice turn and use request-scoped cancellation as a fallback
-    // if the voice socket is down. Never escalate ordinary Stop to cancel-all.
+    // Stop capture/playback immediately. A completed task must remain completed:
+    // stopping speech is not a reason to send a second cancellation request.
     cancelVoice();
-    setPendingApproval(null);
-    if (requestId) {
-      const result = await window.vanessa?.cancelTask?.(requestId);
-      if (!result?.success) {
-        setLastResponse(result?.error || "Cancellation could not be confirmed. Check task status before retrying.");
-        setTaskStage("failed", "Cancellation could not be confirmed.");
-        return;
-      }
+    if (!isActiveTaskStage(taskStage)) return;
+
+    const requestId = currentRequestId;
+    if (!requestId) {
+      setLastResponse("Voice input or playback stopped. The active task was not cancelled because its request ID is unavailable.");
+      setTaskStage(taskStage, "Cancellation was not sent. The task state is unchanged.");
+      return;
     }
-    setCurrentRequestId(null);
-    if (taskWasActive) {
-      setTaskStage("cancelled", requestId ? "Cancellation requested for this task." : "Voice turn stopped; task cancellation was not independently confirmed.");
+
+    setTaskStage("cancelling", "Cancellation requested. Waiting for verified task termination.");
+    let response: unknown;
+    try {
+      response = await window.vanessa?.cancelTask?.(requestId);
+    } catch (error) {
+      response = { success: false, error: error instanceof Error ? error.message : "Cancellation request failed." };
     }
+
+    const outcome = classifyCancellationResponse(response);
+    if (outcome.kind === "request_failed" || outcome.kind === "invalid_response") {
+      setLastResponse(outcome.message);
+      setTaskStage(taskStage, "Cancellation was not confirmed. The task state is unchanged.");
+      return;
+    }
+
+    setTaskStage(outcome.stage, outcome.message);
+    if (outcome.kind === "termination_unconfirmed") setLastResponse(outcome.message);
+    if (outcome.clearPendingApproval) setPendingApproval(null);
+    if (outcome.clearRequest) setCurrentRequestId(null);
   }, [cancelVoice, currentRequestId, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, taskStage]);
 
   const handleEmergencyStop = useCallback(async () => {
-    // Escape is the explicit emergency action for all orchestrator work.
+    // Escape is the explicit global action. The API reports process outcomes;
+    // an HTTP acknowledgement alone is never presented as a successful stop.
     cancelVoice();
-    const result = await window.vanessa?.cancelTask?.();
-    if (!result?.success) {
-      setLastResponse(result?.error || "Emergency stop could not be confirmed. Inspect task status.");
-      if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
-        setTaskStage("failed", "Emergency stop could not be confirmed.");
+    let response: unknown;
+    try {
+      response = await window.vanessa?.cancelTask?.();
+    } catch (error) {
+      response = { success: false, error: error instanceof Error ? error.message : "Emergency cancellation failed." };
+    }
+
+    const outcome = classifyCancellationResponse(response);
+    if (outcome.kind === "request_failed" || outcome.kind === "invalid_response") {
+      setLastResponse(outcome.message);
+      if (isActiveTaskStage(taskStage)) {
+        setTaskStage(taskStage, "Emergency cancellation was not confirmed. Task state is unchanged.");
       }
       return;
     }
-    setCurrentRequestId(null);
-    setPendingApproval(null);
-    if (["accepted", "planning", "executing", "verifying"].includes(taskStage)) {
-      setTaskStage("cancelled", "Emergency stop acknowledged by the orchestrator.");
+
+    if (isActiveTaskStage(taskStage)) {
+      setTaskStage(outcome.stage, outcome.message);
+      if (outcome.kind === "termination_unconfirmed") setLastResponse(outcome.message);
+      if (outcome.clearPendingApproval) setPendingApproval(null);
+    } else if (outcome.kind === "termination_unconfirmed" || outcome.kind === "no_active_work") {
+      setLastResponse(outcome.message);
     }
-  }, [cancelVoice, setCurrentRequestId, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
+  }, [cancelVoice, setPendingApproval, setLastResponse, setTaskStage, taskStage]);
 
   const execute = useCallback((value = command) => {
     if (!value.trim()) return;
