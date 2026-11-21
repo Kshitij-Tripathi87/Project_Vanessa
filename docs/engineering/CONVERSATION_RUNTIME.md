@@ -1,9 +1,10 @@
 # Conversation runtime
 
-**Status: the shared wire contract, TypeScript reducer, generated Kotlin models and
-Kotlin reducer exist. The Android and desktop conversation paths do not yet use
-those reducers.** The voice → conversation bridge, a controller, persistence,
-memory retrieval, model routing and task handoff remain unimplemented.
+**Status: the shared wire contract, TypeScript reducer, generated Kotlin models,
+Kotlin reducer and an in-memory Android-core conversation controller exist.**
+The Android app and desktop conversation paths do not yet use that controller or
+its reducers. The voice → conversation bridge, persistence, memory retrieval,
+model routing and task handoff remain unimplemented.
 
 The three-day implementation sequence is in
 [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md).
@@ -23,8 +24,9 @@ chat history in `chatMessages` and the live speech partial in `voiceDraft` in
 `MainActivity`. The on-device recognizer supplies genuine partials to that draft;
 the final transcript goes to the existing local assistant path. Neither the UI nor
 the recognizer emits the conversation events below. The desktop voice session is
-also disconnected from this contract. The new Kotlin reducer is a protocol module,
-not yet an Android conversation controller.
+also disconnected from this contract. The standalone controller in
+`apps/android/core/agent` has not yet been wired to the activity, recognizer,
+planner, playback or remote tasks.
 
 ## Contract and generation
 
@@ -90,15 +92,33 @@ select the newest unfinished turn as active.
 
 Ignored events return the *same state object* on both runtimes. A repeated,
 nonempty partial before finalization is applied again and may return a new but
-equal state. The event schema currently has no sequence or event ID; a future
-controller must serialize publication and fence stale callbacks itself. This
-contract does not provide transport ordering or persistence.
+equal state. The event schema currently has no sequence or event ID; the standalone
+controller serializes its operations and fences stale capture and response
+handles. The contract does not provide transport ordering or persistence.
 
 Wire ingress rejects individual partials/chunks over 512 units and final
 transcripts over 4,000; the reducer also guards the accumulated response. The
 future assistant output adapter must validate the complete response **before**
 event publication. A terminal failure on aggregate overflow is a safety net,
 not permission to publish unvalidated model output.
+
+## Standalone controller and its limits
+
+`ConversationController` generates request and distinct turn IDs, accepts typed
+input or capture leases, folds events through the strict codec and reducer, and
+exposes completed prior turns for planner context. It serializes mutations and
+publishes a coherent state only after updating its handles; this prevents inline
+StateFlow observers from reviving stale capture or assistant generations. It
+also refuses a new turn when the 200-turn window would evict an unfinished turn.
+A bounded completed turn may still age out, and callers must handle rejected or
+no-longer-retained request handles.
+
+`StateFlow` is a conflated state projection, not an event log. A fully validated
+assistant response is reduced from bounded logical chunks and committed as one
+state update; this is not incremental model-token streaming. The controller
+contains no audio, task cancellation or execution authority, and the caller must
+validate response content before supplying it. These are standalone JVM behaviors,
+not evidence that the app uses them.
 
 ## Existing Android planner context
 
@@ -131,17 +151,16 @@ journey; emulator results must be checked separately.
 ```sh
 pnpm --filter @vanessa/protocol build
 pnpm --filter @vanessa/protocol test
-cd apps/android && ./gradlew :core:protocol:test
+cd apps/android && ./gradlew :core:protocol:test :core:agent:test
 ```
 
 ## Remaining work
 
-The next planned slice is the `ConversationController`: IDs and request pairing,
-ordered event ingress, generation fencing, and reducer-owned state, tested without
-microphone or TTS APIs. Subsequent slices wire typed/ASR input, validated assistant
-output, offline TTS playback and UI projections, then execute emulator journeys.
-Do not remove `chatMessages`/`voiceDraft` or claim a single conversation authority
-until those paths are actually migrated.
+The standalone `ConversationController` is implemented and unit-tested without
+microphone or TTS APIs. The next slices wire typed/ASR input, planner context,
+validated assistant output, offline TTS playback and UI projections, then execute
+integrated emulator journeys. Do not remove `chatMessages`/`voiceDraft` or claim a
+single app-level conversation authority until those paths are actually migrated.
 
 Native llama.cpp currently returns completed strings, not token streams. The
 future bridge may publish bounded chunks **after** validating the whole response;

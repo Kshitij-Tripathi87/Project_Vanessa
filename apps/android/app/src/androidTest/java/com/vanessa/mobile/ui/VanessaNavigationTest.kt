@@ -101,10 +101,10 @@ class VanessaNavigationTest {
             "Type a message…",
         ).filter { exists(it) }
         val composer = runCatching {
-            composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().size
+            composeRule.onAllNodesWithContentDescription("Choose a message suggestion").fetchSemanticsNodes().size
         }.getOrDefault(-1)
         return "visible: " + markers.joinToString(", ").ifEmpty { "none of the known screens" } +
-            "; composer menus: $composer; text: " + screenText()
+            "; composer suggestions: $composer; text: " + screenText()
     }
 
     private fun enterAssistant() {
@@ -144,13 +144,11 @@ class VanessaNavigationTest {
      * greeting, which the first answer replaces.
      */
     private fun composerVisible(): Boolean = runCatching {
-        // Anchored on the composer's own menu button rather than on
-        // `onAllNodes(hasSetTextAction())`: that call did not resolve against this
-        // Compose version, so the whole instrumented source set failed to compile
-        // and every emulator run for months reported "no tests" instead of a
-        // compile error. A content description that exists only in the composer is
-        // a narrower signal anyway.
-        composeRule.onAllNodesWithContentDescription("Open actions").fetchSemanticsNodes().isNotEmpty()
+        // The suggestion button belongs only to the composer and remains
+        // present when the editable text or greeting changes. Avoid the old
+        // unsupported onAllNodes(hasSetTextAction()) call.
+        composeRule.onAllNodesWithContentDescription("Choose a message suggestion")
+            .fetchSemanticsNodes().isNotEmpty()
     }.getOrDefault(false)
 
     @Test
@@ -182,6 +180,20 @@ class VanessaNavigationTest {
         // the interface keeps saying so. The request must not appear to run.
         // Existence, not visibility: with the soft keyboard up the notice can
         // sit outside the visible area without being wrong.
+        composeRule.onNodeWithText(
+            "No local model is active. Vanessa will not run a request until a model is installed.",
+        ).assertExists()
+        composeRule.onAllNodesWithText("All set!").assertCountEquals(0)
+    }
+
+    @Test
+    fun suggestionPopulatesComposerWithoutRunningWithoutAModel() {
+        enterAssistant()
+
+        composeRule.onNodeWithContentDescription("Choose a message suggestion").performClick()
+        composeRule.onNodeWithText("Check my phone status").performClick()
+        composeRule.onNodeWithContentDescription("Type a message…")
+            .assertTextContains("Check my phone status.")
         composeRule.onNodeWithText(
             "No local model is active. Vanessa will not run a request until a model is installed.",
         ).assertExists()
@@ -239,5 +251,11 @@ class VanessaNavigationTest {
         composeRule.onNodeWithText("Vanessa Android").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithContentDescription("Home navigation").assertIsDisplayed()
+
+        // The custom input retains its accessible name after text is entered.
+        composeRule.onNodeWithContentDescription("Expected SHA-256 (optional)")
+            .performScrollTo().performTextInput("abc123")
+        composeRule.onNodeWithContentDescription("Expected SHA-256 (optional)")
+            .assertTextContains("abc123")
     }
 }

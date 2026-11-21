@@ -253,31 +253,58 @@ jobs:
 
           root_dir = sys.argv[1]
           files = glob.glob(root_dir + "/**/*.xml", recursive=True)
-          total = failures = 0
+          # These are the unfiltered clean-install and input regressions this
+          # gate promises to execute. Update this set deliberately when a test
+          # is renamed or removed; a partial suite is not a full pass.
+          nav = "com.vanessa.mobile.ui.VanessaNavigationTest"
+          pairing = "com.vanessa.mobile.ui.MyPcPairingInputTest"
+          expected = {
+              (nav, "firstRunFlowReachesTheAssistantWithoutClaimingAModel"),
+              (nav, "typedInputIsAcceptedButCannotRunWithoutAModel"),
+              (nav, "suggestionPopulatesComposerWithoutRunningWithoutAModel"),
+              (nav, "voiceSurfaceIsReachableAndDismissible"),
+              (nav, "pcDashboardKeepsTheRealRemoteControlEntryPoint"),
+              (nav, "settingsIsReachableAndScrollable"),
+              (pairing, "pastedPairDataKeepsItsAccessibleNameAndReachesThePairAction"),
+          }
+          executed = set()
+          skipped = failures = malformed = 0
           lines = []
           for path in files:
               try:
                   tree = ET.parse(path)
               except ET.ParseError:
+                  malformed += 1
+                  lines.append(f"Cannot parse instrumented XML: {path}")
                   continue
               for case in tree.getroot().iter("testcase"):
-                  total += 1
+                  name = (case.get("classname", "?"), case.get("name", "?"))
+                  if case.find("skipped") is not None:
+                      skipped += 1
+                      lines.append(f"{name[0]}.{name[1]}: skipped")
+                      continue
+                  executed.add(name)
                   for bad in case.findall("failure") + case.findall("error"):
                       failures += 1
-                      text = (bad.get("message") or "").strip() or bad.text.strip()
+                      body = (bad.text or "").strip()
+                      text = (bad.get("message") or "").strip() or body
                       # Some runners record the assertion's cause as the message
                       # and leave the real one in the body; keep both.
-                      if bad.text.strip() and not bad.text.strip().startswith(text[:40]):
-                          text = (text + " | " + bad.text.strip()).strip()
+                      if body and not body.startswith(text[:40]):
+                          text = (text + " | " + body).strip()
                       text = " ".join(text.split())[:400]
-                      lines.append(f"{case.get('classname','?')}.{case.get('name','?')}: {text}")
+                      lines.append(f"{name[0]}.{name[1]}: {text}")
 
-          print(f"::warning::executed {total} instrumented test(s) from {len(files)} result file(s); {failures} failing")
+          print(f"::warning::executed {len(executed)} distinct instrumented test(s) from {len(files)} result file(s); {failures} failing, {skipped} skipped, {malformed} malformed")
+          for cls, name in sorted(executed):
+              print(f"::notice::instrumented {cls}.{name}")
           for line in lines[:10]:
               print(f"::error::{line}")
-          if total == 0:
+          missing = expected - executed
+          for cls, name in sorted(missing):
+              print(f"::error::required instrumented test did not execute: {cls}.{name}")
+          if not executed:
               print("::error::zero instrumented tests executed; a green emulator run with no executed tests is not evidence")
-              sys.exit(1)
-          if failures:
+          if not executed or failures or skipped or malformed or missing:
               sys.exit(1)
           PY

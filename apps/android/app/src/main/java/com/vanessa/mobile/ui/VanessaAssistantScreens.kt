@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Send
@@ -31,8 +32,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.vanessa.mobile.ui.components.EnergyWave
 import com.vanessa.mobile.ui.components.ProgressRing
 import com.vanessa.mobile.ui.components.NeonIconButton
+import com.vanessa.mobile.ui.components.NeonTextField
 import com.vanessa.mobile.ui.components.NeonSecondaryButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
@@ -339,7 +339,7 @@ internal fun ChatScreen(
                 sendEnabled = modelLoaded && !modelBusy && !assistantBusy && prompt.isNotBlank(),
                 onPromptChange = onPromptChange,
                 onSend = onSend,
-                onMenu = { menuExpanded = true },
+                onChooseSuggestion = { suggestion -> onPromptChange(suggestion) },
             )
             Spacer(Modifier.height(12.dp))
         }
@@ -353,8 +353,9 @@ private fun Composer(
     sendEnabled: Boolean,
     onPromptChange: (String) -> Unit,
     onSend: () -> Unit,
-    onMenu: () -> Unit,
+    onChooseSuggestion: (String) -> Unit,
 ) {
+    var suggestionsExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -363,34 +364,59 @@ private fun Composer(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onMenu, modifier = Modifier.size(40.dp)) {
-            Icon(
-                Icons.Outlined.Menu,
-                contentDescription = "Open actions",
-                tint = VanessaPalette.TextSecondary,
-                modifier = Modifier.size(20.dp),
-            )
+        Box {
+            IconButton(
+                onClick = { suggestionsExpanded = true },
+                modifier = Modifier.size(40.dp),
+                enabled = enabled,
+            ) {
+                Icon(
+                    Icons.Outlined.Apps,
+                    contentDescription = "Choose a message suggestion",
+                    tint = VanessaPalette.TextSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = suggestionsExpanded,
+                onDismissRequest = { suggestionsExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Plan my day") },
+                    onClick = {
+                        suggestionsExpanded = false
+                        onChooseSuggestion("Help me plan my day.")
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Check my phone status") },
+                    onClick = {
+                        suggestionsExpanded = false
+                        onChooseSuggestion("Check my phone status.")
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Check today's calendar") },
+                    onClick = {
+                        suggestionsExpanded = false
+                        onChooseSuggestion("Find my calendar events today.")
+                    },
+                )
+            }
         }
-        OutlinedTextField(
+        NeonTextField(
             value = prompt,
             onValueChange = onPromptChange,
             modifier = Modifier.weight(1f),
-            singleLine = true,
+            placeholder = "Type a message…",
             enabled = enabled,
-            placeholder = { Text("Type a message…", color = VanessaPalette.TextSecondary, fontSize = 13.sp) },
-            shape = RoundedCornerShape(999.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-                disabledBorderColor = Color.Transparent,
-                focusedTextColor = VanessaPalette.TextPrimary,
-                unfocusedTextColor = VanessaPalette.TextPrimary,
-                disabledTextColor = VanessaPalette.TextSecondary,
-                cursorColor = VanessaPalette.Cyan,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                disabledContainerColor = Color.Transparent,
-            ),
+            singleLine = true,
+            minHeight = 42.dp,
+            containerColor = Color.Transparent,
+            outlineColor = Color.Transparent,
+            shape = CircleShape,
+            horizontalPadding = 6.dp,
+            verticalPadding = 8.dp,
         )
         Box(
             modifier = Modifier
@@ -473,7 +499,7 @@ internal fun ListeningScreen(
             Spacer(Modifier.height(18.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 VanessaOrb(
-                    size = 208.dp,
+                    size = 172.dp,
                     energy = if (listening) 0.85f else 0.2f,
                     offline = !speechAvailable,
                     description = when {

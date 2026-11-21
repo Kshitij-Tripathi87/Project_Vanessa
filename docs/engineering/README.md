@@ -16,10 +16,21 @@ there.
 | [AGENT_REGISTRY.md](AGENT_REGISTRY.md) | 12 agents, 62 actions, risk and authority | generated from `agentCatalog.ts` |
 | [AGENT_ORCHESTRATION_SPEC.md](AGENT_ORCHESTRATION_SPEC.md) | Supervisor → planner → policy → execution → critic | implemented in `services/orchestrator` |
 | [AGENT_CONTRACTS.md](AGENT_CONTRACTS.md) | Wire schemas, approval binding, proposed envelope | wire contract implemented, envelope not |
-| [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Live session/turn contract, generated Kotlin models, reducer parity, current Android integration status | protocol/reducer implemented; Android/desktop controller wiring pending |
-| [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md) | Timeboxed 21–23 Nov execution plan for controller, ASR/typed input, response/TTS and UI integration | execution specification; not implementation evidence |
-| [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Detailed Android-first bridge architecture and original PR #69 design snapshot | historical design snapshot; PR #70 supersedes contract/reducer work |
+| [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Live session/turn contract, reducer parity, standalone Android controller, integration status | protocol, reducers and standalone controller implemented; Android/desktop wiring pending |
+| [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md) | Timeboxed Android conversation-bridge proposal | planning snapshot; not implementation evidence |
+| [AGENTIC_PC_FIRST_ARCHITECTURE.md](AGENTIC_PC_FIRST_ARCHITECTURE.md) | Proposed Windows-first execution and remote-access architecture | proposal; verified PC execution and Android/voice connection still pending |
+| [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Detailed Android-first bridge architecture and original PR #69 design snapshot | historical design snapshot; current status is in the runtime document |
 | [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | CI evidence, emulator journeys, physical-device and release gates | five existing emulator journeys pass; integrated conversation and physical PC journeys remain open |
+
+## Plans and delivery order
+
+The Android bridge plan and the PC-first execution plan describe different
+milestones, not proof that either end-to-end path exists. Conversation remains
+the foundation and the orchestrator remains the task authority; a PC-first
+execution milestone does not make voice or UI a second planner. The Android
+controller can be developed as a foundation in parallel, but the plans propose
+different first vertical slices. Treat their scheduling as a product decision,
+not as a completed implementation or an implicit change to security gates.
 
 ## Reading order for a new contributor
 
