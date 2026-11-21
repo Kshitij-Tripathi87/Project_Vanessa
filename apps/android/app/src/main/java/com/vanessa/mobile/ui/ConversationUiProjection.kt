@@ -13,7 +13,7 @@ import com.vanessa.protocol.conversation.ConversationTurnStatus
  */
 internal object ConversationUiProjection {
     fun messages(state: ConversationState): List<VanessaChatMessage> =
-        state.turns.asSequence()
+        state.turns
             .filter { turn ->
                 turn.text.isNotBlank() && when (turn.role) {
                     ConversationTurnRole.USER -> turn.status == ConversationTurnStatus.COMPLETED
@@ -28,7 +28,6 @@ internal object ConversationUiProjection {
                     text = turn.text,
                 )
             }
-            .toList()
 
     fun voiceDraft(state: ConversationState): String =
         state.turns.lastOrNull { turn ->
