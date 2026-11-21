@@ -73,12 +73,10 @@ test("failed orchestrator response remains an explicit failed assistant turn", (
 
 test("planner context contains only the six newest completed turns and excludes the current request", () => {
   const { runtime } = makeRuntime();
-  const completedRequests = [];
   for (let i = 1; i <= 8; i++) {
     const request = runtime.submitTyped("Question " + i);
     assert.ok(request);
     assert.equal(runtime.completeAssistant(request, "Answer " + i), true);
-    completedRequests.push(request);
   }
   const current = runtime.submitTyped("Current request");
   assert.ok(current);
