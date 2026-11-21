@@ -88,3 +88,18 @@ test("voice failure is stored as a failed assistant turn without claiming task c
   assert.equal(f.state.turns[1].status, "failed");
   assert.equal(f.state.turns[1].text, "I could not verify the result.");
 });
+
+
+test("voice disconnect fails only the pending assistant response, not the task", () => {
+  const f = fixture();
+  assert.equal(f.bridge.acceptFinalTranscript("Run the analysis", requestId), true);
+  const failed = f.bridge.failPendingResponses(
+    "Voice disconnected. The task may still be running; check its task status.",
+  );
+  assert.equal(failed, 1);
+  assert.equal(f.state.turns.length, 2);
+  assert.equal(f.state.turns[1].status, "failed");
+  assert.match(f.state.turns[1].text, /task may still be running/);
+  assert.equal(f.bridge.hasPendingRequest(requestId), false);
+  assert.equal(f.bridge.completeAssistantResponse(requestId, "Late response"), false);
+});
