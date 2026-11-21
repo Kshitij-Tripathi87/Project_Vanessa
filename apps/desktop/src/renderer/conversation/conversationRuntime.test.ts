@@ -164,3 +164,21 @@ test("voice request IDs must be canonical UUIDs before entering the shared proto
   const { runtime } = makeRuntime();
   assert.equal(runtime.submitVoiceFinal("Turn on the light", "voice-abcd"), null);
 });
+
+
+test("interrupting assistant speech leaves an explicit interrupted turn and releases context", () => {
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
+  const request = runtime.submitVoiceFinal(
+    "Find my next meeting",
+    "44444444-2222-4333-8444-555555555555",
+  );
+  assert.ok(request);
+  assert.equal(runtime.interruptAssistant(request, "user_cancel"), true);
+  const assistant = fixture.state.turns[1];
+  assert.equal(assistant.role, "assistant");
+  assert.equal(assistant.status, "interrupted");
+  assert.equal(assistant.requestId, request.requestId);
+  assert.equal(runtime.plannerContext().length, 1);
+  assert.equal(runtime.plannerContext()[0].content, "Find my next meeting");
+});
