@@ -1,6 +1,5 @@
 package com.vanessa.mobile.ui
 
-import ai.vanessa.agent.AssistantTurnHandle
 import ai.vanessa.agent.CaptureLease
 import ai.vanessa.agent.ConversationController
 import ai.vanessa.agent.ConversationPublishResult
@@ -783,16 +782,19 @@ class MainActivity : ComponentActivity() {
                             coordinator.respond(task, outcome.results)
                         }
                         assistantResponse = response
-                        publishAssistantResponse(conversationRequest, response)
+                        succeeded = publishAssistantResponse(conversationRequest, response)
                         engine.lastGenerationMetrics?.let {
                             assistantMetrics =
                                 "Last generation: ${it.ttftMs} ms TTFT · " +
                                     String.format(Locale.ROOT, "%.1f", it.tokensPerSecond) + " tokens/s"
                         }
-                        succeeded = true
                         completion = CompletionState(
-                            title = "All set!",
-                            body = "Your request is complete.",
+                            title = if (succeeded) "All set!" else "Response not verified",
+                            body = if (succeeded) {
+                                "Your request is complete."
+                            } else {
+                                "The local result was produced, but Vanessa could not commit a valid conversation response."
+                            },
                             detail = assistantMetrics.ifBlank { null },
                         )
                     }
