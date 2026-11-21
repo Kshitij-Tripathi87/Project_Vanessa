@@ -346,21 +346,31 @@ export type KillSwitchSummary = {
   cancelled: number;
   executionFinished: number;
   terminationUnconfirmed: number;
+  planningOnly: number;
 };
 
-export async function triggerKillSwitch(): Promise<KillSwitchSummary> {
+export function engageKillSwitch(): void {
+  isKillSwitchEngaged = true;
+}
+
+export async function triggerKillSwitch(
+  excludedTaskIds: ReadonlySet<string> = new Set<string>(),
+  previous: Partial<KillSwitchSummary> = {},
+): Promise<KillSwitchSummary> {
   isKillSwitchEngaged = true;
   const checks: Promise<CancellationResolution>[] = [];
   for (const task of activeTasks.values()) {
-    if (["running", "pending", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) {
+    if (!excludedTaskIds.has(task.id) &&
+        ["running", "pending", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) {
       checks.push(cancelTaskWithProof(task, "Cancellation requested by emergency kill switch."));
     }
   }
   const results = await Promise.all(checks);
   const summary: KillSwitchSummary = {
-    cancelled: results.filter((result) => result === "cancelled").length,
-    executionFinished: results.filter((result) => result === "execution_finished").length,
-    terminationUnconfirmed: results.filter((result) => result === "termination_unconfirmed").length,
+    cancelled: (previous.cancelled || 0) + results.filter((result) => result === "cancelled").length,
+    executionFinished: (previous.executionFinished || 0) + results.filter((result) => result === "execution_finished").length,
+    terminationUnconfirmed: (previous.terminationUnconfirmed || 0) + results.filter((result) => result === "termination_unconfirmed").length,
+    planningOnly: previous.planningOnly || 0,
   };
   eventBus.emitEvent("audit:log", {
     id: `kill-${Date.now()}`,
@@ -369,10 +379,8 @@ export async function triggerKillSwitch(): Promise<KillSwitchSummary> {
     action: "kill_switch",
     status: summary.terminationUnconfirmed ? "warn" : "success",
     details: summary.terminationUnconfirmed
-      ? `Emergency kill switch completed with ${summary.terminationUnconfirmed} unconfirmed process termination(s), ${summary.cancelled} confirmed cancellation(s), and ${summary.executionFinished} operation(s) that had already finished. Unconfirmed locks were retained; new work remains blocked.`
-      : summary.executionFinished
-        ? `Emergency cancellation completed. ${summary.cancelled} operation(s) were cancelled and ${summary.executionFinished} operation(s) had already produced terminal process evidence; completed work was not relabeled cancelled.`
-        : `Emergency cancellation completed. ${summary.cancelled} operation(s) were confirmed cancelled.`,
+      ? `Emergency kill switch completed with ${summary.terminationUnconfirmed} unconfirmed process termination(s), ${summary.cancelled} confirmed cancellation(s), ${summary.executionFinished} operation(s) that had already finished and ${summary.planningOnly} request(s) cancelled during planning. Unconfirmed locks were retained; new work remains blocked.`
+      : `Emergency cancellation completed. ${summary.cancelled} operation(s) were confirmed cancelled, ${summary.executionFinished} operation(s) had already finished and ${summary.planningOnly} request(s) were cancelled during planning.`,
   });
   if (summary.terminationUnconfirmed === 0) isKillSwitchEngaged = false;
   return summary;
