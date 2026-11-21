@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "executing" | "speaking" | "responding" | "interrupted" | "error";
-export type TaskStage = "idle" | "accepted" | "planning" | "executing" | "verifying" | "completed" | "partial" | "failed" | "cancelled";
+export type TaskStage = "idle" | "accepted" | "planning" | "executing" | "verifying" | "cancelling" | "termination_unconfirmed" | "completed" | "partial" | "failed" | "cancelled";
 
 interface VanessaState {
   voiceState: VoiceState;
