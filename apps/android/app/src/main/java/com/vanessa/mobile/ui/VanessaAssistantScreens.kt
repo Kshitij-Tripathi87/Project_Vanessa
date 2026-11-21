@@ -515,7 +515,7 @@ internal fun ListeningScreen(
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 NeonIconButton(
                     icon = Icons.Outlined.Stop,
-                    contentDescription = "Stop listening",
+                    contentDescription = "Finish listening",
                     onClick = onStop,
                     diameter = 66.dp,
                     highlighted = true,
