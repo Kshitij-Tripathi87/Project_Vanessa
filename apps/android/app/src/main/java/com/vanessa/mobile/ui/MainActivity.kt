@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private var inferenceAvailable by mutableStateOf(false)
     private var modelLoaded by mutableStateOf(false)
     private var modelBusy by mutableStateOf(false)
+    private var prompt by mutableStateOf("")
     private val conversationController = ConversationController(UUID.randomUUID().toString())
     private var conversationState by mutableStateOf(conversationController.state.value)
 
