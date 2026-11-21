@@ -129,6 +129,37 @@ export class FileAgent implements SpecialistAgent {
           };
         }
 
+        const before = await observedEntry(targetPath);
+        if (before.exists) {
+          if (!before.isDirectory) throw new Error("The requested folder path already exists as a non-directory entry.");
+          const existingPath = await fs.realpath(targetPath);
+          if (!privacyGuard.isPathAllowed(existingPath)) {
+            throw new Error("The existing folder resolves outside approved filesystem roots.");
+          }
+          const detail = "The requested directory already exists at " + existingPath + "; no filesystem changes were made.";
+          return {
+            agentId: this.id,
+            status: "completed",
+            success: true,
+            summary: detail,
+            spokenSummary: "That folder already exists.",
+            evidence: [{
+              description: detail,
+              source: existingPath,
+              timestamp: new Date().toISOString(),
+              confidence: 1,
+              data: { exists: true, isDirectory: true, actualStateChanged: false },
+            }],
+            artifacts: [existingPath],
+            verification: { passed: true, details: "The existing canonical directory is inside an approved root." },
+            data: {
+              fileReferences: [existingPath],
+              verifiedFilesystemResults: { path: existingPath, exists: true, isDirectory: true, actualStateChanged: false },
+              path: existingPath,
+            },
+          };
+        }
+
         await fs.mkdir(targetPath, { recursive: true });
         const canonicalTarget = await fs.realpath(targetPath);
         if (!privacyGuard.isPathAllowed(canonicalTarget)) {
@@ -407,14 +438,22 @@ export class FileAgent implements SpecialistAgent {
             { VANESSA_SOURCE: sourceDir, VANESSA_DESTINATION: tempZip },
             30000,
           );
-          const tempStats = await fs.stat(tempZip);
+          const tempLstat = await fs.lstat(tempZip);
+          if (tempLstat.isSymbolicLink() || !tempLstat.isFile()) {
+            throw new Error("Archive staging output is not a regular file.");
+          }
+          const canonicalTemp = await fs.realpath(tempZip);
+          if (!privacyGuard.isPathAllowed(canonicalTemp)) {
+            throw new Error("Archive staging output resolved outside approved filesystem roots.");
+          }
+          const tempStats = await fs.stat(canonicalTemp);
           if (!tempStats.isFile() || tempStats.size === 0) {
             throw new Error("Archive output was missing or empty after compression.");
           }
           // Hard-link publication is exclusive: it fails if another process
           // creates the final archive after the initial authorization check.
-          await fs.link(tempZip, destZip);
-          await fs.unlink(tempZip);
+          await fs.link(canonicalTemp, destZip);
+          await fs.unlink(canonicalTemp);
           const finalPath = await fs.realpath(destZip);
           if (!privacyGuard.isPathAllowed(finalPath)) {
             throw new Error("The final archive resolved outside approved filesystem roots.");
