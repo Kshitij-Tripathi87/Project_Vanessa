@@ -453,6 +453,7 @@ internal fun ListeningScreen(
     /** Live draft of the current utterance. Empty while nothing is being heard. */
     draft: String,
     onStop: () -> Unit,
+    onCancel: () -> Unit,
     onClose: () -> Unit,
     onTypeInstead: () -> Unit,
 ) {
@@ -479,7 +480,7 @@ internal fun ListeningScreen(
                     icon = Icons.Outlined.Close,
                     contentDescription = "Close voice input",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onClose()
                     },
                     diameter = 44.dp,
@@ -551,7 +552,7 @@ internal fun ListeningScreen(
                 NeonSecondaryButton(
                     text = if (speechAvailable) "Type instead" else "Type your request instead",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onTypeInstead()
                     },
                     modifier = Modifier.fillMaxWidth(),
