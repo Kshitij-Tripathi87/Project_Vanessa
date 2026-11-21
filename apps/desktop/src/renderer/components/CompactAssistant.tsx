@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
+import type { ConversationState } from "@vanessa/protocol";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
@@ -33,6 +34,7 @@ interface CompactAssistantProps {
   audioLevel: number;
   currentRequestId: string | null;
   currentTaskId: string | null;
+  conversationState: ConversationState;
   onOrbClick: () => void;
   onExpand: () => void;
   onCollapse: () => void;
@@ -89,6 +91,7 @@ export function CompactAssistant({
   audioLevel,
   currentRequestId,
   currentTaskId,
+  conversationState,
   onOrbClick,
   onExpand,
   onCollapse,
@@ -101,6 +104,20 @@ export function CompactAssistant({
 }: CompactAssistantProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const followConversationRef = useRef(true);
+
+  useEffect(() => {
+    const node = conversationScrollRef.current;
+    if (!node) return;
+    if (followConversationRef.current) {
+      node.scrollTop = node.scrollHeight;
+      setHasNewMessages(false);
+    } else {
+      setHasNewMessages(true);
+    }
+  }, [conversationState.turns]);
   const taskBusy = taskStage !== "idle" && !["completed", "partial", "failed", "cancelled"].includes(taskStage);
   const voiceBusy = ["thinking", "executing", "responding", "speaking"].includes(voiceState);
   const isBusy = taskBusy || voiceBusy;
@@ -244,8 +261,56 @@ export function CompactAssistant({
         <div className={`assistant-status status-${taskStage}`}>
           <span className="status-kicker">{stageLabels[taskStage]}</span>
           <h1>{progressMessage}</h1>
-          {partialTranscript ? <p className="transcript">“{partialTranscript}”</p> : lastResponse ? <p>{lastResponse}</p> : null}
+          {partialTranscript ? <p className="transcript">“{partialTranscript}”</p> : conversationState.turns.length === 0 && lastResponse ? <p>{lastResponse}</p> : null}
         </div>
+
+        {conversationState.turns.length > 0 && (
+          <section className="conversation-panel" aria-label="Conversation history">
+            <div className="conversation-heading">
+              <span>Conversation</span>
+              <span>{conversationState.turns.length} turns</span>
+            </div>
+            <div
+              ref={conversationScrollRef}
+              className="conversation-history"
+              role="log"
+              aria-label="Conversation messages"
+              aria-live="polite"
+              aria-relevant="additions text"
+              onScroll={(event) => {
+                const node = event.currentTarget;
+                const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
+                followConversationRef.current = atBottom;
+                if (atBottom) setHasNewMessages(false);
+              }}
+            >
+              {conversationState.turns.map((turn) => (
+                <article
+                  className={`conversation-message message-${turn.role} ${turn.status === "failed" ? "message-failed" : ""}`}
+                  key={turn.turnId}
+                  data-turn-id={turn.turnId}
+                >
+                  <span className="conversation-speaker">{turn.role === "user" ? "You" : "Vanessa"}</span>
+                  <p>{turn.text || (turn.status === "responding" ? "Preparing a response…" : "No message content was returned.")}</p>
+                  {turn.status === "failed" && <span className="conversation-state">Response failed</span>}
+                </article>
+              ))}
+            </div>
+            {hasNewMessages && (
+              <button
+                className="conversation-latest no-drag"
+                onClick={() => {
+                  const node = conversationScrollRef.current;
+                  if (node) node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+                  followConversationRef.current = true;
+                  setHasNewMessages(false);
+                }}
+              >
+                New messages · Jump to latest
+              </button>
+            )}
+          </section>
+        )}
 
         {isBusy && (
           <div className="progress-steps" aria-label="Task progress">
