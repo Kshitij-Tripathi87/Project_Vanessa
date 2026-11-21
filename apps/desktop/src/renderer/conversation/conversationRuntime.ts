@@ -168,6 +168,23 @@ export class DesktopConversationRuntime {
     return completed;
   }
 
+  /** Ends the response turn without changing the task's execution state. */
+  interruptAssistant(
+    request: ConversationRequestHandle,
+    reason: "barge_in" | "user_cancel" = "user_cancel",
+  ): boolean {
+    const assistantTurnId = this.beginAssistantTurn(request);
+    if (!assistantTurnId) return false;
+    const interrupted = this.dispatch({
+      type: "turn.interrupted",
+      conversationId: this.currentState.conversationId,
+      turnId: assistantTurnId,
+      reason,
+    });
+    if (interrupted) this.activeRequests.delete(request.requestId);
+    return interrupted;
+  }
+
   /** Adds an explicit failed assistant turn without inventing a task result. */
   failAssistant(request: ConversationRequestHandle, reason: string): boolean {
     const assistantTurnId = this.beginAssistantTurn(request);
