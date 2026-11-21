@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
             .takeLast(100)
             .map { turn ->
                 VanessaChatMessage(
-                    id = turn.turnId.hashCode().toLong(),
+                    id = turn.turnId,
                     fromUser = turn.role == ConversationTurnRole.USER,
                     text = turn.text,
                 )
