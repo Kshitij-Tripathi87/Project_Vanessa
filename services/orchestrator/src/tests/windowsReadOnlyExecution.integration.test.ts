@@ -104,6 +104,7 @@ test("missing Windows audio read-back cannot be narrated as a successful status"
   assert.equal(task.status, "failed");
   assert.equal(task.verification?.verified, false);
   assert.equal((task.result as any).audio.observed, null);
-  assert.match(task.error || "", /No default render device|Audio verification failed/);
+  assert.match(task.error || "", /Task did not return a passing verification result/);
+  assert.equal((task.result as any).audio.error.message, "No default render device is available.");
   assert.doesNotMatch(fixture.result.spokenSummary, /Playback volume is \d/);
 });
