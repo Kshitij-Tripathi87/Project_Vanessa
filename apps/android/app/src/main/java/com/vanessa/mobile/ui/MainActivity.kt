@@ -341,10 +341,12 @@ class MainActivity : ComponentActivity() {
                         activeCaptureLease = null
                     }
                     speechInputStatus = state
-                    voiceListening = normalized.contains("listening") &&
+                    voiceListening = (
+                        normalized.contains("listening") ||
+                            normalized.contains("processing speech")
+                        ) &&
                         !normalized.contains("unavailable") &&
-                        !normalized.contains("failed") &&
-                        !normalized.contains("processing speech")
+                        !normalized.contains("failed")
                 }
             },
         )
