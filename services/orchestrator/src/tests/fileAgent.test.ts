@@ -25,7 +25,7 @@ test("inspects supported text files and returns bounded content with evidence", 
     assert.match(String((result.data as any).content), /The result is 42/);
     assert.equal((result.data as any).truncated, false);
     assert.equal(result.verification?.passed, true);
-    assert.equal(result.evidence.length, 1);
+    assert.equal((result.evidence || []).length, 1);
   });
 });
 
@@ -65,7 +65,7 @@ test("folder.create reports an existing approved folder without modifying its co
     await fs.writeFile(path.join(target, "keep.txt"), "keep", "utf8");
     const result = await new FileAgent().execute("folder.create", { name: "existing", basePath: root });
     assert.equal(result.success, true);
-    assert.match(result.summary, /already exists/);
+    assert.match(String(result.summary), /already exists/);
     assert.equal((result.data as any).verifiedFilesystemResults.actualStateChanged, false);
     assert.deepEqual(await fs.readdir(target), ["keep.txt"]);
   });
@@ -98,7 +98,7 @@ test("file.search keeps the established filename result shape and includes evide
     assert.equal((result.data as any).bestMatch.name, "report-final.md");
     assert.equal(result.verification?.passed, true);
     assert.equal(result.evidence.length, 1);
-    assert.equal(result.evidence[0].source, await fs.realpath(root));
+    assert.equal((result.evidence || [])[0]?.source, await fs.realpath(root));
   });
 });
 
