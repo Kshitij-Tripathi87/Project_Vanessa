@@ -120,7 +120,14 @@ class AndroidOnDeviceSpeechInput(
     }
 
     fun stop() {
-        try { recognizer?.stopListening() } catch (_: Exception) { stopAndDestroy() }
+        try {
+            recognizer?.stopListening()
+        } catch (error: Exception) {
+            // A failed finalize must not leave an active controller capture lease
+            // waiting forever for a final callback that will never arrive.
+            stopAndDestroy()
+            onState("Could not finish on-device speech recognition: ${error.message ?: "unknown error"}")
+        }
     }
 
     fun close() {
