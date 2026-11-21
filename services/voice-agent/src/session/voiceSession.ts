@@ -46,9 +46,15 @@ const MAX_CONVERSATION_CHARS = 1200;
  * conversation events and orchestrator tasks can share one request key while
  * retries of the same recognized provider turn retain their idempotency key.
  */
-export function voiceRequestIdForTurn(turnId?: string): string {
+export function voiceRequestIdForTurn(turnId?: string, sessionId = "standalone"): string {
   if (!turnId) return randomUUID();
-  const bytes = createHash("sha256").update("vanessa.voice.request.v1:").update(turnId).digest().subarray(0, 16);
+  const bytes = createHash("sha256")
+    .update("vanessa.voice.request.v1:")
+    .update(sessionId)
+    .update(":")
+    .update(turnId)
+    .digest()
+    .subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x80;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
@@ -84,6 +90,7 @@ export interface VoiceProviderInfo {
 }
 
 export class VanessaVoiceSession {
+  private readonly voiceSessionId = randomUUID();
   private turnDetector = new TurnDetector();
   private vad = new SileroVadDetector();
   private readonly sarvamSpeechGate = new SpeechAudioGate();
@@ -424,7 +431,7 @@ export class VanessaVoiceSession {
 
     this.partialTranscript = "";
     this.appendConversationTurn({ role: "user", content: command });
-    const requestId = voiceRequestIdForTurn(turnId);
+    const requestId = voiceRequestIdForTurn(turnId, this.voiceSessionId);
     this.setState("thinking");
     this.handlers.onHudUpdate?.({ state: "thinking", transcript: command, requestId });
     const idempotencyKey = `voice:${requestId}`;
