@@ -7,7 +7,7 @@ import {
   MAX_TURN_CONTENT,
   type ConversationEvent,
   type ConversationState,
-} from "@vanessa/protocol";
+} from "@vanessa/protocol/conversation";
 
 export interface ConversationRequestHandle {
   conversationId: string;
