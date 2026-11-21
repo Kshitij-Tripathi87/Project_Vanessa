@@ -272,6 +272,36 @@ test("file.zip rejects archive names that contain path components", async () => 
   });
 });
 
+test("Windows PowerShell archive handler creates and verifies a real ZIP inside the approved destination", {
+  skip: process.platform !== "win32",
+}, async () => {
+  await withApprovedRoot("vanessa-zip-windows-", async (root) => {
+    const source = path.join(root, "source");
+    const destination = path.join(root, "archives");
+    await fs.mkdir(source);
+    await fs.mkdir(destination);
+    await fs.writeFile(path.join(source, "proof.txt"), "Vanessa archive verification", "utf8");
+
+    const result = await new FileAgent().execute("file.zip", {
+      sourceDir: source,
+      destinationDir: destination,
+      zipName: "verified.zip",
+    });
+    const zipPath = path.join(destination, "verified.zip");
+    assert.equal(result.success, true);
+    assert.equal(result.verification?.passed, true);
+    assert.equal((result.data as any).verifiedFilesystemResults.zipPath, await fs.realpath(zipPath));
+    const handle = await fs.open(zipPath, "r");
+    try {
+      const signature = Buffer.alloc(4);
+      await handle.read(signature, 0, signature.length, 0);
+      assert.deepEqual([...signature], [0x50, 0x4b, 0x03, 0x04]);
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
 test("legacy Drive actions never fabricate upload or share-link success", async () => {
   for (const action of ["drive.upload", "drive.share_link"]) {
     const result = await new FileAgent().execute(action, { file: "report.pdf", fileId: "claimed-id" });
