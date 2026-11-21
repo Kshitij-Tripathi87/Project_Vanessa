@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
 import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 import { useVanessaStore } from "../stores/vanessaStore.js";
+import { DesktopConversationRuntime } from "../conversation/conversationRuntime.js";
 
 export interface SentimentData {
   valence: number;
@@ -58,7 +59,17 @@ function resampleTo16k(audioBuffer: Float32Array, inputSampleRate: number): Floa
 }
 
 export function useAudioCapture() {
-  const { voiceState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, setTaskStage, setPendingApproval } = useVanessaStore();
+  const {
+    voiceState,
+    conversationState,
+    setConversationState,
+    setVoiceState,
+    setLastResponse,
+    setActivePlan,
+    setCurrentRequestId,
+    setTaskStage,
+    setPendingApproval,
+  } = useVanessaStore();
 
   const [isMicActive, setIsMicActive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0); // 0.0 to 1.0 for VoiceOrb scaling
@@ -79,8 +90,11 @@ export function useAudioCapture() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const processorRef = useRef<AudioWorkletNode | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const pendingTextCommandRef = useRef<{ type: "transcript_final"; text: string; language: string; turnId: string } | null>(null);
   const activeTextOnlyRequestRef = useRef<string | null>(null);
+  const conversationRuntimeRef = useRef<DesktopConversationRuntime | null>(null);
+  if (!conversationRuntimeRef.current) {
+    conversationRuntimeRef.current = new DesktopConversationRuntime(conversationState, setConversationState);
+  }
   const animationFrameRef = useRef<number | null>(null);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
@@ -107,8 +121,7 @@ export function useAudioCapture() {
   const isPlayingQueueRef = useRef<boolean>(false);
   const activeSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const playbackGenerationRef = useRef(0);
-  // Once speech is stopped, ignore later chunks/state for this response. A new
-  // user turn resets this fence; it is independent of orchestrator task state.
+  // Stopping speech fences late chunks from the same response without cancelling its task.
   const suppressSpeechOutputRef = useRef(false);
 
   const playNextInQueue = useCallback(async () => {
@@ -229,7 +242,6 @@ export function useAudioCapture() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: Date.now() }));
     }
-    suppressSpeechOutputRef.current = false;
     pendingBargeAudioRef.current = preRollRef.current;
     preRollRef.current = [];
     bargeResumePendingRef.current = true;
@@ -245,29 +257,6 @@ export function useAudioCapture() {
     }
   }, []);
 
-  const dispatchTextCommand = useCallback((
-    socket: WebSocket,
-    command: { type: "transcript_final"; text: string; language: string; turnId: string },
-  ) => {
-    if (socket.readyState !== WebSocket.OPEN) return false;
-    if (pttActiveRef.current) {
-      pttActiveRef.current = false;
-      activatedSocketRef.current = null;
-      pendingBargeAudioRef.current = [];
-      preRollRef.current = [];
-      bargeResumePendingRef.current = false;
-      stopCaptureRef.current?.(true);
-      socket.send(JSON.stringify({ type: "deactivate" }));
-    }
-    socket.send(JSON.stringify(command));
-    setPartialTranscript(command.text);
-    setLastResponse("");
-    setCurrentRequestId(null);
-    setTaskStage("accepted", "Request received.");
-    setVoiceState("thinking");
-    return true;
-  }, [setCurrentRequestId, setLastResponse, setTaskStage, setVoiceState, setPartialTranscript]);
-
   // Keep the control channel ready; ASR/capture starts only after explicit PTT.
   const connectVoiceWs = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
@@ -281,13 +270,7 @@ export function useAudioCapture() {
       console.log("[useAudioCapture] Connected to Vanessa Voice Real-Time WebSocket on port 4500");
       setMicError(null);
       setVoiceConnectionState("connected");
-      const pending = pendingTextCommandRef.current;
-      if (pending) {
-        if (!dispatchTextCommand(ws, pending)) return;
-        pendingTextCommandRef.current = null;
-      } else {
-        activateConnectedSocket(ws);
-      }
+      activateConnectedSocket(ws);
     };
 
     ws.onerror = () => {
@@ -326,9 +309,7 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "hud_update") {
-            if (msg.state && !(suppressSpeechOutputRef.current && ["responding", "speaking"].includes(msg.state))) {
-              setVoiceState(msg.state);
-            }
+            if (msg.state) setVoiceState(msg.state);
             if (msg.transcript !== undefined) {
               setPartialTranscript(msg.transcript);
               if (msg.state === "responding" || msg.state === "speaking") {
@@ -342,10 +323,7 @@ export function useAudioCapture() {
           if (msg.type === "state_change") {
             // Synthesis can finish before local playback; do not mark the UI
             // idle or disable barge-in while the audio queue is still playing.
-            const speechStateSuppressed = suppressSpeechOutputRef.current && ["responding", "speaking"].includes(msg.state);
-            if (!speechStateSuppressed && (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0))) {
-              setVoiceState(msg.state);
-            }
+            if (msg.state !== "idle" || (!isPlayingQueueRef.current && audioQueueRef.current.length === 0)) setVoiceState(msg.state);
             if (msg.state === "listening" && bargeResumePendingRef.current && ws.readyState === WebSocket.OPEN) {
               for (const frame of pendingBargeAudioRef.current) ws.send(frame);
               pendingBargeAudioRef.current = [];
@@ -390,7 +368,7 @@ export function useAudioCapture() {
 
           // Low-latency streaming TTS sentence chunk
           if (msg.type === "tts_chunk") {
-            if (suppressSpeechOutputRef.current || pttActiveRef.current || bargeResumePendingRef.current) return;
+            if (pttActiveRef.current || bargeResumePendingRef.current) return;
             setVoiceState("speaking");
             audioQueueRef.current.push({
               text: msg.text,
@@ -409,16 +387,11 @@ export function useAudioCapture() {
             if (msg.state === "thinking") {
               setVoiceState("thinking");
             } else if (msg.state === "speaking") {
+              setVoiceState("speaking");
               setLastResponse(msg.spokenSummary);
               if (msg.plan) {
                 setActivePlan(msg.plan);
               }
-              if (suppressSpeechOutputRef.current) {
-                // Keep the written response but do not restart playback after Stop speaking.
-                setVoiceState("idle");
-                return;
-              }
-              setVoiceState("speaking");
 
               // Fallback for non-chunked response if queue is empty
               if (audioQueueRef.current.length === 0 && !isPlayingQueueRef.current && msg.spokenSummary) {
@@ -452,106 +425,112 @@ export function useAudioCapture() {
         setTimeout(() => { if (wsRef.current === ws) connectVoiceWs(); }, 3000);
       }
     };
-  }, [activateConnectedSocket, dispatchTextCommand, setVoiceConnectionState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, playNextInQueue]);
+  }, [activateConnectedSocket, setVoiceConnectionState, setVoiceState, setLastResponse, setActivePlan, setCurrentRequestId, playNextInQueue]);
 
 
   const submitTextCommand = useCallback((rawText: string, language = "en") => {
     const text = rawText.trim();
-    if (!text || text.length > 16000) {
+    if (!text || text.length > 4000) {
       setLastResponse(text ? "That request is too long." : "Enter a request first.");
       return false;
     }
 
     suppressSpeechOutputRef.current = false;
-    // If voice is explicitly disabled or still disconnected, keep typing independent of
-    // the voice WebSocket and route straight through the trusted desktop IPC/orchestrator.
-    const voiceSocketOpen = wsRef.current?.readyState === WebSocket.OPEN;
-    if (import.meta.env.VITE_VANESSA_VOICE_ENABLED === "false" || !voiceSocketOpen) {
-      pendingTextCommandRef.current = null;
-      const requestId = `desktop-${globalThis.crypto.randomUUID()}`;
-      activeTextOnlyRequestRef.current = requestId;
-      setPartialTranscript(text);
-      setLastResponse("");
-      setCurrentRequestId(requestId);
-      setPendingApproval(null);
-      setTaskStage("accepted", "Request received.");
-      setVoiceState("thinking");
-      void window.vanessa.executeCommand({
-        command: text,
-        language: language.slice(0, 32) || "en",
-        source: "desktop",
-        requestId,
-        idempotencyKey: `desktop-direct:${requestId}`,
-      })
-        .then((result) => {
-          if (activeTextOnlyRequestRef.current !== requestId) return;
-          activeTextOnlyRequestRef.current = null;
-          if (result.requestId) setCurrentRequestId(result.requestId);
-          if (result.plan) setActivePlan(result.plan);
-          setLastResponse(result.spokenSummary || "The orchestrator returned without a summary.");
-          if (result.status === "awaiting_approval") {
-            setPendingApproval(result.pendingTasks?.[0] || null);
-            setTaskStage("executing", "I need your approval before continuing.");
-          } else if (result.status === "success" && result.verification?.verified === true) {
-            setTaskStage("completed", "Done — result verified.");
-          } else if (result.status === "partial" || result.status === "accepted" || result.status === "success") {
-            setTaskStage("partial", result.status === "accepted"
-              ? "The request is already being processed."
-              : "Execution returned without a fully verified result.");
-          } else {
-            setTaskStage("failed", "The request failed or could not be verified.");
-          }
-          // If the voice service is unavailable, provide an OS/browser speech fallback
-          // while preserving the written result. This does not claim remote TTS was used.
-          const canSpeakFallback =
-            import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
-            Boolean(result.spokenSummary?.trim()) &&
-            "speechSynthesis" in window;
-          if (canSpeakFallback && !suppressSpeechOutputRef.current) {
-            audioQueueRef.current.push({
-              text: result.spokenSummary,
-              fallbackSpeech: true,
-              speechRate: 1.05,
-              speechPitch: 1.02,
-              isFinal: true,
-            });
-            setVoiceState("speaking");
-            playNextInQueue();
-          } else {
-            setVoiceState("idle");
-          }
-        })
-        .catch((error: unknown) => {
-          if (activeTextOnlyRequestRef.current !== requestId) return;
-          activeTextOnlyRequestRef.current = null;
-          const detail = error instanceof Error ? error.message : "Unknown connection error";
-          setLastResponse(`Orchestrator request failed: ${detail}`);
-          setCurrentRequestId(null);
-          setTaskStage("failed", "The request could not be completed.");
-          setVoiceState("error");
-        });
-      return true;
+    const conversation = conversationRuntimeRef.current;
+    const request = conversation?.submitTyped(text);
+    if (!conversation || !request) {
+      setLastResponse("A new conversation turn could not be created. The existing conversation is unchanged.");
+      return false;
     }
 
-    suppressSpeechOutputRef.current = false;
-    const command = {
-      type: "transcript_final" as const,
-      text,
-      language: language.slice(0, 32) || "en",
-      turnId: `desktop-${globalThis.crypto.randomUUID()}`,
-    };
-    const socket = wsRef.current;
-    if (socket && dispatchTextCommand(socket, command)) return true;
+    const requestId = request.requestId;
+    activeTextOnlyRequestRef.current = requestId;
+    setPartialTranscript("");
+    setLastResponse("");
+    setCurrentRequestId(requestId);
+    setPendingApproval(null);
+    setTaskStage("accepted", "Request received.");
+    setVoiceState("thinking");
 
-    // Only an unsent command is buffered during a close race. It is never replayed
-    // when the direct IPC/orchestrator path has already accepted the request.
-    pendingTextCommandRef.current = command;
-    setPartialTranscript(text);
-    setLastResponse("Voice connection changed while submitting. Reconnecting…");
-    setTaskStage("accepted", "The request has not been sent yet.");
-    connectVoiceWs();
+    // Typed input always uses trusted Electron IPC. Voice WebSocket availability
+    // must not change how text is submitted or which completed turns reach planning.
+    void window.vanessa.executeCommand({
+      command: text,
+      language: language.slice(0, 32) || "en",
+      source: "desktop",
+      requestId,
+      idempotencyKey: `desktop:${requestId}`,
+      conversationContext: conversation.plannerContext(requestId),
+    })
+      .then((result) => {
+        if (result.requestId !== requestId) {
+          const detail = "The orchestrator response did not match the submitted request. Its result was not attached to this conversation.";
+          conversation.failAssistant(request, detail);
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
+          setLastResponse(detail);
+          setCurrentRequestId(null);
+          setTaskStage("failed", "Request correlation failed.");
+          setVoiceState("error");
+          return;
+        }
+
+        if (result.plan) {
+          if (activeTextOnlyRequestRef.current === requestId) setActivePlan(result.plan);
+        }
+        const responseText = result.spokenSummary?.trim() ||
+          "The orchestrator returned without an assistant summary.";
+        // Append to the originating turn even when a newer request has taken
+        // focus. Only update the global task/voice surface for the current one.
+        conversation.completeAssistant(request, responseText);
+        if (activeTextOnlyRequestRef.current !== requestId) return;
+        activeTextOnlyRequestRef.current = null;
+        setLastResponse(responseText);
+
+        if (result.status === "awaiting_approval") {
+          setPendingApproval(result.pendingTasks?.[0] || null);
+          setTaskStage("executing", "I need your approval before continuing.");
+        } else if (result.status === "success" && result.verification?.verified === true) {
+          setTaskStage("completed", "Done — result verified.");
+        } else if (result.status === "partial" || result.status === "accepted" || result.status === "success") {
+          setTaskStage("partial", result.status === "accepted"
+            ? "The request is already being processed."
+            : "Execution returned without a fully verified result.");
+        } else {
+          setTaskStage("failed", "The request failed or could not be verified.");
+        }
+
+        const canSpeakFallback =
+          import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false" &&
+          Boolean(responseText) &&
+          "speechSynthesis" in window;
+        if (canSpeakFallback) {
+          audioQueueRef.current.push({
+            text: responseText,
+            fallbackSpeech: true,
+            speechRate: 1.05,
+            speechPitch: 1.02,
+            isFinal: true,
+          });
+          setVoiceState("speaking");
+          playNextInQueue();
+        } else {
+          setVoiceState("idle");
+        }
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : "Unknown connection error";
+        const message = `Orchestrator request failed: ${detail}`;
+        conversation.failAssistant(request, message);
+        if (activeTextOnlyRequestRef.current !== requestId) return;
+        activeTextOnlyRequestRef.current = null;
+        setLastResponse(message);
+        setCurrentRequestId(null);
+        setTaskStage("failed", "The request could not be completed.");
+        setVoiceState("error");
+      });
     return true;
-  }, [connectVoiceWs, dispatchTextCommand, playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
+  }, [playNextInQueue, setActivePlan, setCurrentRequestId, setLastResponse, setPendingApproval, setTaskStage, setPartialTranscript, setVoiceState]);
 
   // A local-only mic check. It never opens the voice WebSocket or sends audio for transcription.
   const testMicrophone = useCallback(async () => {
@@ -863,8 +842,8 @@ export function useAudioCapture() {
     pendingBargeAudioRef.current = [];
     preRollRef.current = [];
     bargeResumePendingRef.current = false;
-    pendingTextCommandRef.current = null;
-    activeTextOnlyRequestRef.current = null;
+    // Keep the in-flight request correlation until the orchestrator returns
+    // its actual terminal outcome after task cancellation.
     playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
@@ -902,7 +881,6 @@ export function useAudioCapture() {
       // Keep audio local while Vanessa responds so onset detection can support
       // barge-in; PCM is sent to ASR only while PTT is active.
     } else {
-      // A new user turn is allowed to speak even if the previous response was silenced.
       suppressSpeechOutputRef.current = false;
       // Acquire the microphone only after an explicit PTT action.
       await startRecording();
@@ -930,7 +908,6 @@ export function useAudioCapture() {
       processorRef.current?.disconnect();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       audioContextRef.current?.close().catch(() => {});
-      pendingTextCommandRef.current = null;
       if (wsRef.current) {
         const ws = wsRef.current;
         wsRef.current = null;

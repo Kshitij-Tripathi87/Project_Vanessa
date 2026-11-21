@@ -30,7 +30,8 @@
     "package:bootstrap": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-bootstrap.ps1",
     "setup:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup_windows.ps1",
     "package:windows-installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1",
-    "package:windows-msi": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-msi.ps1"
+    "package:windows-msi": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-msi.ps1",
+    "test:desktop:conversation": "pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/renderer/conversation/conversationRuntime.test.ts"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",
