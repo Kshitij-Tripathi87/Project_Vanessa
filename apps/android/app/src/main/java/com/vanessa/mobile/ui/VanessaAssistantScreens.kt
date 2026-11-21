@@ -72,7 +72,7 @@ import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.ui.theme.VanessaType
 
 internal data class VanessaChatMessage(
-    val id: Long,
+    val id: String,
     val fromUser: Boolean,
     val text: String,
 )
