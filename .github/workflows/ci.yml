@@ -110,6 +110,9 @@ jobs:
       - name: Build desktop renderer and Electron main process
         run: pnpm --filter @vanessa/desktop build
 
+      - name: Test shared desktop conversation lifecycle
+        run: pnpm run test:desktop:conversation
+
       - name: Test desktop docking, preferences, identity vault, signer bridge, and runtime config
         run: pnpm --filter @vanessa/orchestrator exec tsx --test ../../apps/desktop/src/main/docking.test.ts ../../apps/desktop/src/main/remotePcIdentityStore.test.ts ../../apps/desktop/src/main/remotePcSignerServer.test.ts ../../apps/desktop/src/main/runtimeConfig.test.ts
 

@@ -467,3 +467,20 @@ input {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* Shared-protocol conversation history. Keep the message log independent from
+   task progress so a long transcript never hides approval or execution state. */
+.conversation-panel { position: relative; margin-top: 13px; }
+.conversation-heading { display: flex; justify-content: space-between; margin: 0 2px 7px; color: var(--text-dim); font-size: 9px; font-weight: 750; letter-spacing: 0.12em; text-transform: uppercase; }
+.conversation-heading span:last-child { color: var(--text-muted); font-weight: 550; letter-spacing: 0.02em; }
+.conversation-history { display: grid; gap: 7px; max-height: 164px; overflow-y: auto; overscroll-behavior: contain; padding: 1px 3px 5px 1px; scrollbar-width: thin; }
+.conversation-message { min-width: 0; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.075); border-radius: 10px; background: rgba(255,255,255,0.025); }
+.conversation-message.message-user { border-color: rgba(78,205,237,0.15); background: rgba(35,129,160,0.08); }
+.conversation-message.message-assistant { border-color: rgba(255,255,255,0.085); background: rgba(255,255,255,0.035); }
+.conversation-message.message-failed { border-color: rgba(251,113,133,0.25); background: rgba(244,63,94,0.055); }
+.conversation-speaker { display: block; margin-bottom: 4px; color: #76dff6; font-size: 8px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }
+.message-assistant .conversation-speaker { color: #a9bdcd; }
+.conversation-message p { margin: 0; color: var(--text-main); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.conversation-state { display: block; margin-top: 5px; color: #fda4af; font-size: 8px; font-weight: 700; }
+.conversation-latest { display: block; margin: 6px auto 0; padding: 5px 9px; border: 1px solid rgba(78,205,237,0.25); border-radius: 7px; color: #b4f4ff; background: rgba(0,205,255,0.08); font-size: 9px; font-weight: 700; }
+
