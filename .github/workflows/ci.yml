@@ -131,6 +131,9 @@ jobs:
       - name: Test reviewed agent catalog
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/agentCatalog.test.ts
 
+      - name: Regression-test cancellation during planning
+        run: pnpm --filter @vanessa/voice-agent exec tsx --import ../../scripts/test-env.mjs --test ../../evals/sarvamPipeline.test.ts
+
       - name: Test shared voice/text command contract
         run: pnpm --filter @vanessa/voice-agent exec tsx --test src/tests/commandContract.test.ts
 
