@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { once } from "node:events";
-import { WebSocket } from "ws";
+import { WebSocket, type RawData } from "ws";
 import { createVoiceAgentServer } from "../server.js";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
 
@@ -65,7 +65,7 @@ test("voice WebSocket accepts bounded shared conversation context before capture
         socket?.off("message", onMessage);
         reject(new Error(`Timed out waiting for ${type}`));
       }, 1500);
-      const onMessage = (data: WebSocket.RawData) => {
+      const onMessage = (data: RawData) => {
         let message: Record<string, unknown>;
         try {
           message = JSON.parse(data.toString()) as Record<string, unknown>;
