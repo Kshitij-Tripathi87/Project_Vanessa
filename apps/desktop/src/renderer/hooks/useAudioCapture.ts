@@ -455,11 +455,11 @@ export function useAudioCapture() {
       conversationContext: conversation.plannerContext(requestId),
     })
       .then((result) => {
-        if (activeTextOnlyRequestRef.current !== requestId) return;
-        activeTextOnlyRequestRef.current = null;
         if (result.requestId !== requestId) {
           const detail = "The orchestrator response did not match the submitted request. Its result was not attached to this conversation.";
           conversation.failAssistant(request, detail);
+          if (activeTextOnlyRequestRef.current !== requestId) return;
+          activeTextOnlyRequestRef.current = null;
           setLastResponse(detail);
           setCurrentRequestId(null);
           setTaskStage("failed", "Request correlation failed.");
@@ -467,10 +467,16 @@ export function useAudioCapture() {
           return;
         }
 
-        if (result.plan) setActivePlan(result.plan);
+        if (result.plan) {
+          if (activeTextOnlyRequestRef.current === requestId) setActivePlan(result.plan);
+        }
         const responseText = result.spokenSummary?.trim() ||
           "The orchestrator returned without an assistant summary.";
+        // Append to the originating turn even when a newer request has taken
+        // focus. Only update the global task/voice surface for the current one.
         conversation.completeAssistant(request, responseText);
+        if (activeTextOnlyRequestRef.current !== requestId) return;
+        activeTextOnlyRequestRef.current = null;
         setLastResponse(responseText);
 
         if (result.status === "awaiting_approval") {
@@ -505,11 +511,11 @@ export function useAudioCapture() {
         }
       })
       .catch((error: unknown) => {
-        if (activeTextOnlyRequestRef.current !== requestId) return;
-        activeTextOnlyRequestRef.current = null;
         const detail = error instanceof Error ? error.message : "Unknown connection error";
         const message = `Orchestrator request failed: ${detail}`;
         conversation.failAssistant(request, message);
+        if (activeTextOnlyRequestRef.current !== requestId) return;
+        activeTextOnlyRequestRef.current = null;
         setLastResponse(message);
         setCurrentRequestId(null);
         setTaskStage("failed", "The request could not be completed.");
