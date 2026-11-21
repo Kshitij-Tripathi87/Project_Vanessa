@@ -116,3 +116,51 @@ test("an over-limit assistant response fails rather than publishing a truncated 
   assert.equal(fixture.state.turns[1].status, "failed");
   assert.match(fixture.state.turns[1].text, /exceeded the conversation limit/);
 });
+
+
+test("voice final transcript uses the voice request ID and creates a voice-source turn", () => {
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
+  const requestId = "11111111-2222-4333-8444-555555555555";
+  const request = runtime.submitVoiceFinal("  Turn on the light  ", requestId);
+  assert.ok(request);
+  assert.equal(request.source, "voice");
+  assert.equal(request.requestId, requestId);
+  assert.equal(fixture.state.turns.length, 1);
+  assert.equal(fixture.state.turns[0].source, "voice");
+  assert.equal(fixture.state.turns[0].text, "Turn on the light");
+  assert.equal(fixture.state.turns[0].requestId, requestId);
+});
+
+test("duplicate voice final is idempotent and conflicting final text is rejected", () => {
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
+  const requestId = "22222222-2222-4333-8444-555555555555";
+  const first = runtime.submitVoiceFinal("Read my calendar", requestId);
+  assert.ok(first);
+  const duplicate = runtime.submitVoiceFinal("Read my calendar", requestId);
+  assert.deepEqual(duplicate, first);
+  assert.equal(runtime.submitVoiceFinal("Delete my calendar", requestId), null);
+  assert.equal(fixture.state.turns.length, 1);
+});
+
+test("voice assistant response shares the voice request ID and releases it from planner context", () => {
+  const fixture = makeRuntime();
+  const { runtime } = fixture;
+  const requestId = "33333333-2222-4333-8444-555555555555";
+  const request = runtime.submitVoiceFinal("What is my next meeting?", requestId);
+  assert.ok(request);
+  assert.deepEqual(runtime.plannerContext(), []);
+  assert.equal(runtime.completeAssistant(request, "Your next meeting is at 3 PM."), true);
+  assert.equal(fixture.state.turns[1].source, "voice");
+  assert.equal(fixture.state.turns[1].requestId, requestId);
+  assert.deepEqual(runtime.plannerContext(), [
+    { role: "user", content: "What is my next meeting?" },
+    { role: "assistant", content: "Your next meeting is at 3 PM." },
+  ]);
+});
+
+test("voice request IDs must be canonical UUIDs before entering the shared protocol", () => {
+  const { runtime } = makeRuntime();
+  assert.equal(runtime.submitVoiceFinal("Turn on the light", "voice-abcd"), null);
+});
