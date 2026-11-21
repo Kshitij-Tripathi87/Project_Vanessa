@@ -72,7 +72,7 @@ import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.ui.theme.VanessaType
 
 internal data class VanessaChatMessage(
-    val id: Long,
+    val id: String,
     val fromUser: Boolean,
     val text: String,
 )
@@ -294,6 +294,10 @@ internal fun ChatScreen(
                     }
                 }
 
+                if (response.startsWith("Vanessa needs calendar access")) {
+                    InlineNotice(response, NoticeTone.INFO)
+                }
+
                 if (!modelLoaded) {
                     InlineNotice(
                         if (modelBusy) "The local model is being installed or loaded. Requests will not run until that finishes."
@@ -453,6 +457,7 @@ internal fun ListeningScreen(
     /** Live draft of the current utterance. Empty while nothing is being heard. */
     draft: String,
     onStop: () -> Unit,
+    onCancel: () -> Unit,
     onClose: () -> Unit,
     onTypeInstead: () -> Unit,
 ) {
@@ -479,7 +484,7 @@ internal fun ListeningScreen(
                     icon = Icons.Outlined.Close,
                     contentDescription = "Close voice input",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onClose()
                     },
                     diameter = 44.dp,
@@ -514,7 +519,7 @@ internal fun ListeningScreen(
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 NeonIconButton(
                     icon = Icons.Outlined.Stop,
-                    contentDescription = "Stop listening",
+                    contentDescription = "Finish listening",
                     onClick = onStop,
                     diameter = 66.dp,
                     highlighted = true,
@@ -551,7 +556,7 @@ internal fun ListeningScreen(
                 NeonSecondaryButton(
                     text = if (speechAvailable) "Type instead" else "Type your request instead",
                     onClick = {
-                        onStop()
+                        onCancel()
                         onTypeInstead()
                     },
                     modifier = Modifier.fillMaxWidth(),

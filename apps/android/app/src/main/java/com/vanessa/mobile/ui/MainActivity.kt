@@ -1,6 +1,9 @@
 package com.vanessa.mobile.ui
 
-import ai.vanessa.agent.ConversationTurn
+import ai.vanessa.agent.CaptureLease
+import ai.vanessa.agent.ConversationController
+import ai.vanessa.agent.ConversationPublishResult
+import ai.vanessa.agent.ConversationRequestHandle
 import ai.vanessa.agent.LocalPlanCoordinator
 import ai.vanessa.agent.LocalPlanError
 import ai.vanessa.agent.LocalPlanOutcome
@@ -34,6 +37,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import com.vanessa.mobile.ui.theme.VanessaTheme
+import com.vanessa.protocol.conversation.ConversationTurnSource
+import java.util.UUID
+import kotlinx.coroutines.flow.collect
 
 private enum class VanessaDestination {
     WELCOME,
@@ -60,18 +66,23 @@ class MainActivity : ComponentActivity() {
     private var modelLoaded by mutableStateOf(false)
     private var modelBusy by mutableStateOf(false)
     private var prompt by mutableStateOf("")
-    private var chatMessages by mutableStateOf(emptyList<VanessaChatMessage>())
-    private var nextChatMessageId = 1L
+    private val conversationController = ConversationController(UUID.randomUUID().toString())
+    private var conversationState by mutableStateOf(conversationController.state.value)
+
+    /** UI is a projection of reducer state; no parallel transcript/draft is stored here. */
+    private val chatMessages: List<VanessaChatMessage>
+        get() = ConversationUiProjection.messages(conversationState)
+
+    private val voiceDraft: String
+        get() = ConversationUiProjection.voiceDraft(conversationState)
+
+    private var activeCaptureLease: CaptureLease? = null
+    private var pendingConversationRequest: ConversationRequestHandle? = null
     private var assistantResponse by mutableStateOf("")
     private var assistantMetrics by mutableStateOf("")
     private var assistantBusy by mutableStateOf(false)
     private var speechStatus by mutableStateOf("Checking offline speech output…")
 
-    /**
-     * The draft of the sentence being spoken. Cleared when a turn ends, so a
-     * stale draft can never be mistaken for the current utterance.
-     */
-    private var voiceDraft by mutableStateOf("")
     private var speechReady by mutableStateOf(false)
     private var speechInputStatus by mutableStateOf("Checking on-device speech support…")
     private var onDeviceSpeechAvailable by mutableStateOf(false)
@@ -109,14 +120,14 @@ class MainActivity : ComponentActivity() {
             pendingAgentPrompt = null
             if (retry != null) {
                 assistantBusy = false
-                // The retry is a fresh run from the chat; it must not inherit
-                // the previous progress route as its origin.
                 destination = VanessaDestination.HOME
-                if (granted) {
-                    runAssistant(retry, recordUserMessage = false)
+                val request = pendingConversationRequest
+                if (granted && request != null) {
+                    runAssistant(retry, requestHandle = request)
                 } else {
                     assistantResponse = "Calendar permission was denied. Vanessa did not read any calendar events."
-                    appendChatMessage(fromUser = false, text = assistantResponse)
+                    request?.let { publishAssistantResponse(it, assistantResponse) }
+                    pendingConversationRequest = null
                 }
             }
         }
@@ -164,6 +175,11 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.rgb(3, 5, 10)
         window.navigationBarColor = android.graphics.Color.rgb(3, 5, 10)
         microphonePermissionGranted = hasMicrophonePermission()
+        lifecycleScope.launch {
+            conversationController.state.collect { state ->
+                conversationState = state
+            }
+        }
 
         setContent {
             VanessaTheme {
@@ -177,7 +193,7 @@ class MainActivity : ComponentActivity() {
                         VanessaDestination.ONBOARDING -> destination = VanessaDestination.WELCOME
                         VanessaDestination.PERMISSIONS -> destination = VanessaDestination.ONBOARDING
                         VanessaDestination.LISTENING -> {
-                            stopSpeechInput()
+                            cancelSpeechInput()
                             destination = VanessaDestination.HOME
                         }
                         // One cancel path, not two. Back used to clear the same
@@ -234,6 +250,7 @@ class MainActivity : ComponentActivity() {
                         requestSpeechInput()
                     },
                     onStopSpeech = ::stopSpeechInput,
+                    onCancelSpeech = ::cancelSpeechInput,
                     onSpeakResponse = ::speakAssistantResponse,
                     onRefresh = ::refreshProfile,
                     onImportModel = { checksum ->
@@ -287,27 +304,51 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             onTranscript = { transcript ->
                 runOnUiThread {
-                    // The transcript lands in the chat, and runAssistant decides
-                    // whether the request can actually run.
+                    val lease = activeCaptureLease
+                    activeCaptureLease = null
+                    val request = lease?.let { conversationController.publishFinal(it, transcript) }
+                    if (request == null) {
+                        speechInputStatus = "The recognized utterance was no longer active. No request was submitted."
+                        voiceListening = false
+                        return@runOnUiThread
+                    }
+
+                    // The final ASR result commits the existing voice turn. It
+                    // enters the same local assistant path as a typed request.
                     destination = VanessaDestination.HOME
                     prompt = ""
                     voiceListening = false
-                    voiceDraft = ""
-                    runAssistant(transcript)
+                    runAssistant(transcript, requestHandle = request)
                 }
             },
             onPartial = { draft ->
-                runOnUiThread { voiceDraft = draft }
+                runOnUiThread {
+                    activeCaptureLease?.let { lease ->
+                        conversationController.publishPartial(lease, draft)
+                    }
+                }
             },
             onState = { state ->
                 runOnUiThread {
-                    // A stopped or failed recognizer must not leave its last
-                    // draft on screen.
-                    if (!state.contains("Listening", ignoreCase = true)) voiceDraft = ""
+                    val normalized = state.lowercase(Locale.ROOT)
+                    if (
+                        normalized.contains("failed") ||
+                        normalized.contains("no speech was recognized") ||
+                        normalized.contains("could not start") ||
+                        normalized.contains("could not finish")
+                    ) {
+                        activeCaptureLease?.let { lease ->
+                            conversationController.failCapture(lease, state)
+                        }
+                        activeCaptureLease = null
+                    }
                     speechInputStatus = state
-                    voiceListening = state.contains("Listening", ignoreCase = true) &&
-                        !state.contains("unavailable", ignoreCase = true) &&
-                        !state.contains("failed", ignoreCase = true)
+                    voiceListening = (
+                        normalized.contains("listening") ||
+                            normalized.contains("processing speech")
+                        ) &&
+                        !normalized.contains("unavailable") &&
+                        !normalized.contains("failed")
                 }
             },
         )
@@ -334,6 +375,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        activeCaptureLease?.let { conversationController.cancelCapture(it) }
+        activeCaptureLease = null
         offlineTts?.close()
         onDeviceSpeechInput?.close()
         offlineTts = null
@@ -586,7 +629,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startSpeechInput() {
+        // Each recognizer start receives a fresh lease. Any late callback from
+        // an older recognizer generation is rejected by ConversationController.
+        activeCaptureLease?.let { conversationController.cancelCapture(it) }
+        val lease = conversationController.beginCapture(ConversationTurnSource.VOICE)
+        activeCaptureLease = lease
         if (onDeviceSpeechInput?.start() != true) {
+            conversationController.failCapture(lease, "On-device speech recognition could not start.")
+            activeCaptureLease = null
             voiceListening = false
             speechInputStatus = "Could not start on-device speech recognition."
         } else {
@@ -594,10 +644,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** StopListening asks Android for a final result; it is not a cancellation. */
     private fun stopSpeechInput() {
         onDeviceSpeechInput?.stop()
         voiceListening = false
-        speechInputStatus = "Listening stopped."
+        speechInputStatus = "Finishing the on-device transcript…"
+    }
+
+    /** Navigation/Type Instead invalidates the capture lease before recognizer teardown. */
+    private fun cancelSpeechInput() {
+        activeCaptureLease?.let { conversationController.cancelCapture(it) }
+        activeCaptureLease = null
+        onDeviceSpeechInput?.close()
+        voiceListening = false
+        speechInputStatus = "Voice input cancelled. You can type your request."
     }
 
     private fun speakAssistantResponse() {
@@ -606,37 +666,67 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun appendChatMessage(fromUser: Boolean, text: String) {
-        if (text.isBlank()) return
-        chatMessages = (chatMessages + VanessaChatMessage(nextChatMessageId++, fromUser, text)).takeLast(100)
+    private fun publishAssistantResponse(request: ConversationRequestHandle, response: String): Boolean {
+        val assistantTurn = conversationController.beginAssistantTurn(request)
+        if (assistantTurn == null) {
+            speechInputStatus = "The assistant response could not be attached to its originating conversation turn."
+            return false
+        }
+        return when (conversationController.publishValidatedResponse(assistantTurn, response)) {
+            ConversationPublishResult.PUBLISHED -> true
+            ConversationPublishResult.INVALID -> false // The reducer has already failed the assistant turn.
+            ConversationPublishResult.STALE,
+            ConversationPublishResult.IGNORED -> {
+                speechInputStatus = "The assistant response was stale and was not added to the conversation."
+                false
+            }
+        }
     }
 
-    private fun runAssistant(request: String, recordUserMessage: Boolean = true) {
+    private fun runAssistant(
+        request: String,
+        requestHandle: ConversationRequestHandle? = null,
+    ) {
         val task = request.trim()
         if (task.isEmpty()) {
             assistantResponse = "Enter a request or use the microphone."
             return
         }
-        if (assistantBusy) return
-        // Snapshot the conversation *before* this request joins it: the planner
-        // needs what was said earlier, not the words it is about to be asked to
-        // interpret. Taken here so a retry (which does not record the user turn)
-        // sees the same history as the first attempt.
-        val conversationContext = chatMessages.map { ConversationTurn(it.fromUser, it.text) }
-        if (recordUserMessage && chatMessages.lastOrNull()?.let { it.fromUser && it.text == task } != true) {
-            appendChatMessage(fromUser = true, text = task)
+
+        val conversationRequest = requestHandle ?: conversationController.submitTyped(task)
+        if (conversationRequest == null) {
+            assistantResponse = "A conversation turn could not be created. The existing conversation is unchanged."
+            return
         }
+
+        if (assistantBusy) {
+            assistantResponse = "Vanessa is already completing another request on this device."
+            publishAssistantResponse(
+                conversationRequest,
+                "This request was not run because another local request was still active. Please submit it again.",
+            )
+            return
+        }
+
+        pendingConversationRequest = null
         if (modelBusy) {
             assistantResponse = "The local model is being installed or loaded. Try again when that operation finishes."
-            appendChatMessage(fromUser = false, text = assistantResponse)
+            publishAssistantResponse(conversationRequest, assistantResponse)
             return
         }
         if (!modelLoaded) {
             assistantResponse =
                 "No local model is active. Vanessa has not run this request. Check the model and runtime status in Settings."
-            appendChatMessage(fromUser = false, text = assistantResponse)
+            publishAssistantResponse(conversationRequest, assistantResponse)
             return
         }
+
+        // The controller provides only completed historical turns and excludes
+        // this request ID. ASR partials and the current request never enter the
+        // planner's history.
+        val conversationContext = conversationController.plannerContext(
+            excludingRequestId = conversationRequest.requestId,
+        )
 
         assistantBusy = true
         assistantResponse = "Planning on this device…"
@@ -666,46 +756,57 @@ class MainActivity : ComponentActivity() {
                     }
                 ) {
                     is LocalPlanOutcome.Success -> {
-                        assistantResponse = withContext(Dispatchers.Default) {
+                        val response = withContext(Dispatchers.Default) {
                             coordinator.respond(task, outcome.results)
                         }
-                        appendChatMessage(fromUser = false, text = assistantResponse)
+                        assistantResponse = response
+                        succeeded = publishAssistantResponse(conversationRequest, response)
                         engine.lastGenerationMetrics?.let {
                             assistantMetrics =
                                 "Last generation: ${it.ttftMs} ms TTFT · " +
-                                String.format(Locale.ROOT, "%.1f", it.tokensPerSecond) + " tokens/s"
+                                    String.format(Locale.ROOT, "%.1f", it.tokensPerSecond) + " tokens/s"
                         }
-                        succeeded = true
                         completion = CompletionState(
-                            title = "All set!",
-                            body = "Your request is complete.",
+                            title = if (succeeded) "All set!" else "Response not verified",
+                            body = if (succeeded) {
+                                "Your request is complete."
+                            } else {
+                                "The local result was produced, but Vanessa could not commit a valid conversation response."
+                            },
                             detail = assistantMetrics.ifBlank { null },
                         )
                     }
                     is LocalPlanOutcome.Failure -> {
-                        if (outcome.error == LocalPlanError.PERMISSION_REQUIRED &&
+                        if (
+                            outcome.error == LocalPlanError.PERMISSION_REQUIRED &&
                             !hasCalendarPermission()
                         ) {
                             pendingAgentPrompt = task
+                            pendingConversationRequest = conversationRequest
                             assistantResponse =
                                 "Vanessa needs calendar access for this request. Android will ask for permission."
-                            appendChatMessage(fromUser = false, text = assistantResponse)
                             awaitingPermission = true
                             execution = null
                             destination = VanessaDestination.HOME
                             requestCalendar.launch(Manifest.permission.READ_CALENDAR)
                         } else {
                             assistantResponse = outcome.reason
-                            appendChatMessage(fromUser = false, text = assistantResponse)
+                            publishAssistantResponse(conversationRequest, assistantResponse)
                         }
                     }
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 assistantResponse =
                     "The local task could not be completed: ${error.message ?: "unknown error"}"
-                appendChatMessage(fromUser = false, text = assistantResponse)
+                publishAssistantResponse(conversationRequest, assistantResponse)
             } finally {
                 if (!awaitingPermission) {
+                    if (pendingConversationRequest == conversationRequest) {
+                        pendingConversationRequest = null
+                        pendingAgentPrompt = null
+                    }
                     assistantBusy = false
                     execution = null
                     // Only advance the route if the user is still watching this

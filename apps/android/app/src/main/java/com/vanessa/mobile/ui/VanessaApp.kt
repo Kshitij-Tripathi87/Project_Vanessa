@@ -131,6 +131,7 @@ internal fun VanessaApp(
     onRunAssistant: () -> Unit,
     onSpeakRequest: () -> Unit,
     onStopSpeech: () -> Unit,
+    onCancelSpeech: () -> Unit,
     onSpeakResponse: () -> Unit,
     onRefresh: () -> Unit,
     onImportModel: (String) -> Unit,
@@ -182,6 +183,7 @@ internal fun VanessaApp(
                             status = speechInputStatus,
                             draft = voiceDraft,
                             onStop = onStopSpeech,
+                            onCancel = onCancelSpeech,
                             onClose = { onNavigate("HOME") },
                             onTypeInstead = { onNavigate("HOME") },
                         )
