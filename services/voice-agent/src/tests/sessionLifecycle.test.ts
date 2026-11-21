@@ -181,12 +181,14 @@ test("barge-in aborts TTS playback without cancelling the completed task", async
 });
 
 test("voice request IDs are canonical deterministic UUIDs for provider turns", () => {
-  const first = voiceRequestIdForTurn("provider-turn-42");
-  const retry = voiceRequestIdForTurn("provider-turn-42");
-  const next = voiceRequestIdForTurn("provider-turn-43");
+  const first = voiceRequestIdForTurn("provider-turn-42", "voice-session-a");
+  const retry = voiceRequestIdForTurn("provider-turn-42", "voice-session-a");
+  const next = voiceRequestIdForTurn("provider-turn-43", "voice-session-a");
+  const reconnect = voiceRequestIdForTurn("provider-turn-42", "voice-session-b");
   assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(retry, first);
   assert.notEqual(next, first);
+  assert.notEqual(reconnect, first);
   assert.notEqual(voiceRequestIdForTurn(), voiceRequestIdForTurn());
 });
 
