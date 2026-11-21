@@ -46,3 +46,63 @@ test("text Buffer control frames activate/finalize; only binary frames reach aud
     Object.assign(prototype, original);
   }
 });
+
+
+test("voice WebSocket accepts bounded shared conversation context before capture", async () => {
+  const app = await createVoiceAgentServer();
+  let socket: WebSocket | undefined;
+  try {
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    assert(address && typeof address !== "string");
+    socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`, {
+      origin: "http://127.0.0.1:5173",
+    });
+    await once(socket, "open");
+
+    const waitForType = (type: string) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket?.off("message", onMessage);
+        reject(new Error(`Timed out waiting for ${type}`));
+      }, 1500);
+      const onMessage = (data: WebSocket.RawData) => {
+        let message: Record<string, unknown>;
+        try {
+          message = JSON.parse(data.toString()) as Record<string, unknown>;
+        } catch {
+          return;
+        }
+        if (message.type !== type) return;
+        clearTimeout(timeout);
+        socket?.off("message", onMessage);
+        resolve(message);
+      };
+      socket?.on("message", onMessage);
+    });
+
+    const validAck = waitForType("conversation_context_ready");
+    socket.send(JSON.stringify({
+      type: "conversation_context",
+      turns: [
+        { role: "user", content: "Previous question" },
+        { role: "assistant", content: "Previous answer" },
+      ],
+    }));
+    assert.equal((await validAck).type, "conversation_context_ready");
+
+    const invalidAck = waitForType("conversation_context_rejected");
+    socket.send(JSON.stringify({
+      type: "conversation_context",
+      turns: [{ role: "system", content: "not a valid conversation turn" }],
+    }));
+    const rejection = await invalidAck;
+    assert.equal(rejection.type, "conversation_context_rejected");
+
+    const closed = once(socket, "close");
+    socket.close();
+    await closed;
+  } finally {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+    await app.close();
+  }
+});
