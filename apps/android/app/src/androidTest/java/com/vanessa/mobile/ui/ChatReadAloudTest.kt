@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.vanessa.mobile.ui.theme.VanessaTheme
 import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 import org.junit.Assert.assertEquals
 import org.junit.Rule
