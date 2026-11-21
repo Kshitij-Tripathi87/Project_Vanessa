@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { runPowerShell } from "./powershell.js";
 import { privacyGuard } from "../core/privacy.js";
 import {
@@ -11,6 +11,57 @@ import {
   AgentTask,
   SpecialistAgent,
 } from "@vanessa/shared";
+
+function requiredPath(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(label + " must be a non-empty path string.");
+  }
+  return path.resolve(value);
+}
+
+async function resolveApprovedDirectory(value: unknown, label: string): Promise<string> {
+  const requested = requiredPath(value, label);
+  const canonical = await fs.realpath(requested);
+  if (!privacyGuard.isPathAllowed(canonical)) {
+    throw new Error(label + " is outside approved filesystem roots.");
+  }
+  const stat = await fs.stat(canonical);
+  if (!stat.isDirectory()) throw new Error(label + " must identify an existing directory.");
+  return canonical;
+}
+
+async function resolveApprovedNewPath(value: unknown, label: string): Promise<string> {
+  const requested = requiredPath(value, label);
+  const leaf = path.basename(requested);
+  if (!leaf || leaf === "." || leaf === "..") throw new Error(label + " must include a valid final path component.");
+  const parent = await fs.realpath(path.dirname(requested));
+  if (!privacyGuard.isPathAllowed(parent)) {
+    throw new Error(label + " parent is outside approved filesystem roots.");
+  }
+  const canonicalTarget = path.join(parent, leaf);
+  if (!privacyGuard.isPathAllowed(canonicalTarget)) {
+    throw new Error(label + " is outside approved filesystem roots.");
+  }
+  try {
+    await fs.lstat(canonicalTarget);
+    throw new Error(label + " already exists; overwrite is not permitted.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return canonicalTarget;
+}
+
+async function observedEntry(targetPath: string): Promise<{ exists: boolean; isFile: boolean; isDirectory: boolean }> {
+  try {
+    const stat = await fs.stat(targetPath);
+    return { exists: true, isFile: stat.isFile(), isDirectory: stat.isDirectory() };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exists: false, isFile: false, isDirectory: false };
+    }
+    throw error;
+  }
+}
 
 export class FileAgent implements SpecialistAgent {
   id = "files";
@@ -27,7 +78,6 @@ export class FileAgent implements SpecialistAgent {
     "file_search",
     "file_read",
     "file_write",
-    "drive_upload",
   ];
 
   async execute(
@@ -41,118 +91,135 @@ export class FileAgent implements SpecialistAgent {
 
     switch (action) {
       case "folder.create": {
-        const folderName = params.name || params.path || "Buildathon Demo";
-        const basePath = params.basePath || privacyGuard.getAllowedFolders()[0] || path.join(os.homedir(), "Documents", "VanessaDemo");
-        const targetPath = path.isAbsolute(folderName) ? folderName : path.join(basePath, folderName);
+        const folderName = typeof params.name === "string" ? params.name : params.path;
+        if (typeof folderName !== "string" || !folderName.trim()) {
+          throw new Error("folder.create requires a non-empty folder name or path.");
+        }
+        const basePath = typeof params.basePath === "string" && params.basePath.trim()
+          ? await resolveApprovedDirectory(params.basePath, "basePath")
+          : await resolveApprovedDirectory(privacyGuard.getAllowedFolders()[0] || path.join(os.homedir(), "Documents", "VanessaDemo"), "default folder root");
+        const targetPath = path.isAbsolute(folderName)
+          ? path.resolve(folderName)
+          : path.resolve(basePath, folderName);
+
+        // Check the canonical/physical path before creating anything. The guard
+        // resolves existing ancestors, so nonexistent child directories are still
+        // checked against approved roots.
+        if (!privacyGuard.isPathAllowed(targetPath)) {
+          throw new Error("The requested folder is outside approved filesystem roots.");
+        }
 
         if (process.env.FAKE === "1") {
-          const detail = `Simulation only: folder creation at ${targetPath} was not executed or verified because FAKE=1.`;
+          const detail = "Simulation only: folder creation at " + targetPath + " was not executed because FAKE=1.";
           return {
             agentId: this.id,
             status: "partial",
             success: false,
             summary: detail,
-            spokenSummary: "This was a simulation. No folder or note was created.",
-            evidence: [{ description: detail, source: "file-agent.fake-mode", timestamp: startTime, confidence: 1,
-              data: { outcome: "simulated", simulated: true, actualStateChanged: false, actualStateVerified: false, processStarted: false } }],
+            spokenSummary: "This was a simulation. No folder was created.",
+            evidence: [{
+              description: detail,
+              source: "file-agent.fake-mode",
+              timestamp: startTime,
+              confidence: 1,
+              data: { outcome: "simulated", simulated: true, actualStateChanged: false, actualStateVerified: false },
+            }],
             artifacts: [],
             verification: { passed: false, details: detail },
-            data: {
-              outcome: "simulated",
-              simulated: true,
-              actualStateChanged: false,
-              actualStateVerified: false,
-              processStarted: false,
-              proposedTarget: targetPath,
-            },
+            data: { outcome: "simulated", simulated: true, actualStateChanged: false, actualStateVerified: false, proposedTarget: targetPath },
           };
         }
 
         await fs.mkdir(targetPath, { recursive: true });
-
-        const demoFilePath = path.join(targetPath, "Vanessa_Agent_Note.txt");
-        await fs.writeFile(
-          demoFilePath,
-          `==================================================\n` +
-          `   PROJECT VANESSA - AUTONOMOUS AGENT ACTIONS     \n` +
-          `==================================================\n` +
-          `Task: ${folderName}\n` +
-          `Timestamp: ${new Date().toLocaleString()}\n` +
-          `Status: Created successfully by Vanessa File Agent.\n`
-        );
-
-        // Start Explorer with an argv array. The path must never be interpolated
-        // into a shell command; folder creation success does not depend on UI launch.
-        if (process.platform === "win32") {
-          execFile("explorer.exe", [targetPath], { windowsHide: true }, () => undefined);
+        const canonicalTarget = await fs.realpath(targetPath);
+        if (!privacyGuard.isPathAllowed(canonicalTarget)) {
+          throw new Error("The created folder resolved outside approved filesystem roots; refusing to report success.");
         }
+        const observed = await fs.stat(canonicalTarget);
+        if (!observed.isDirectory()) throw new Error("The requested path exists but is not a directory.");
 
-        const evidence: AgentEvidence[] = [
-          {
-            description: `Created directory and verification note at ${targetPath}`,
-            source: targetPath,
-            timestamp: startTime,
-            confidence: 1.0,
-          },
-        ];
-
+        const detail = "Created and verified directory at " + canonicalTarget + ".";
         return {
           agentId: this.id,
           status: "completed",
           success: true,
-          summary: `Created and verified folder at ${targetPath}.`,
-          spokenSummary: `Created folder ${folderName}.`,
-          evidence,
-          artifacts: [targetPath, demoFilePath],
-          verification: {
-            passed: true,
-            details: `Filesystem directory confirmed at ${targetPath}`,
-          },
+          summary: detail,
+          spokenSummary: "Created folder " + path.basename(canonicalTarget) + ".",
+          evidence: [{
+            description: detail,
+            source: canonicalTarget,
+            timestamp: new Date().toISOString(),
+            confidence: 1,
+            data: { exists: true, isDirectory: true },
+          }],
+          artifacts: [canonicalTarget],
+          verification: { passed: true, details: "The canonical directory exists and remains inside an approved root." },
           data: {
-            fileReferences: [targetPath, demoFilePath],
-            proposedChanges: [`Created directory ${targetPath}`],
-            verifiedFilesystemResults: { path: targetPath, exists: true },
-            path: targetPath,
+            fileReferences: [canonicalTarget],
+            proposedChanges: ["Created directory " + canonicalTarget],
+            verifiedFilesystemResults: { path: canonicalTarget, exists: true, isDirectory: true },
+            path: canonicalTarget,
           },
         };
       }
 
       case "file.search": {
-        const query = params.query || "";
-        const targetDir = params.path || process.cwd();
+        const query = typeof params.query === "string" ? params.query.trim() : "";
+        if (typeof params.query !== "string") throw new Error("file.search requires a string query.");
+        const requestedDirectory = typeof params.path === "string" && params.path.trim()
+          ? params.path
+          : privacyGuard.getAllowedFolders()[0];
+        const targetDir = await resolveApprovedDirectory(requestedDirectory, "search directory");
         try {
-          const entries = await fs.readdir(targetDir);
-          const matches = entries.filter((name) => name.toLowerCase().includes(query.toLowerCase()));
+          const entries = await fs.readdir(targetDir, { withFileTypes: true });
+          const matches = entries
+            .filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase()))
+            .map((entry) => ({
+              name: entry.name,
+              path: path.join(targetDir, entry.name),
+              kind: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
+            }));
+          const detail = "Listed " + entries.length + " entr(y/ies) in approved directory " + targetDir +
+            "; " + matches.length + " matched the requested name filter.";
           return {
             agentId: this.id,
             status: "completed",
             success: true,
-            summary: `Found ${matches.length} matching files in ${targetDir}`,
-            spokenSummary: `Found ${matches.length} matching files.`,
-            evidence: [],
-            artifacts: matches,
+            summary: detail,
+            spokenSummary: "Found " + matches.length + " matching entries.",
+            evidence: [{
+              description: detail,
+              source: targetDir,
+              timestamp: new Date().toISOString(),
+              confidence: 1,
+              data: { entryCount: entries.length, matchCount: matches.length },
+            }],
+            artifacts: matches.map((match) => match.path),
             data: {
-              fileReferences: matches.map((m) => path.join(targetDir, m)),
+              fileReferences: matches.map((match) => match.path),
               matches,
-              bestMatch: matches[0] ? { id: matches[0], name: matches[0] } : undefined,
+              bestMatch: matches[0] ? { id: matches[0].path, name: matches[0].name, kind: matches[0].kind } : undefined,
               directory: targetDir,
-              verifiedFilesystemResults: { totalMatches: matches.length },
+              verifiedFilesystemResults: { totalEntries: entries.length, totalMatches: matches.length },
             },
             verification: {
               passed: true,
-              details: `Directory listing completed for ${targetDir}; ${matches.length} matching entry(ies) observed.`,
+              details: detail,
             },
           };
-        } catch (err: any) {
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
           return {
             agentId: this.id,
             status: "failed",
             success: false,
-            error: err.message,
-            spokenSummary: "No matching files found.",
+            error: message,
+            summary: "The approved directory could not be searched.",
+            spokenSummary: "I could not search that folder.",
             evidence: [],
             artifacts: [],
-            data: { matches: [] },
+            data: { query, directory: targetDir, matches: [] },
+            verification: { passed: false, details: message },
           };
         }
       }
@@ -225,119 +292,191 @@ export class FileAgent implements SpecialistAgent {
       }
 
       case "file.rename": {
-        const { oldPath, newPath } = params;
-        if (!oldPath || !newPath) throw new Error("oldPath and newPath are required");
-        await fs.rename(oldPath, newPath);
+        const oldPath = requiredPath(params.oldPath, "oldPath");
+        const requestedNewPath = requiredPath(params.newPath, "newPath");
+        const sourceLstat = await fs.lstat(oldPath);
+        if (sourceLstat.isSymbolicLink()) {
+          throw new Error("file.rename does not operate on symbolic links or reparse-point entries.");
+        }
+        if (!sourceLstat.isFile()) {
+          throw new Error("file.rename currently supports regular files only; directory moves are disabled.");
+        }
+        const canonicalSource = await fs.realpath(oldPath);
+        if (!privacyGuard.isPathAllowed(canonicalSource)) {
+          throw new Error("The rename source is outside approved filesystem roots.");
+        }
+
+        const destinationParent = await fs.realpath(path.dirname(requestedNewPath));
+        if (!privacyGuard.isPathAllowed(destinationParent)) {
+          throw new Error("The rename destination parent is outside approved filesystem roots.");
+        }
+        const destinationPath = path.join(destinationParent, path.basename(requestedNewPath));
+        if (!privacyGuard.isPathAllowed(destinationPath)) {
+          throw new Error("The rename destination is outside approved filesystem roots.");
+        }
+        if (path.resolve(canonicalSource) === path.resolve(destinationPath)) {
+          throw new Error("The rename source and destination are identical.");
+        }
+        const destinationState = await observedEntry(destinationPath);
+        if (destinationState.exists) {
+          throw new Error("The rename destination already exists; overwriting is not permitted.");
+        }
+
+        const sourceStat = await fs.stat(canonicalSource);
+        const parentStat = await fs.stat(destinationParent);
+        if (sourceStat.dev !== parentStat.dev) {
+          throw new Error("Cross-volume rename is not supported; the source was left unchanged.");
+        }
+
+        // A hard link provides exclusive destination creation (EEXIST on a
+        // collision) without replacing an existing destination on POSIX. Remove
+        // the source only after the destination is confirmed to reference the
+        // same file content and still lies inside the approved root.
+        await fs.link(canonicalSource, destinationPath);
+        try {
+          const destinationStat = await fs.stat(destinationPath);
+          if (!destinationStat.isFile() || destinationStat.size !== sourceStat.size) {
+            throw new Error("The destination failed post-link verification; the original source was retained.");
+          }
+          const destinationCanonical = await fs.realpath(destinationPath);
+          if (!privacyGuard.isPathAllowed(destinationCanonical)) {
+            throw new Error("The destination resolved outside approved filesystem roots; the original source was retained.");
+          }
+          const currentSourceStat = await fs.stat(canonicalSource);
+          if (currentSourceStat.dev !== sourceStat.dev || currentSourceStat.ino !== sourceStat.ino ||
+              currentSourceStat.size !== sourceStat.size || currentSourceStat.mtimeMs !== sourceStat.mtimeMs) {
+            throw new Error("The source changed during rename; both paths were retained for manual reconciliation.");
+          }
+          await fs.unlink(canonicalSource);
+          const sourceAfter = await observedEntry(canonicalSource);
+          const destinationAfter = await observedEntry(destinationCanonical);
+          if (sourceAfter.exists || !destinationAfter.isFile) {
+            throw new Error("Rename completion could not be verified; inspect both paths before retrying.");
+          }
+        } catch (error) {
+          // Do not silently remove the linked destination on failure. Both paths
+          // are retained if source reconciliation was not proven.
+          throw error;
+        }
+
+        const detail = "Renamed approved file to " + destinationPath + ".";
         return {
           agentId: this.id,
           status: "completed",
           success: true,
-          summary: `Renamed ${oldPath} to ${newPath}`,
-          spokenSummary: "File renamed.",
-          evidence: [],
-          artifacts: [newPath],
+          summary: detail,
+          spokenSummary: "File renamed and verified.",
+          evidence: [{
+            description: detail,
+            source: destinationPath,
+            timestamp: new Date().toISOString(),
+            confidence: 1,
+            data: { source: canonicalSource, destination: destinationPath, sourceRemoved: true },
+          }],
+          artifacts: [destinationPath],
           data: {
-            fileReferences: [oldPath, newPath],
-            proposedChanges: [`Rename ${oldPath} -> ${newPath}`],
-            verifiedFilesystemResults: { oldPath, newPath, success: true },
+            fileReferences: [canonicalSource, destinationPath],
+            proposedChanges: ["Rename " + canonicalSource + " to " + destinationPath],
+            verifiedFilesystemResults: { oldPath: canonicalSource, newPath: destinationPath, success: true, sourceRemoved: true },
           },
           verification: {
-            passed: await fs.stat(newPath).then((stat) => stat.isFile() || stat.isDirectory()).catch(() => false),
-            details: `Rename destination inspected at ${newPath}.`,
+            passed: true,
+            details: "Destination exists as a regular file and the original source path is absent.",
           },
         };
       }
 
       case "file.zip":
       case "project.zip": {
-        const sourceDir = params.sourceDir || process.cwd();
-        const requestedZipName = path.basename(String(params.zipName || `project_${Date.now()}.zip`));
-        const zipName = requestedZipName.toLowerCase().endsWith(".zip") ? requestedZipName : `${requestedZipName}.zip`;
-        const archiveRoot = privacyGuard.getAllowedFolders()[0] || process.cwd();
-        const destZip = path.join(archiveRoot, zipName);
-        await runPowerShell(
-          "Compress-Archive -Path (Join-Path $env:VANESSA_SOURCE '*') -DestinationPath $env:VANESSA_DESTINATION -Force",
-          { VANESSA_SOURCE: sourceDir, VANESSA_DESTINATION: destZip },
-          15000
+        const sourceDir = await resolveApprovedDirectory(params.sourceDir, "archive source directory");
+        const destinationDir = await resolveApprovedDirectory(
+          typeof params.destinationDir === "string" && params.destinationDir.trim()
+            ? params.destinationDir
+            : privacyGuard.getAllowedFolders()[0],
+          "archive destination directory",
         );
-        const zipStats = await fs.stat(destZip);
-        if (!zipStats.isFile() || zipStats.size === 0) {
-          throw new Error("Archive output was missing or empty after compression.");
+        const requestedZipName = typeof params.zipName === "string" && params.zipName.trim()
+          ? params.zipName.trim()
+          : "project_" + randomUUID() + ".zip";
+        if (path.basename(requestedZipName) !== requestedZipName || /[<>:"/\\|?*\u0000-\u001f]/.test(requestedZipName)) {
+          throw new Error("zipName must be a filename, not a path, and may not contain reserved characters.");
         }
-        return {
-          agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: `Created zip archive at ${destZip}`,
-          spokenSummary: "Created zip archive.",
-          evidence: [],
-          artifacts: [destZip],
-          data: {
-            fileReferences: [destZip],
-            proposedChanges: [`Archive directory ${sourceDir}`],
-            verifiedFilesystemResults: { zipPath: destZip },
-          },
-          verification: {
-            passed: true,
-            details: `Archive exists at ${destZip} with ${zipStats.size} bytes.`,
-          },
-        };
-      }
-
-      case "drive.upload": {
-        const fileName = params.file || params.fileName || "report.pdf";
-        const fileId = "1" + Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 12);
-        const shareLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
-        return {
-          agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: `Uploaded ${fileName} to Google Drive and generated share link`,
-          spokenSummary: `Uploaded ${fileName} to Google Drive. Here is the link: ${shareLink}`,
-          evidence: [
-            {
-              description: `Uploaded ${fileName} to Google Drive (ID: ${fileId})`,
-              source: "GoogleDriveClient",
-              timestamp: startTime,
-              confidence: 1.0,
+        const zipName = requestedZipName.toLowerCase().endsWith(".zip") ? requestedZipName : requestedZipName + ".zip";
+        const destZip = await resolveApprovedNewPath(path.join(destinationDir, zipName), "archive destination");
+        const tempZip = path.join(destinationDir, "." + randomUUID() + ".vanessa-tmp.zip");
+        try {
+          await runPowerShell(
+            "$sourceItems = Get-ChildItem -LiteralPath $env:VANESSA_SOURCE -Force | Select-Object -ExpandProperty FullName; " +
+              "if (-not $sourceItems) { throw 'The source directory is empty.' }; " +
+              "Compress-Archive -Path $sourceItems -DestinationPath $env:VANESSA_DESTINATION",
+            { VANESSA_SOURCE: sourceDir, VANESSA_DESTINATION: tempZip },
+            30000,
+          );
+          const tempStats = await fs.stat(tempZip);
+          if (!tempStats.isFile() || tempStats.size === 0) {
+            throw new Error("Archive output was missing or empty after compression.");
+          }
+          // Hard-link publication is exclusive: it fails if another process
+          // creates the final archive after the initial authorization check.
+          await fs.link(tempZip, destZip);
+          await fs.unlink(tempZip);
+          const finalPath = await fs.realpath(destZip);
+          if (!privacyGuard.isPathAllowed(finalPath)) {
+            throw new Error("The final archive resolved outside approved filesystem roots.");
+          }
+          const finalStats = await fs.stat(finalPath);
+          if (!finalStats.isFile() || finalStats.size === 0) {
+            throw new Error("The published archive failed post-write verification.");
+          }
+          const detail = "Created archive at " + finalPath + " (" + finalStats.size + " bytes).";
+          return {
+            agentId: this.id,
+            status: "completed",
+            success: true,
+            summary: detail,
+            spokenSummary: "Created and verified the archive.",
+            evidence: [{
+              description: detail,
+              source: finalPath,
+              timestamp: new Date().toISOString(),
+              confidence: 1,
+              data: { sourceDir, bytes: finalStats.size },
+            }],
+            artifacts: [finalPath],
+            data: {
+              fileReferences: [finalPath],
+              proposedChanges: ["Archive approved directory " + sourceDir],
+              verifiedFilesystemResults: { zipPath: finalPath, bytes: finalStats.size },
             },
-          ],
-          artifacts: [shareLink],
-          data: {
-            fileName,
-            fileId,
-            shareLink,
-            url: shareLink,
-            shareableLink: shareLink,
-            id: fileId,
-          },
-          verification: {
-            passed: true,
-            details: `Drive upload confirmed for ${fileName} with share link ${shareLink}`,
-          },
-        };
+            verification: {
+              passed: true,
+              details: "The non-empty archive exists at its canonical destination inside an approved root.",
+            },
+          };
+        } finally {
+          await fs.rm(tempZip, { force: true }).catch(() => undefined);
+        }
       }
 
+      case "drive.upload":
       case "drive.share_link": {
-        const fileId = params.fileId || "1" + Math.random().toString(36).substring(2, 12);
-        const shareLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+        const message = "No Google Drive connector is configured. No file was uploaded and no share link was created.";
         return {
           agentId: this.id,
-          status: "completed",
-          success: true,
-          summary: `Generated shareable Google Drive link: ${shareLink}`,
-          spokenSummary: `Generated share link for file.`,
+          status: "failed",
+          success: false,
+          summary: message,
+          spokenSummary: "Google Drive is not connected, so I did not upload or share anything.",
+          error: message,
           evidence: [],
-          artifacts: [shareLink],
+          artifacts: [],
           data: {
-            shareLink,
-            url: shareLink,
-            fileId,
+            outcome: "unavailable",
+            provider: "google-drive",
+            uploadPerformed: false,
+            sharePermissionChanged: false,
           },
-          verification: {
-            passed: true,
-            details: `Share link generated: ${shareLink}`,
-          },
+          verification: { passed: false, details: message },
         };
       }
 
