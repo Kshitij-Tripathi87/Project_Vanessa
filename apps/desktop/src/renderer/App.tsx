@@ -15,6 +15,7 @@ export function App() {
     progressMessage,
     currentRequestId,
     currentTaskId,
+    conversationState,
     activePlan,
     tasks,
     pendingApproval,
@@ -185,6 +186,7 @@ export function App() {
       audioLevel={audioLevel}
       currentRequestId={currentRequestId}
       currentTaskId={currentTaskId}
+      conversationState={conversationState}
       onOrbClick={handleOrbClick}
       onExpand={openPanel}
       onCollapse={collapsePanel}
