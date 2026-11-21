@@ -9,7 +9,6 @@ there.
 
 | Document | Covers | Status |
 |---|---|---|
-| [AGENTIC_PC_FIRST_ARCHITECTURE.md](AGENTIC_PC_FIRST_ARCHITECTURE.md) | PC-first agentic execution, remote access, autonomy, voice roadmap and acceptance | proposed delivery architecture; implementation not complete |
 | [REMOTE_TASK_STATE_MACHINE.md](REMOTE_TASK_STATE_MACHINE.md) | Phone-side task lifecycle, correlation, recovery invariants | implemented |
 | [ANDROID_SCREEN_INVENTORY.md](ANDROID_SCREEN_INVENTORY.md) | Every screen, its file, its destinations and states | implemented, gaps listed |
 | [SCROLL_AND_LAYOUT_SPEC.md](SCROLL_AND_LAYOUT_SPEC.md) | All 14 scroll regions, insets, keyboard, findings | implemented, device testing owed |
@@ -23,10 +22,9 @@ there.
 
 ## Reading order for a new contributor
 
-1. `AGENTIC_PC_FIRST_ARCHITECTURE.md` — product direction and delivery order for the PC agentic system.
-2. `AGENT_ORCHESTRATION_SPEC.md` and `AGENT_REGISTRY.md` — existing execution authority and selectable capabilities.
-3. `REMOTE_TASK_STATE_MACHINE.md` — the one part where being wrong is dangerous.
-4. `END_TO_END_ACCEPTANCE.md` — what you are allowed to claim when CI goes green.
+1. `ANDROID_SCREEN_INVENTORY.md` — what the app is.
+2. `REMOTE_TASK_STATE_MACHINE.md` — the one part where being wrong is dangerous.
+3. `END_TO_END_ACCEPTANCE.md` — what you are allowed to claim when CI goes green.
 
 ## The rule these documents encode
 
