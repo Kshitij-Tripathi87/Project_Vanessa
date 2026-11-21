@@ -342,30 +342,52 @@ async function cancelTaskWithProofInternal(
   }
 }
 
-export async function triggerKillSwitch(): Promise<void> {
+export type KillSwitchSummary = {
+  cancelled: number;
+  executionFinished: number;
+  terminationUnconfirmed: number;
+  planningOnly: number;
+};
+
+export function engageKillSwitch(): void {
+  isKillSwitchEngaged = true;
+}
+
+export function isKillSwitchActive(): boolean {
+  return isKillSwitchEngaged;
+}
+
+export async function triggerKillSwitch(
+  excludedTaskIds: ReadonlySet<string> = new Set<string>(),
+  previous: Partial<KillSwitchSummary> = {},
+): Promise<KillSwitchSummary> {
   isKillSwitchEngaged = true;
   const checks: Promise<CancellationResolution>[] = [];
   for (const task of activeTasks.values()) {
-    if (["running", "pending", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) {
+    if (!excludedTaskIds.has(task.id) &&
+        ["running", "pending", "awaiting_approval", "termination_unconfirmed"].includes(task.status)) {
       checks.push(cancelTaskWithProof(task, "Cancellation requested by emergency kill switch."));
     }
   }
   const results = await Promise.all(checks);
-  const unconfirmed = results.filter((result) => result === "termination_unconfirmed").length;
-  const executionFinished = results.filter((result) => result === "execution_finished").length;
+  const summary: KillSwitchSummary = {
+    cancelled: (previous.cancelled || 0) + results.filter((result) => result === "cancelled").length,
+    executionFinished: (previous.executionFinished || 0) + results.filter((result) => result === "execution_finished").length,
+    terminationUnconfirmed: (previous.terminationUnconfirmed || 0) + results.filter((result) => result === "termination_unconfirmed").length,
+    planningOnly: previous.planningOnly || 0,
+  };
   eventBus.emitEvent("audit:log", {
     id: `kill-${Date.now()}`,
     timestamp: Date.now(),
     agent: "orchestrator",
     action: "kill_switch",
-    status: unconfirmed ? "warn" : "success",
-    details: unconfirmed
-      ? `Emergency kill switch completed with ${unconfirmed} unconfirmed process termination(s) and ${executionFinished} operation(s) that had already produced terminal process evidence. Unconfirmed locks were retained; new work remains blocked.`
-      : executionFinished
-        ? `Emergency cancellation completed. Running processes were verified stopped or had already produced terminal process evidence; ${executionFinished} operation(s) were left to report their actual result rather than being relabeled cancelled.`
-        : "Emergency cancellation completed. Every running managed process was verified stopped; queued tasks were cancelled before execution.",
+    status: summary.terminationUnconfirmed ? "warn" : "success",
+    details: summary.terminationUnconfirmed
+      ? `Emergency kill switch completed with ${summary.terminationUnconfirmed} unconfirmed process termination(s), ${summary.cancelled} confirmed cancellation(s), ${summary.executionFinished} operation(s) that had already finished and ${summary.planningOnly} request(s) cancelled during planning. Unconfirmed locks were retained; new work remains blocked.`
+      : `Emergency cancellation completed. ${summary.cancelled} operation(s) were confirmed cancelled, ${summary.executionFinished} operation(s) had already finished and ${summary.planningOnly} request(s) were cancelled during planning.`,
   });
-  if (unconfirmed === 0) isKillSwitchEngaged = false;
+  if (summary.terminationUnconfirmed === 0) isKillSwitchEngaged = false;
+  return summary;
 }
 
 export function resolveParams(params: Record<string, any>, allTasks: Task[]): Record<string, any> {
@@ -792,7 +814,17 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     if (isKillSwitchEngaged) {
       task.status = "cancelled";
       task.lifecycleState = "cancelled";
-      task.error = "Cancelled by kill switch";
+      task.error = "Cancelled by kill switch before execution began.";
+      task.completedAt = Date.now();
+      task.verification = {
+        verified: true,
+        postconditions: [
+          "The emergency kill switch was active before this task started.",
+          "No agent action or managed process was launched.",
+        ],
+        outcome: "cancelled",
+        details: task.error,
+      };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
       eventBus.emitEvent("task:update", task);
@@ -1012,7 +1044,10 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         eventBus.emitEvent("task:update", task);
         return task;
       }
-      if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
+      // A global stop blocks later work, but it does not overwrite an
+      // operation whose process supervisor already proved it had finished.
+      // That result must still pass through the independent verifier.
+      if ((task.status as string) === "cancelled") {
         task.status = "cancelled";
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";

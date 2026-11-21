@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, X } from "lucide-react";
+import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, VolumeX, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
@@ -38,6 +38,7 @@ interface CompactAssistantProps {
   onCollapse: () => void;
   onDockCorner: (corner: DockCorner) => void;
   onStop: () => void;
+  onStopSpeech: () => void;
   onTypedCommandChange: (value: string) => void;
   onExecute: () => void;
   onApprove: (taskId: string) => void;
@@ -50,6 +51,8 @@ const stageLabels: Record<TaskStage, string> = {
   planning: "Planning",
   executing: "Working",
   verifying: "Verifying",
+  cancelling: "Cancelling",
+  termination_unconfirmed: "Stop unconfirmed",
   completed: "Completed",
   failed: "Needs attention",
   partial: "Partially completed",
@@ -94,6 +97,7 @@ export function CompactAssistant({
   onCollapse,
   onDockCorner,
   onStop,
+  onStopSpeech,
   onTypedCommandChange,
   onExecute,
   onApprove,
@@ -247,7 +251,7 @@ export function CompactAssistant({
           {partialTranscript ? <p className="transcript">“{partialTranscript}”</p> : lastResponse ? <p>{lastResponse}</p> : null}
         </div>
 
-        {isBusy && (
+        {isBusy && ["accepted", "planning", "executing", "verifying"].includes(taskStage) && (
           <div className="progress-steps" aria-label="Task progress">
             {(["accepted", "planning", "executing", "verifying"] as TaskStage[]).map((stage) => {
               const current = ["accepted", "planning", "executing", "verifying"].indexOf(taskStage);
@@ -287,8 +291,8 @@ export function CompactAssistant({
             <strong>{pendingApproval.action}</strong>
             <p>{pendingApproval.spokenSummary || pendingApproval.acceptanceCriteria?.[0] || "Vanessa is ready to perform this action."}</p>
             <div className="approval-actions no-drag">
-              <button className="button button-primary" onClick={() => onApprove(pendingApproval.id)}><Check size={14} /> Allow</button>
-              <button className="button button-quiet" onClick={() => onReject(pendingApproval.id)}><X size={14} /> Decline</button>
+              <button className="button button-primary" onClick={() => onApprove(pendingApproval.id)} disabled={taskStage === "cancelling" || taskStage === "termination_unconfirmed"}><Check size={14} /> Allow</button>
+              <button className="button button-quiet" onClick={() => onReject(pendingApproval.id)} disabled={taskStage === "cancelling" || taskStage === "termination_unconfirmed"}><X size={14} /> Decline</button>
             </div>
           </div>
         )}
@@ -317,7 +321,12 @@ export function CompactAssistant({
             placeholder={isBusy ? "Vanessa is working…" : "Type a request…"}
             aria-label="Type a request"
           />
-          {isBusy ? <button className="stop-button" onClick={onStop}><CircleStop size={16} /> Stop</button> : <button className="send-button" onClick={onExecute} aria-label="Send request">Send</button>}
+          {isSpeaking && <button className="button button-quiet" onClick={onStopSpeech} aria-label="Stop speaking"><VolumeX size={15} /> Stop speaking</button>}
+          {taskBusy
+            ? <button className="stop-button" onClick={onStop} disabled={taskStage === "cancelling"}>
+                <CircleStop size={16} /> {taskStage === "cancelling" ? "Cancelling…" : taskStage === "termination_unconfirmed" ? "Retry cancel" : "Cancel task"}
+              </button>
+            : <button className="send-button" onClick={onExecute} aria-label="Send request" disabled={voiceBusy}>Send</button>}
         </div>
         <div className="footer-hint">
           <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : wakeWordActive ? "Wake-word listener active · say Hey Vanessa" : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>

@@ -19,6 +19,7 @@ there.
 | [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) | Live session/turn contract, reducer parity, standalone Android controller, integration status | protocol, reducers and standalone controller implemented; Android/desktop wiring pending |
 | [THREE_DAY_CONVERSATION_RUNTIME_PLAN.md](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md) | Timeboxed Android conversation-bridge proposal | planning snapshot; not implementation evidence |
 | [AGENTIC_PC_FIRST_ARCHITECTURE.md](AGENTIC_PC_FIRST_ARCHITECTURE.md) | Proposed Windows-first execution and remote-access architecture | proposal; verified PC execution and Android/voice connection still pending |
+| [VANESSA_APPLICATION_BUILD_PLAN.md](VANESSA_APPLICATION_BUILD_PLAN.md) | File-level implementation sequence, SDLC gates and application acceptance | active implementation baseline; individual milestones remain open |
 | [VOICE_CONVERSATION_BRIDGE.md](VOICE_CONVERSATION_BRIDGE.md) | Detailed Android-first bridge architecture and original PR #69 design snapshot | historical design snapshot; current status is in the runtime document |
 | [END_TO_END_ACCEPTANCE.md](END_TO_END_ACCEPTANCE.md) | CI evidence, emulator journeys, physical-device and release gates | five existing emulator journeys pass; integrated conversation and physical PC journeys remain open |
 
