@@ -50,6 +50,8 @@ const stageLabels: Record<TaskStage, string> = {
   planning: "Planning",
   executing: "Working",
   verifying: "Verifying",
+  cancelling: "Stopping",
+  cancellation_unconfirmed: "Stop unconfirmed",
   completed: "Completed",
   failed: "Needs attention",
   partial: "Partially completed",
