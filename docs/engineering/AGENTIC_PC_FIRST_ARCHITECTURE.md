@@ -1,8 +1,16 @@
 # Vanessa — PC-First Agentic Execution Architecture and Delivery Plan
 
+> **Planning context:** This is a proposed PC execution milestone, not a claim
+> that it is implemented or that Android conversation integration is complete.
+> Conversation remains the foundation and the orchestrator the task authority.
+> The separate [Android bridge plan](THREE_DAY_CONVERSATION_RUNTIME_PLAN.md)
+> proposes a different first vertical slice; scheduling between them requires
+> an explicit product decision. See [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md)
+> for live status.
+
 **Status:** Proposed implementation baseline  
 **Repository baseline reviewed:** main at 22ba127ce9ebe8dfefb250a6fa97e9875fe163e3 (21 November 2026)  
-**Product decision:** Complete and validate the Windows PC agentic execution path first; then connect the full voice-and-text experience and remote Android control.  
+**Proposed delivery order:** Complete and validate the Windows PC agentic execution path first; then connect the full voice-and-text experience and remote Android control.<br>
 **Scope:** Windows first, cross-platform interfaces by design.
 
 ---
@@ -15,9 +23,9 @@ The product is measured by **verified user outcomes**, not by the number of agen
 
 The first milestone must prove that the Windows PC agent can complete multi-step tasks from a local text request without depending on Android voice integration. The subsequent milestone connects the same execution authority to Android text and voice. There must be one planner and one execution authority; a new remote interface must not create a second supervisor.
 
-### User-selected requirements
+### Planning assumptions and intended requirements
 
-| Area | Decision |
+| Area | Proposed direction |
 |---|---|
 | Delivery order | PC agentic system first; full voice and text experience second |
 | Initial OS | Windows; design platform adapters for Windows, macOS and Linux |

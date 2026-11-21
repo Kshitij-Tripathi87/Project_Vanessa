@@ -1,6 +1,6 @@
 # End-to-end acceptance
 
-**Status as of 20 November 2026:** PR #70 is merged. The emulator CI gate is now executing instrumented tests. Five existing navigation/basic-flow journeys passed on the PR #70 head. The full voice → conversation journey and the real Android ↔ Windows PC journey remain unverified.
+**Baseline evidence:** PR #70 is merged and its emulator CI executed five navigation/basic-flow journeys. A standalone in-memory conversation controller now exists, but the app is not wired to it. The full voice → conversation journey and the real Android ↔ Windows PC journey remain unverified.
 
 This document distinguishes compilation, JVM tests, emulator navigation, integrated conversation behavior and physical-device acceptance. A green build must never be upgraded into a broader product claim.
 
@@ -13,7 +13,7 @@ This document distinguishes compilation, JVM tests, emulator navigation, integra
 | `windows-installer` | Windows workspace/installer build and its configured smoke tests pass | that a paired real PC has completed a remote operation from Android |
 | `Android emulator user journeys` | The emulator boots, instrumentation executes and the reported Compose/UI journeys pass | real microphone/voice quality, installed-user-model execution, TTS voice quality or real-PC task execution |
 | Shared TypeScript/Kotlin reducer fixtures | The contract codecs and reducers agree on the shared cases | Android Activity wiring, recognizer callbacks, audio playback or durable state |
-| Controller/unit tests (once implemented) | Controller correlation, event ordering and generation fences under deterministic test conditions | Android platform behavior unless separately exercised through instrumentation |
+| Standalone controller/unit tests | Controller correlation, serialized state publication and generation fences under deterministic test conditions | Android platform behavior unless separately exercised through instrumentation |
 | Physical-device acceptance | Only the exact device, model, permissions, ASR/TTS and PC paths exercised in the recorded run | other hardware or untested product capabilities |
 
 ## Emulator gate — now operational
@@ -65,8 +65,8 @@ An infrastructure failure is not a code pass. A debug APK pass is not an emulato
 | 5 | PC dashboard entry point | **PASS (emulator, navigation only)** | Authenticated pairing with a real Windows PC |
 | 6 | Live ASR partial → final user turn | **NOT YET PROVEN** | ConversationController wiring and instrumented fake-ASR journey |
 | 7 | Typed and voice input share one reducer | **NOT IMPLEMENTED** | PR C and PR E |
-| 8 | Completed prior turns become planner context from reducer state | **NOT IMPLEMENTED** | Controller projection and planner integration |
-| 9 | Validated assistant response → reducer chunks → completion | **NOT IMPLEMENTED** | PR D |
+| 8 | Completed prior turns become planner context from reducer state | **PARTIAL (standalone controller only)** | Connect the controller projection to the app planner |
+| 9 | Validated assistant response → reducer chunks → completion | **PARTIAL (standalone controller only)** | Connect validated output to the app; no token streaming claim |
 | 10 | Opt-in offline TTS playback lifecycle | **PARTIAL** | Existing one-string Read Aloud exists; progress queue and callback fencing remain |
 | 11 | Conversation interruption while preserving task authority | **NOT PROVEN END TO END** | Controller and adapter lifecycle tests |
 | 12 | Remote PC pair → submit → approve → result | **NOT STARTED (physical end-to-end)** | Device + real PC + authenticated connection + recorded evidence |

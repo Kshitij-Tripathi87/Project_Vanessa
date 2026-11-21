@@ -1,6 +1,12 @@
 # Three-Day Conversation Runtime Completion Plan
 
-**Status:** Execution specification — implementation not yet started on this plan branch  
+> **Planning snapshot:** The standalone controller is now present, but the app,
+> ASR, output and UI are not yet wired to it. For current implementation status,
+> see [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md). The separate
+> [PC-first architecture](AGENTIC_PC_FIRST_ARCHITECTURE.md) proposes a different
+> first execution milestone; the plans do not by themselves settle scheduling.
+
+**Status:** Original execution specification — not evidence of a completed journey<br>
 **Baseline:** main at 22ba127ce9ebe8dfefb250a6fa97e9875fe163e3 (PR #70 merged)  
 **Target dates:** 21–23 November 2026 (Asia/Kolkata)  
 **Target deliverable:** Integrated Android voice-and-text conversation MVP  
