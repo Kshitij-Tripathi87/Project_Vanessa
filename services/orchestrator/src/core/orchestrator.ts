@@ -286,7 +286,7 @@ export class VanessaOrchestrator {
     return rejectTaskRunner(taskId);
   }
 
-  cancelAll(): Promise<void> {
+  cancelAll(): ReturnType<typeof triggerKillSwitch> {
     return triggerKillSwitch();
   }
 

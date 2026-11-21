@@ -342,7 +342,13 @@ async function cancelTaskWithProofInternal(
   }
 }
 
-export async function triggerKillSwitch(): Promise<void> {
+export type KillSwitchSummary = {
+  cancelled: number;
+  executionFinished: number;
+  terminationUnconfirmed: number;
+};
+
+export async function triggerKillSwitch(): Promise<KillSwitchSummary> {
   isKillSwitchEngaged = true;
   const checks: Promise<CancellationResolution>[] = [];
   for (const task of activeTasks.values()) {
@@ -351,21 +357,25 @@ export async function triggerKillSwitch(): Promise<void> {
     }
   }
   const results = await Promise.all(checks);
-  const unconfirmed = results.filter((result) => result === "termination_unconfirmed").length;
-  const executionFinished = results.filter((result) => result === "execution_finished").length;
+  const summary: KillSwitchSummary = {
+    cancelled: results.filter((result) => result === "cancelled").length,
+    executionFinished: results.filter((result) => result === "execution_finished").length,
+    terminationUnconfirmed: results.filter((result) => result === "termination_unconfirmed").length,
+  };
   eventBus.emitEvent("audit:log", {
     id: `kill-${Date.now()}`,
     timestamp: Date.now(),
     agent: "orchestrator",
     action: "kill_switch",
-    status: unconfirmed ? "warn" : "success",
-    details: unconfirmed
-      ? `Emergency kill switch completed with ${unconfirmed} unconfirmed process termination(s) and ${executionFinished} operation(s) that had already produced terminal process evidence. Unconfirmed locks were retained; new work remains blocked.`
-      : executionFinished
-        ? `Emergency cancellation completed. Running processes were verified stopped or had already produced terminal process evidence; ${executionFinished} operation(s) were left to report their actual result rather than being relabeled cancelled.`
-        : "Emergency cancellation completed. Every running managed process was verified stopped; queued tasks were cancelled before execution.",
+    status: summary.terminationUnconfirmed ? "warn" : "success",
+    details: summary.terminationUnconfirmed
+      ? `Emergency kill switch completed with ${summary.terminationUnconfirmed} unconfirmed process termination(s), ${summary.cancelled} confirmed cancellation(s), and ${summary.executionFinished} operation(s) that had already finished. Unconfirmed locks were retained; new work remains blocked.`
+      : summary.executionFinished
+        ? `Emergency cancellation completed. ${summary.cancelled} operation(s) were cancelled and ${summary.executionFinished} operation(s) had already produced terminal process evidence; completed work was not relabeled cancelled.`
+        : `Emergency cancellation completed. ${summary.cancelled} operation(s) were confirmed cancelled.`,
   });
-  if (unconfirmed === 0) isKillSwitchEngaged = false;
+  if (summary.terminationUnconfirmed === 0) isKillSwitchEngaged = false;
+  return summary;
 }
 
 export function resolveParams(params: Record<string, any>, allTasks: Task[]): Record<string, any> {
