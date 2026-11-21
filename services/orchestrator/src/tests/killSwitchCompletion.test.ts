@@ -18,7 +18,7 @@ test("emergency stop verifies already-finished work and prevents its dependent t
   const started = new Promise<void>((resolve) => { firstStarted = resolve; });
   const executions: string[] = [];
 
-  agentRegistry.files.execute = async (action, params) => {
+  agentRegistry.files.execute = async (action: string, params: Record<string, any>) => {
     const query = String((params as Record<string, unknown>).query);
     executions.push(query);
     if (query === "first") {
