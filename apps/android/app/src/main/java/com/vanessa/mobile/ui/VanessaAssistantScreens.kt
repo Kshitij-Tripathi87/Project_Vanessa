@@ -70,6 +70,7 @@ import com.vanessa.mobile.ui.components.NeonSecondaryButton
 import com.vanessa.mobile.ui.components.VanessaOrb
 import com.vanessa.mobile.ui.theme.VanessaPalette
 import com.vanessa.mobile.ui.theme.VanessaType
+import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 
 internal data class VanessaChatMessage(
     val id: String,
@@ -100,10 +101,12 @@ internal fun ChatScreen(
     response: String,
     metrics: String,
     speechReady: Boolean,
+    speechPlaybackStatus: OfflineTtsPlaybackStatus,
     onPromptChange: (String) -> Unit,
     onSend: () -> Unit,
     onListen: () -> Unit,
     onSpeakResponse: () -> Unit,
+    onStopSpeechOutput: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -263,8 +266,19 @@ internal fun ChatScreen(
                                                 Spacer(Modifier.weight(1f))
                                             }
                                             if (speechReady) {
-                                                IconButton(onClick = onSpeakResponse, modifier = Modifier.size(34.dp)) {
-                                                    Icon(Icons.Outlined.VolumeUp, contentDescription = "Read response aloud", tint = VanessaPalette.TextSecondary, modifier = Modifier.size(18.dp))
+                                                val playbackActive =
+                                                    speechPlaybackStatus == OfflineTtsPlaybackStatus.STARTING ||
+                                                        speechPlaybackStatus == OfflineTtsPlaybackStatus.SPEAKING
+                                                IconButton(
+                                                    onClick = if (playbackActive) onStopSpeechOutput else onSpeakResponse,
+                                                    modifier = Modifier.size(34.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (playbackActive) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
+                                                        contentDescription = if (playbackActive) "Stop reading aloud" else "Read response aloud",
+                                                        tint = if (playbackActive) VanessaPalette.Cyan else VanessaPalette.TextSecondary,
+                                                        modifier = Modifier.size(18.dp),
+                                                    )
                                                 }
                                             }
                                         }
