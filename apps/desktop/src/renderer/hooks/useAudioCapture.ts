@@ -276,6 +276,9 @@ export function useAudioCapture() {
     };
 
     ws.onerror = () => {
+      voiceConversationBridgeRef.current?.failPendingResponses(
+        "The voice connection failed before a response arrived. The underlying task may still be running; check its task status.",
+      );
       wakeWordModeRef.current = false;
       wakeWordStartupAttemptedRef.current = false;
       setWakeWordActive(false);
@@ -354,6 +357,9 @@ export function useAudioCapture() {
           }
 
           if (msg.type === "voice_error") {
+            voiceConversationBridgeRef.current?.failPendingResponses(
+              msg.message || "The voice service failed before a response arrived. The underlying task may still be running; check its task status.",
+            );
             pttActiveRef.current = false;
             activatedSocketRef.current = null;
             wakeWordModeRef.current = false;
@@ -444,6 +450,9 @@ export function useAudioCapture() {
 
     ws.onclose = () => {
       if (wsRef.current === ws) {
+        voiceConversationBridgeRef.current?.failPendingResponses(
+          "The voice service disconnected before a response arrived. The underlying task may still be running; check its task status.",
+        );
         wakeWordModeRef.current = false;
         wakeWordStartupAttemptedRef.current = false;
         setWakeWordActive(false);
