@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldCheck, X } from "lucide-react";
 import type { Plan, Task } from "@vanessa/shared";
-import type { ConversationState } from "@vanessa/protocol";
+import type { ConversationState } from "@vanessa/protocol/conversation";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { TaskStage, VoiceState } from "../stores/vanessaStore.js";
 import orbImage from "../assets/vanessa-orb.png";
