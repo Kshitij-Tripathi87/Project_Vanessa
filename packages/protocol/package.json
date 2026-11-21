@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./conversation": {
+      "types": "./dist/conversation.d.ts",
+      "default": "./dist/conversation.js"
+    },
     "./schema": "./schema/protocol-v1.schema.json",
     "./conversation-schema": "./schema/conversation-v1.schema.json"
   },
