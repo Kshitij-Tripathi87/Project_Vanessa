@@ -27,8 +27,6 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.vanessa.mobile.ui.components.NeonButton
 import com.vanessa.mobile.ui.components.NeonIconButton
 import com.vanessa.mobile.ui.components.NeonSecondaryButton
+import com.vanessa.mobile.ui.components.NeonTextField
 import com.vanessa.mobile.ui.state.PcCapability
 import com.vanessa.mobile.ui.state.PcLink
 import com.vanessa.mobile.ui.state.PcUiState
@@ -188,24 +187,16 @@ internal fun MyPcScreen(
         )
 
         if (showPasteField) {
-            OutlinedTextField(
+            NeonTextField(
                 value = qrPayload,
                 onValueChange = onQrPayloadChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("PC pair data", style = VanessaType.caption) },
-                placeholder = { Text("Paste the JSON from the pairing window", style = VanessaType.caption) },
-                minLines = 3,
+                label = "PC pair data",
+                placeholder = "Paste the JSON from the pairing window",
+                singleLine = false,
                 maxLines = 6,
+                minHeight = 126.dp,
                 enabled = !busy,
-                textStyle = VanessaType.bodySmall.copy(color = VanessaPalette.TextPrimary),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = VanessaPalette.Cyan,
-                    unfocusedBorderColor = VanessaPalette.Border,
-                    focusedContainerColor = VanessaPalette.CardDeep,
-                    unfocusedContainerColor = VanessaPalette.CardDeep,
-                    focusedLabelColor = VanessaPalette.Cyan,
-                    unfocusedLabelColor = VanessaPalette.TextDim,
-                ),
             )
             Spacer(Modifier.height(8.dp))
             NeonSecondaryButton(
