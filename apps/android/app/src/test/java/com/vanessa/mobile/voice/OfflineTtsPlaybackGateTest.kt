@@ -8,7 +8,7 @@ import org.junit.Test
 class OfflineTtsPlaybackGateTest {
     private fun fixture(): Pair<OfflineTtsPlaybackGate, MutableList<OfflineTtsPlaybackEvent>> {
         val events = mutableListOf<OfflineTtsPlaybackEvent>()
-        return OfflineTtsPlaybackGate(events::add) to events
+        return OfflineTtsPlaybackGate { event -> events.add(event) } to events
     }
 
     @Test
