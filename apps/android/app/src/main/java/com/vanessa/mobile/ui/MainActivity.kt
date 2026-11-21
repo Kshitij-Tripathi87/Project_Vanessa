@@ -334,7 +334,8 @@ class MainActivity : ComponentActivity() {
                     if (
                         normalized.contains("failed") ||
                         normalized.contains("no speech was recognized") ||
-                        normalized.contains("could not start")
+                        normalized.contains("could not start") ||
+                        normalized.contains("could not finish")
                     ) {
                         activeCaptureLease?.let { lease ->
                             conversationController.failCapture(lease, state)
