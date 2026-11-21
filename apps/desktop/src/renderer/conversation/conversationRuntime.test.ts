@@ -116,3 +116,61 @@ test("an over-limit assistant response fails rather than publishing a truncated 
   assert.equal(fixture.state.turns[1].status, "failed");
   assert.match(fixture.state.turns[1].text, /exceeded the conversation limit/);
 });
+
+test("assistant response does not evict an unfinished oldest turn at the history limit", () => {
+  let next = 1;
+  const uuid = () => "00000000-0000-4000-8000-" + String(next++).padStart(12, "0");
+  const base = initialConversationState(CONVERSATION_ID);
+  const turns = Array.from({ length: 200 }, (_, index) => ({
+    turnId: uuid(), conversationId: CONVERSATION_ID, requestId: uuid(),
+    role: "user" as const, source: "text" as const, text: "Request " + index,
+    final: index !== 0, streaming: false,
+    status: index === 0 ? "processing" as const : "completed" as const, createdAt: index,
+  }));
+  let latest = { ...base, turns, activeTurnId: turns[0].turnId };
+  const runtime = new DesktopConversationRuntime(latest, (state) => { latest = state; }, uuid, () => 1);
+  const user = turns[199];
+  const result = runtime.completeAssistant({ conversationId: CONVERSATION_ID, requestId: user.requestId, userTurnId: user.turnId, source: "text" }, "Answer");
+  assert.equal(result, false);
+  assert.equal(latest.turns.length, 200);
+  assert.equal(latest.turns[0].turnId, turns[0].turnId);
+  assert.equal(latest.turns[0].status, "processing");
+});
+
+test("assistant response does not evict its originating user turn", () => {
+  let next = 1;
+  const uuid = () => "00000000-0000-4000-8000-" + String(next++).padStart(12, "0");
+  const base = initialConversationState(CONVERSATION_ID);
+  const turns = Array.from({ length: 200 }, (_, index) => ({
+    turnId: uuid(), conversationId: CONVERSATION_ID, requestId: uuid(), role: "user" as const,
+    source: "text" as const, text: "Request " + index, final: true, streaming: false,
+    status: "completed" as const, createdAt: index,
+  }));
+  let latest = { ...base, turns };
+  const runtime = new DesktopConversationRuntime(latest, (state) => { latest = state; }, uuid, () => 1);
+  const user = turns[0];
+  const result = runtime.completeAssistant({ conversationId: CONVERSATION_ID, requestId: user.requestId, userTurnId: user.turnId, source: "text" }, "Answer");
+  assert.equal(result, false);
+  assert.equal(latest.turns[0].turnId, user.turnId);
+  assert.equal(latest.turns.length, 200);
+});
+
+test("assistant response may evict an unrelated completed oldest turn", () => {
+  let next = 1;
+  const uuid = () => "00000000-0000-4000-8000-" + String(next++).padStart(12, "0");
+  const base = initialConversationState(CONVERSATION_ID);
+  const turns = Array.from({ length: 200 }, (_, index) => ({
+    turnId: uuid(), conversationId: CONVERSATION_ID, requestId: uuid(), role: "user" as const,
+    source: "text" as const, text: "Request " + index, final: true, streaming: false,
+    status: "completed" as const, createdAt: index,
+  }));
+  let latest = { ...base, turns };
+  const runtime = new DesktopConversationRuntime(latest, (state) => { latest = state; }, uuid, () => 1);
+  const user = turns[199];
+  const result = runtime.completeAssistant({ conversationId: CONVERSATION_ID, requestId: user.requestId, userTurnId: user.turnId, source: "text" }, "Answer");
+  assert.equal(result, true);
+  assert.equal(latest.turns.length, 200);
+  assert.equal(latest.turns[0].turnId, turns[1].turnId);
+  assert.equal(latest.turns[199].requestId, user.requestId);
+  assert.equal(latest.turns[199].status, "completed");
+});
