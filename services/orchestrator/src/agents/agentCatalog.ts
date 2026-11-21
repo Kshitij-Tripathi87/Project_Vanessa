@@ -137,21 +137,21 @@ export const AGENT_CATALOG: CatalogAgent[] = [
   },
   {
     id: "files",
-    purpose: "Create directories, search filenames, inspect supported text/source, JSON and CSV files, rename filesystem entries, and create zip archives.",
-    limitations: "Use approved folders. Search is nonrecursive. File inspection is bounded to 256 KiB and supports text/source, JSON and CSV previews; binary and office formats require dedicated parsers. Drive upload/link actions remain placeholders and are not selectable.",
+    purpose: "Create approved directories, search and inspect files within approved roots, rename regular files safely, and create verified zip archives.",
+    limitations: "All filesystem operations are confined to approved roots and recheck canonical paths. Search is nonrecursive. File inspection is bounded to 256 KiB and supports text/source, JSON and CSV previews; binary and office formats require dedicated parsers. Rename supports regular files on the same filesystem and refuses overwrite; directory and cross-volume rename are disabled. Zip source and destination must be approved directories. Drive upload/link actions have no provider and remain nonselectable.",
     actions: [
       action("folder.create", "Create a folder within an approved base directory.", {
-        name: p("string", "Folder name or absolute folder path.", true), basePath: p("string", "Approved base directory; omitted means backend's default allowed folder."),
+        name: p("string", "Folder name or absolute folder path; target must resolve inside an approved root.", true), basePath: p("string", "Existing approved base directory for relative names; omitted means the backend's default approved root."),
       }, "AgentResult with data.path, fileReferences, artifact paths, and filesystem verification.", "low", true, ["folder_create"]),
       action("file.search", "List one directory and filter entry names.", {
-        query: p("string", "Filename substring.", true), path: p("string", "Directory to list; service cwd if omitted."),
+        query: p("string", "Filename substring.", true), path: p("string", "Existing directory inside an approved root; defaults to the first approved root."),
       }, "AgentResult with data.matches, data.bestMatch, directory and fileReferences.", "low", true, ["file_search"]),
       action("file.inspect", "Read a bounded preview of a supported text/source, JSON, or CSV file inside approved folders.", { path: p("string", "Existing file path inside approved folders.", true), maxBytes: p("number", "Optional preview size, clamped to 1 KiB–256 KiB.") }, "AgentResult with data.content, truncation state, metadata, optional JSON/CSV structure, and evidence.", "low", true, ["file_read"]),
-      action("file.rename", "Rename an existing file or directory.", {
-        oldPath: p("string", "Existing source path.", true), newPath: p("string", "Destination path within allowed folders.", true),
-      }, "AgentResult with destination artifact and observed rename verification.", "medium", true, ["file_write"]),
+      action("file.rename", "Rename an existing regular file within an approved root. Directories and cross-volume moves are not supported.", {
+        oldPath: p("string", "Existing regular file within an approved root.", true), newPath: p("string", "New path inside an approved existing directory; must not already exist.", true),
+      }, "AgentResult with destination artifact, exclusive destination creation and source-removal verification.", "medium", true, ["file_write"]),
       action("file.zip", "Compress directory contents into a zip in an allowed archive directory.", {
-        sourceDir: p("string", "Directory to archive.", true), zipName: p("string", "Archive basename ending in .zip; backend can generate one."),
+        sourceDir: p("string", "Existing source directory inside an approved root.", true), destinationDir: p("string", "Existing approved directory for the archive; defaults to the first approved root."), zipName: p("string", "Archive filename, not a path; existing destinations are never overwritten."),
       }, "AgentResult with data.verifiedFilesystemResults.zipPath and a checked nonempty archive.", "medium"),
       action("drive.upload", "Placeholder upload; no OAuth or network upload occurs.", { file: p("string", "Filename.", true) }, "Invented data.fileId/shareLink/url; not evidence of an uploaded file.", "high", false),
       action("drive.share_link", "Placeholder Drive URL generation.", { fileId: p("string", "Drive file ID.", true) }, "Constructed URL only; no sharing permission is changed or verified.", "low", false),
