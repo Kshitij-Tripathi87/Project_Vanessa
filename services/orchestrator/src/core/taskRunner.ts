@@ -814,7 +814,17 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
     if (isKillSwitchEngaged) {
       task.status = "cancelled";
       task.lifecycleState = "cancelled";
-      task.error = "Cancelled by kill switch";
+      task.error = "Cancelled by kill switch before execution began.";
+      task.completedAt = Date.now();
+      task.verification = {
+        verified: true,
+        postconditions: [
+          "The emergency kill switch was active before this task started.",
+          "No agent action or managed process was launched.",
+        ],
+        outcome: "cancelled",
+        details: task.error,
+      };
       memoryPalace.recordTaskCheckpoint(task, plan.id);
       eventBus.emitEvent("task.cancelled", { taskId: task.id, agentId: task.agent, reason: task.error });
       eventBus.emitEvent("task:update", task);

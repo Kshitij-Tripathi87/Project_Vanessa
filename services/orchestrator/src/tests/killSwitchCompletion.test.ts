@@ -101,6 +101,10 @@ test("emergency stop verifies already-finished work and prevents its dependent t
     assert.equal(results[0].status, "success");
     assert.equal(results[0].verification?.verified, true);
     assert.equal(results[1].status, "cancelled");
+    assert.equal(results[1].verification?.verified, true);
+    assert.equal(results[1].verification?.outcome, "cancelled");
+    assert.match(results[1].verification?.details || "", /before execution began/);
+    assert.ok(results[1].completedAt);
     assert.deepEqual(executions, ["first"]);
   } finally {
     agentRegistry.files.execute = originalExecute;
