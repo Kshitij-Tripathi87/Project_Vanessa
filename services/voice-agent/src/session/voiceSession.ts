@@ -32,9 +32,56 @@ export interface VoiceSessionHandlers {
   onFinalTranscript?: (text: string, requestId: string) => void;
   onAudioChunkOut?: (chunk: { text: string; audioBase64?: string; format?: "mp3" | "wav" | "pcm_s16le"; sampleRate?: number; fallbackSpeech?: boolean; isFinal: boolean }) => void;
   onTtsUnavailable?: (detail: string) => void;
-  onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any }) => void;
+  onHudUpdate?: (hud: { state: SessionState; transcript: string; plan?: any; requestId?: string }) => void;
   onProviderStatus?: (status: VoiceProviderInfo) => void;
   onError?: (detail: string) => void;
+}
+
+const MAX_CONVERSATION_TURNS = 6;
+const MAX_CONVERSATION_TURN_CHARS = 240;
+const MAX_CONVERSATION_CHARS = 1200;
+
+/**
+ * A provider turn ID is not a UUID. Hash it into a deterministic UUIDv8 so
+ * conversation events and orchestrator tasks can share one request key while
+ * retries of the same recognized provider turn retain their idempotency key.
+ */
+export function voiceRequestIdForTurn(turnId?: string, sessionId = "standalone"): string {
+  if (!turnId) return randomUUID();
+  const bytes = createHash("sha256")
+    .update("vanessa.voice.request.v1:")
+    .update(sessionId)
+    .update(":")
+    .update(turnId)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x80;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function normalizeConversationContext(turns: unknown): ConversationTurn[] | null {
+  if (!Array.isArray(turns)) return null;
+  const valid = turns.filter((turn): turn is ConversationTurn =>
+    Boolean(turn) &&
+    typeof turn === "object" &&
+    ((turn as ConversationTurn).role === "user" || (turn as ConversationTurn).role === "assistant") &&
+    typeof (turn as ConversationTurn).content === "string"
+  );
+  if (valid.length !== turns.length) return null;
+
+  const kept: ConversationTurn[] = [];
+  let remaining = MAX_CONVERSATION_CHARS;
+  for (const turn of valid.slice(-MAX_CONVERSATION_TURNS).reverse()) {
+    const content = turn.content.replace(/\s+/g, " ").trim().slice(0, MAX_CONVERSATION_TURN_CHARS);
+    if (!content) continue;
+    const cost = (turn.role === "user" ? 6 : 9) + content.length + 1;
+    if (cost > remaining) break;
+    kept.unshift({ role: turn.role, content });
+    remaining -= cost;
+  }
+  return kept;
 }
 
 export interface VoiceProviderInfo {
@@ -43,6 +90,7 @@ export interface VoiceProviderInfo {
 }
 
 export class VanessaVoiceSession {
+  private readonly voiceSessionId = randomUUID();
   private turnDetector = new TurnDetector();
   private vad = new SileroVadDetector();
   private readonly sarvamSpeechGate = new SpeechAudioGate();
@@ -61,6 +109,7 @@ export class VanessaVoiceSession {
   private sessionGeneration = 0;
   private handlers: VoiceSessionHandlers = {};
   private conversationContext: ConversationTurn[] = [];
+  private pendingConversationContext?: ConversationTurn[];
   private processedTurnIds = new Set<string>();
   private queuedUtterances: Array<{ text: string; language: string }> = [];
   private requestController?: AbortController;
@@ -147,6 +196,35 @@ export class VanessaVoiceSession {
 
   private notifyProviderStatus(): void {
     this.handlers.onProviderStatus?.(this.getProviderInfo());
+  }
+
+  /**
+   * Replaces the ASR/planner history with the desktop's canonical conversation.
+   * Context received during execution is staged and applied after this turn
+   * publishes its response, avoiding mid-request history mutation.
+   */
+  setConversationContext(turns: unknown): boolean {
+    const normalized = normalizeConversationContext(turns);
+    if (!normalized) return false;
+    if (this.isProcessing) {
+      this.pendingConversationContext = normalized;
+      return true;
+    }
+    this.conversationContext = normalized;
+    this.asr.setConversationContext?.(this.conversationContext);
+    return true;
+  }
+
+  private applyPendingConversationContext(): void {
+    if (!this.pendingConversationContext) return;
+    this.conversationContext = this.pendingConversationContext;
+    this.pendingConversationContext = undefined;
+    this.asr.setConversationContext?.(this.conversationContext);
+  }
+
+  private appendConversationTurn(turn: ConversationTurn): void {
+    this.conversationContext = normalizeConversationContext([...this.conversationContext, turn]) || [];
+    this.asr.setConversationContext?.(this.conversationContext);
   }
 
   async start(): Promise<void> {
@@ -352,14 +430,10 @@ export class VanessaVoiceSession {
     }
 
     this.partialTranscript = "";
+    this.appendConversationTurn({ role: "user", content: command });
+    const requestId = voiceRequestIdForTurn(turnId, this.voiceSessionId);
     this.setState("thinking");
-    this.handlers.onHudUpdate?.({ state: "thinking", transcript: command });
-    this.conversationContext.push({ role: "user", content: command });
-    this.conversationContext = this.conversationContext.slice(-8);
-    this.asr.setConversationContext?.(this.conversationContext);
-    const requestId = turnId
-      ? `voice-${createHash("sha256").update(turnId).digest("hex").slice(0, 32)}`
-      : `voice-${randomUUID()}`;
+    this.handlers.onHudUpdate?.({ state: "thinking", transcript: command, requestId });
     const idempotencyKey = `voice:${requestId}`;
     const controller = new AbortController();
     this.requestController = controller;
@@ -370,7 +444,7 @@ export class VanessaVoiceSession {
     try {
       try {
         this.setState("executing");
-        this.handlers.onHudUpdate?.({ state: "executing", transcript: command });
+        this.handlers.onHudUpdate?.({ state: "executing", transcript: command, requestId });
 
         // The voice service submits one correlated turn; planning and all tool
         // dispatch remain owned by the orchestrator.
@@ -400,6 +474,7 @@ export class VanessaVoiceSession {
           state: "responding",
           transcript: execution.spokenSummary,
           plan: execution.plan,
+          requestId,
         });
         responseText = execution.spokenSummary;
       } catch (err: any) {
@@ -407,14 +482,12 @@ export class VanessaVoiceSession {
         console.error("[VanessaVoiceSession] Execution error:", safeProviderDetail(err.message));
         responseText = "I couldn't confirm the task result. Check the task timeline before retrying; the request may already be running.";
         this.setState("responding");
-        this.handlers.onHudUpdate?.({ state: "responding", transcript: responseText });
+        this.handlers.onHudUpdate?.({ state: "responding", transcript: responseText, requestId });
       }
 
       if (responseText) {
         if (!responseText.startsWith("I couldn't confirm the task result.")) {
-          this.conversationContext.push({ role: "assistant", content: responseText });
-          this.conversationContext = this.conversationContext.slice(-8);
-          this.asr.setConversationContext?.(this.conversationContext);
+          this.appendConversationTurn({ role: "assistant", content: responseText });
         }
         try {
           console.log(`[Voice] TTS start request=${requestId} characters=${responseText.length}`);
@@ -429,6 +502,7 @@ export class VanessaVoiceSession {
       if (generation !== this.sessionGeneration) return;
       this.requestController = undefined;
       this.isProcessing = false;
+      this.applyPendingConversationContext();
       this.turnDetector.reset();
       if (generation === this.sessionGeneration) {
         this.bargeIn.reset();
@@ -480,6 +554,7 @@ export class VanessaVoiceSession {
     // explicit Stop can still cancel it. Terminal request IDs are cleared above.
     this.isProcessing = false;
     this.isSpeaking = false;
+    this.applyPendingConversationContext();
     this.queuedUtterances = [];
     this.partialTranscript = "";
     this.tts.abort();
@@ -536,6 +611,7 @@ export class VanessaVoiceSession {
     });
     this.isProcessing = false;
     this.isSpeaking = false;
+    this.applyPendingConversationContext();
     this.queuedUtterances = [];
     this.partialTranscript = "";
     this.tts.abort();

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
@@ -165,7 +164,7 @@ test("voice final transcript reaches the orchestrator HTTP contract and returns 
     assert.equal(request.body.command, command);
     assert.equal(request.body.language, "en");
     assert.equal(request.body.envelope.originDeviceId, "desktop-local");
-    assert.equal(request.body.requestId, "voice-" + createHash("sha256").update(turnId).digest("hex").slice(0, 32));
+    assert.match(request.body.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(request.body.idempotencyKey, "voice:" + request.body.requestId);
     assert.equal(request.body.envelope.requestId, request.body.requestId);
     assert.equal(request.body.envelope.idempotencyKey, request.body.idempotencyKey);
