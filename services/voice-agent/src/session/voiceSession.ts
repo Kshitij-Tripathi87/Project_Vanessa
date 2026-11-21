@@ -547,6 +547,7 @@ export class VanessaVoiceSession {
     // explicit Stop can still cancel it. Terminal request IDs are cleared above.
     this.isProcessing = false;
     this.isSpeaking = false;
+    this.applyPendingConversationContext();
     this.queuedUtterances = [];
     this.partialTranscript = "";
     this.tts.abort();
@@ -603,6 +604,7 @@ export class VanessaVoiceSession {
     });
     this.isProcessing = false;
     this.isSpeaking = false;
+    this.applyPendingConversationContext();
     this.queuedUtterances = [];
     this.partialTranscript = "";
     this.tts.abort();
