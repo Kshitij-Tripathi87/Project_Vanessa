@@ -137,6 +137,9 @@ jobs:
       - name: Regression-test emergency-stop request admission
         run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/emergencyStopAdmission.test.ts
 
+      - name: Regression-test emergency-stop completed-task verification
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/killSwitchCompletion.test.ts
+
       - name: Test shared voice/text command contract
         run: pnpm --filter @vanessa/voice-agent exec tsx --test src/tests/commandContract.test.ts
 

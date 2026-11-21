@@ -1034,7 +1034,10 @@ export async function runPlan(plan: Plan): Promise<Task[]> {
         eventBus.emitEvent("task:update", task);
         return task;
       }
-      if (isKillSwitchEngaged || (task.status as string) === "cancelled") {
+      // A global stop blocks later work, but it does not overwrite an
+      // operation whose process supervisor already proved it had finished.
+      // That result must still pass through the independent verifier.
+      if ((task.status as string) === "cancelled") {
         task.status = "cancelled";
         task.lifecycleState = "cancelled";
         task.error = task.error || "Operation was cancelled while the agent was running.";
