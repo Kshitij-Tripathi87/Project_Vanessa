@@ -72,6 +72,9 @@ jobs:
       - name: Build orchestrator
         run: pnpm --filter @vanessa/orchestrator build
 
+      - name: Test intelligence contracts, local hardware discovery, and resource boundaries
+        run: pnpm --filter @vanessa/orchestrator test:intelligence
+
       - name: Test verified spoken outcome summaries
         run: pnpm --filter @vanessa/orchestrator test:narrator
 

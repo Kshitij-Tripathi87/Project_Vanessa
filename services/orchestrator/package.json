@@ -26,6 +26,7 @@
     "test:trustworthy-execution": "tsx --test src/tests/trustworthyExecution.test.ts",
     "test:it-ops-log-target": "tsx --test src/tests/itOpsLogTarget.test.ts",
     "test:ollama-client": "tsx --test src/tests/ollamaClient.test.ts",
+    "test:intelligence": "tsx --test src/tests/intelligenceContracts.test.ts src/tests/hardwareProbe.test.ts src/tests/resourceEstimator.test.ts",
     "test:resource-workflows": "tsx --test src/tests/agentRouting.test.ts src/tests/folderAgent.test.ts src/tests/fileAgent.test.ts src/tests/planner.resourceRouting.test.ts"
   },
   "dependencies": {
