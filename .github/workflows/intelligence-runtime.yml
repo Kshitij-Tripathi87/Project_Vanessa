@@ -1,0 +1,42 @@
+name: Intelligence runtime foundations
+
+on:
+  pull_request:
+    paths:
+      - 'services/orchestrator/src/intelligence/**'
+      - 'services/orchestrator/src/tests/intelligenceRuntime.test.ts'
+      - 'services/orchestrator/package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/intelligence-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: intelligence-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-foundations:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check runtime contracts and tests
+        run: pnpm --filter @vanessa/orchestrator exec tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --esModuleInterop --skipLibCheck src/intelligence/engineAdapter.ts src/intelligence/hardwareProbe.ts src/intelligence/resourceEstimator.ts src/tests/intelligenceRuntime.test.ts
+      - name: Test synthetic hardware and resource boundaries
+        run: pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/intelligenceRuntime.test.ts
