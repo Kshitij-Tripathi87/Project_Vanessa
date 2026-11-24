@@ -1,5 +1,6 @@
 import { safeStorage } from "electron";
 import type { PcIdentityEncryptionAdapter } from "./remotePcIdentityStore.js";
+import { isProtectedLinuxStorageBackend } from "./safeStoragePolicy.js";
 
 /**
  * Electron 34's safeStorage implementation uses the platform key store:
@@ -9,7 +10,10 @@ import type { PcIdentityEncryptionAdapter } from "./remotePcIdentityStore.js";
 export class ElectronPcIdentityEncryption implements PcIdentityEncryptionAdapter {
   isAvailable(): boolean {
     if (!safeStorage.isEncryptionAvailable()) return false;
-    if (process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text") return false;
+    if (process.platform === "linux") {
+      // Unknown is not proof of an OS-backed secret store either.
+      return isProtectedLinuxStorageBackend(safeStorage.getSelectedStorageBackend());
+    }
     return true;
   }
 

@@ -25,9 +25,11 @@ async function probeOllama(baseUrl, model, options = {}) {
     };
   }
 
+  if (parsed.hostname.toLowerCase() === "localhost") parsed.hostname = "127.0.0.1";
   let response;
   try {
     response = await fetchImpl(parsed.origin + "/api/tags", {
+      redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {

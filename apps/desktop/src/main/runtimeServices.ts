@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { applyOrchestratorRuntimeUrls, resolveOrchestratorPort, resolveVoiceAgentPort } from "./runtimeConfig.js";
+import { restrictPackagedEnvironment } from "./developmentPolicy.js";
 
 const managedChildren = new Map<string, ChildProcess>();
 let shuttingDown = false;
@@ -47,6 +48,8 @@ export function loadUserEnvironment(): string {
     }
   }
 
+  // User configuration cannot re-enable dev origins in the packaged process.
+  if (app.isPackaged) restrictPackagedEnvironment(process.env);
   // These services are intentionally bound to loopback in a desktop install.
   process.env.HOST = "127.0.0.1";
   if (!process.env.VOICE_AGENT_PORT?.trim()) process.env.VOICE_AGENT_PORT = "4500";
@@ -124,6 +127,9 @@ async function startService(options: {
   if (!fs.existsSync(options.entryPath)) throw new Error("The packaged " + options.name + " service is missing at " + options.entryPath);
 
   const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1" };
+  // Enforce this again at the spawn boundary, even if another caller changed
+  // the parent environment since initialization.
+  restrictPackagedEnvironment(childEnvironment);
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
   if (options.name === "orchestrator") {
     // Packaged remote control uses only authenticated protocol v2. A stale

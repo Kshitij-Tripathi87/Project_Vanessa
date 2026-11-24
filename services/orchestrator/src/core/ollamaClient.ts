@@ -26,6 +26,9 @@ export class OllamaClient {
     if (parsed.protocol !== "http:" || !localHosts.has(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
       throw new Error("OLLAMA_BASE_URL must be an HTTP loopback origin such as http://127.0.0.1:11434.");
     }
+    // Resolve the conventional localhost alias directly to loopback rather
+    // than relying on a mutable hosts-file or DNS mapping.
+    if (parsed.hostname.toLowerCase() === "localhost") parsed.hostname = "127.0.0.1";
     this.baseUrl = parsed.origin;
     this.model = (options.model ?? process.env.OLLAMA_MODEL ?? DEFAULT_OLLAMA_MODEL).trim();
     if (!this.model || this.model.length > 128 || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/.test(this.model)) throw new Error("OLLAMA_MODEL must be a valid local model tag.");
@@ -49,6 +52,8 @@ export class OllamaClient {
       const safeId = (requestId || globalThis.crypto.randomUUID()).replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 160);
       const response = await this.fetchImpl(`${this.baseUrl}/api/chat`, {
         method: "POST",
+        // Redirects could otherwise send this local-only prompt to a remote host.
+        redirect: "error",
         headers: { "Content-Type": "application/json", ...(safeId ? { "X-Request-ID": safeId } : {}) },
         body: JSON.stringify({
           model: this.model,

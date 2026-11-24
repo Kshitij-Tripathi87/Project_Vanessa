@@ -1,6 +1,20 @@
 import { WebSocket } from "ws";
 import { AsrAdapter, ProviderRuntimeStatus, TranscriptResult } from "./types.js";
 
+/** Local ASR may process ambient audio. Never treat a network endpoint as local. */
+export function normalizeLocalVoiceUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error("Local Whisper requires a loopback WebSocket origin."); }
+  if (url.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname.toLowerCase()) ||
+      url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Local Whisper requires a loopback origin, ws://127.0.0.1:PORT or ws://[::1]:PORT, without a path or credentials.");
+  }
+  // Avoid trusting a modified hosts-file/DNS mapping for the name localhost.
+  if (url.hostname.toLowerCase() === "localhost") url.hostname = "127.0.0.1";
+  return url.href;
+}
+
 export class VoiceAdapter implements AsrAdapter {
   private websocket?: WebSocket;
   private handlers?: {
@@ -15,10 +29,11 @@ export class VoiceAdapter implements AsrAdapter {
   private statusHandler?: (status: ProviderRuntimeStatus) => void;
   private reconnectTimer?: NodeJS.Timeout;
   private connectionError?: string;
+  private readonly serverUrl: string;
 
-  constructor(
-    private readonly serverUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505"
-  ) {}
+  constructor(serverUrl = process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505") {
+    this.serverUrl = normalizeLocalVoiceUrl(serverUrl);
+  }
 
   connect(handlers: {
     onPartial: (result: TranscriptResult) => void;

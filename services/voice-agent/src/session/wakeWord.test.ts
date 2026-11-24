@@ -18,7 +18,12 @@ test("wake phrase must lead the utterance and have a token boundary", () => {
 import { VanessaVoiceSession } from "./voiceSession.js";
 
 test("hosted ASR cannot enable always-on ambient wake-word monitoring", async () => {
-  const session = new VanessaVoiceSession({ asrProvider: "sarvam", ttsProvider: "sarvam" });
+  const asrOrigin = new URL(process.env.SARVAM_ASR_URL || "wss://api.sarvam.ai/speech-to-text-realtime/ws").origin;
+  const session = new VanessaVoiceSession({
+    asrProvider: "sarvam", ttsProvider: "browser",
+    // Even an explicitly admitted hosted provider cannot receive ambient audio.
+    hostedEgressPolicy: { allows: (request) => request.provider === "sarvam" && request.purpose === "speech_input" && request.origin === asrOrigin },
+  });
   await assert.rejects(session.enableWakeWordMonitor(), /local Whisper speech runtime/);
   session.stop();
 });

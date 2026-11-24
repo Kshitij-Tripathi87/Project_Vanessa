@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ConversationState } from "@vanessa/protocol/conversation";
 import { initialConversationState } from "@vanessa/protocol/conversation";
 import { Plan, Task, AuditEntry } from "@vanessa/shared";
+import type { ConversationHistoryStatus } from "../conversation/localConversationHistory.js";
 
 export interface ConversationRecoveryItem {
   requestId: string;
@@ -28,6 +29,8 @@ interface VanessaState {
   progressMessage: string;
   conversationState: ConversationState;
   conversationRecovery: ConversationRecoveryItem[];
+  conversationHistoryStatus: ConversationHistoryStatus;
+  appClosing: boolean;
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -42,6 +45,9 @@ interface VanessaState {
   setCurrentRequestId: (requestId: string | null) => void;
   setCurrentTaskId: (taskId: string | null) => void;
   setConversationState: (state: ConversationState) => void;
+  setConversationHistoryStatus: (status: ConversationHistoryStatus) => void;
+  setAppClosing: (closing: boolean) => void;
+  clearConversationRecovery: () => void;
   addConversationRecovery: (item: ConversationRecoveryItem) => void;
   dismissConversationRecovery: (requestId: string) => void;
 }
@@ -61,6 +67,8 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   progressMessage: "Ready when you are.",
   conversationState: initialConversationState(globalThis.crypto.randomUUID()),
   conversationRecovery: [],
+  conversationHistoryStatus: "loading",
+  appClosing: false,
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setActivePlan: (activePlan) => set({ activePlan, tasks: activePlan ? activePlan.tasks : [] }),
@@ -95,6 +103,9 @@ export const useVanessaStore = create<VanessaState>((set) => ({
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
   setConversationState: (conversationState) => set({ conversationState }),
+  setConversationHistoryStatus: (conversationHistoryStatus) => set({ conversationHistoryStatus }),
+  setAppClosing: (appClosing) => set({ appClosing }),
+  clearConversationRecovery: () => set({ conversationRecovery: [] }),
   addConversationRecovery: (item) => set((state) => ({
     conversationRecovery: [
       ...state.conversationRecovery.filter((existing) => existing.requestId !== item.requestId),

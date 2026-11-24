@@ -6,7 +6,7 @@ import { normalizeModelTasks } from "../core/modelPlan.js";
 function requiredParams(spec: CatalogAction): Record<string, unknown> {
   return Object.fromEntries(Object.entries(spec.parameters).filter(([, field]) => field.required).map(([name, field]) => [
     name,
-    field.type === "number" ? 50 : field.type === "boolean" ? false : field.type === "array" ? [] : field.type === "object" ? {} : "user-supplied-value",
+    spec.name === "bluetooth.set" && name === "state" ? "On" : field.type === "number" ? 50 : field.type === "boolean" ? false : field.type === "array" ? [] : field.type === "object" ? {} : "user-supplied-value",
   ]));
 }
 
@@ -22,8 +22,9 @@ test("accepts the reported mixed Windows/Codex request without model-generated m
   assert.match(tasks[1].acceptanceCriteria![0], /coding completion remains unverified/);
 });
 
-test("reviews required parameters for every selectable action across all ten agents", () => {
-  assert.equal(AGENT_CATALOG.length, 10);
+test("reviews required parameters for every registered agent and selectable action", () => {
+  assert.ok(AGENT_CATALOG.length > 0, "The catalogue must not be empty.");
+  assert.equal(new Set(AGENT_CATALOG.map((agent) => agent.id)).size, AGENT_CATALOG.length, "Agent IDs must be unique.");
   for (const agent of AGENT_CATALOG) {
     for (const action of agent.actions) {
       const params = requiredParams(action);
@@ -87,9 +88,11 @@ test("rejects missing, cyclic, self, duplicate, and malformed dependency definit
 
 test("preserves Codex launch boundaries and action-specific validation", () => {
   const coding = { agent: "developer", action: "codex.open", params: { projectPath: "C:/project", prompt: "Inspect source" } };
-  assert.throws(() => normalizeModelTasks([coding, { agent: "testing", action: "testing.run_checks", params: { command: "user-supplied-command" }, dependsOn: ["t1"] }]), /only acknowledges a terminal launch/);
+  const registeredTest = { agent: "testing", action: "testing.run_incident_lab", params: { suiteId: "incident-lab.regression", workspaceId: "approved-workspace", expectedDiffHash: "a".repeat(64) } };
+  assert.throws(() => normalizeModelTasks([coding, { ...registeredTest, dependsOn: ["t1"] }]), /only acknowledges a terminal launch/);
   assert.throws(() => normalizeModelTasks([coding, coding]), /one Codex handoff/);
-  assert.throws(() => normalizeModelTasks([{ agent: "testing", action: "testing.run_checks", params: { command: "test", autoDeploy: true } }]), /invalid params/);
+  assert.throws(() => normalizeModelTasks([{ ...registeredTest, params: { ...registeredTest.params, command: "test", autoDeploy: true } }]), /invalid params/);
+  assert.throws(() => normalizeModelTasks([{ agent: "testing", action: "testing.run_checks", params: { command: "test" } }]), /unavailable agent\/action/);
   assert.throws(() => normalizeModelTasks([{ agent: "windows", action: "volume.set", params: { level: 101 } }]), /invalid params/);
   assert.throws(() => normalizeModelTasks([{ agent: "windows", action: "file.search", params: { query: "report" } }]), /unavailable agent\/action/);
 });

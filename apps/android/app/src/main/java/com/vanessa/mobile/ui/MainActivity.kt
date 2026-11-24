@@ -21,6 +21,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.vanessa.mobile.agent.AndroidLocalToolExecutor
 import com.vanessa.mobile.inference.LlamaCppInference
@@ -30,6 +32,7 @@ import com.vanessa.mobile.profile.AndroidDeviceProfiler
 import com.vanessa.mobile.profile.DeviceProfile
 import com.vanessa.mobile.tools.CalendarSearchTool
 import com.vanessa.mobile.voice.AndroidOnDeviceSpeechInput
+import com.vanessa.mobile.voice.MicrophonePermissionState
 import com.vanessa.mobile.voice.OfflineTtsController
 import com.vanessa.mobile.voice.OfflineTtsPlaybackStatus
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +81,9 @@ class MainActivity : ComponentActivity() {
         get() = ConversationUiProjection.voiceDraft(conversationState)
 
     private var activeCaptureLease: CaptureLease? = null
+    private val microphonePermissionGate by lazy {
+        ViewModelProvider(this)[MicrophonePermissionState::class.java].gate
+    }
     private var pendingConversationRequest: ConversationRequestHandle? = null
     private var assistantResponse by mutableStateOf("")
     private var assistantMetrics by mutableStateOf("")
@@ -137,10 +143,18 @@ class MainActivity : ComponentActivity() {
     private val requestMicrophone =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             microphonePermissionGranted = granted
-            if (granted) startSpeechInput()
-            else {
+            val requested = microphonePermissionGate.resolve(granted)
+            if (requested && destination == VanessaDestination.LISTENING &&
+                lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            ) {
+                startSpeechInput()
+            } else if (destination == VanessaDestination.LISTENING) {
                 voiceListening = false
-                speechInputStatus = "Microphone permission denied. You can type your request instead."
+                speechInputStatus = if (granted) {
+                    "Voice input was interrupted before permission returned. Start it again if you want to speak."
+                } else {
+                    "Microphone permission denied. You can type your request instead."
+                }
             }
         }
 
@@ -397,7 +411,16 @@ class MainActivity : ComponentActivity() {
         if (startupReady) refreshProfile()
     }
 
+    override fun onStop() {
+        // No speech capture continues in the background. A pending permission
+        // result is invalidated too, so returning to the app cannot start an
+        // abandoned microphone request behind the user's back.
+        if (activeCaptureLease != null || microphonePermissionGate.isPending) cancelSpeechInput()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        microphonePermissionGate.cancel()
         activeCaptureLease?.let { conversationController.cancelCapture(it) }
         activeCaptureLease = null
         offlineTts?.close()
@@ -647,11 +670,30 @@ class MainActivity : ComponentActivity() {
             speechInputStatus = "No on-device recognizer is available. Type your request instead."
             return
         }
-        if (hasMicrophonePermission()) startSpeechInput()
-        else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+        if (microphonePermissionGate.isPending) {
+            speechInputStatus = "Wait for the previous microphone permission request to finish."
+            return
+        }
+        if (hasMicrophonePermission()) {
+            startSpeechInput()
+        } else if (microphonePermissionGate.begin()) {
+            try {
+                requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+            } catch (_: Exception) {
+                microphonePermissionGate.resolve(false)
+                speechInputStatus = "Could not request microphone permission. You can type your request instead."
+            }
+        }
     }
 
     private fun startSpeechInput() {
+        if (destination != VanessaDestination.LISTENING ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || !hasMicrophonePermission()
+        ) {
+            voiceListening = false
+            speechInputStatus = "Voice input is no longer active. Start it again if you want to speak."
+            return
+        }
         // Each recognizer start receives a fresh lease. Any late callback from
         // an older recognizer generation is rejected by ConversationController.
         activeCaptureLease?.let { conversationController.cancelCapture(it) }
@@ -676,6 +718,7 @@ class MainActivity : ComponentActivity() {
 
     /** Navigation/Type Instead invalidates the capture lease before recognizer teardown. */
     private fun cancelSpeechInput() {
+        microphonePermissionGate.cancel()
         activeCaptureLease?.let { conversationController.cancelCapture(it) }
         activeCaptureLease = null
         onDeviceSpeechInput?.close()

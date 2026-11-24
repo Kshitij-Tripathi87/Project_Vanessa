@@ -427,11 +427,13 @@ test("memory storage redacts sensitive metadata and never returns raw metadata",
   const palace = new MemoryPalace(path.join(tempRoot, "memory.db"));
   try {
     const agent = new MemoryAgent(palace);
-    const marker = "memory-privacy-" + randomUUID();
+    // This fixture has its own database. Avoid a random UUID: some digit runs
+    // look like phone numbers to the privacy filter and make recall flaky.
+    const marker = "memory privacy unique fixture";
     const secretToken = "sk-" + "A".repeat(32);
     const passwordValue = "nested-password-value-" + randomUUID();
     const stored = await agent.execute("memory.store", {
-      content: marker + " api_key=" + secretToken,
+      content: marker + " " + secretToken,
       metadata: { title: marker, api_key: secretToken, nested: { password: passwordValue } },
     });
     assert.equal(stored.success, true);
@@ -481,7 +483,9 @@ test("PowerShell helper excludes inherited secrets and only accepts explicit VAN
 test("FAKE mode can never report file creation, browser navigation, or Wi-Fi restart as real success", async () => {
   const previousFake = process.env.FAKE;
   process.env.FAKE = "1";
-  const tempRoot = await fs.mkdtemp(path.join(tmpdir(), "vanessa-fake-mode-"));
+  // Keep the fixture inside the already-approved workspace. FAKE mode must
+  // still pass the same path guard as real execution; it does not add grants.
+  const tempRoot = await fs.mkdtemp(path.join(process.cwd(), ".vanessa-fake-mode-"));
   try {
     const target = path.join(tempRoot, "must-not-be-created-" + randomUUID());
     const fileResult = await new FileAgent().execute("folder.create", { name: path.basename(target), basePath: tempRoot });

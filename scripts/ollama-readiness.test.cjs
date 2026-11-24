@@ -1,6 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { probeOllama } = require("./ollama-readiness.cjs");
+const { createServer } = require("node:http");
+const { once } = require("node:events");
 
 test("Ollama probe checks the selected local model", async () => {
   let requestedUrl = "";
@@ -44,6 +46,25 @@ test("Ollama probe returns an actionable offline diagnosis without echoing inter
   assert.equal(result.status, "OFFLINE");
   assert.match(result.message, /Start Ollama/);
   assert.doesNotMatch(result.message, /private network detail/);
+});
+
+test("Ollama readiness never follows a redirect to another server", async () => {
+  let redirectedRequests = 0;
+  const target = createServer((_req, res) => { redirectedRequests++; res.end('{}'); });
+  target.listen(0, "127.0.0.1"); await once(target, "listening");
+  const redirect = createServer((_req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${target.address().port}/api/tags` });
+    res.end();
+  });
+  redirect.listen(0, "127.0.0.1"); await once(redirect, "listening");
+  try {
+    const result = await probeOllama(`http://127.0.0.1:${redirect.address().port}`, "model");
+    assert.equal(result.ok, false);
+    assert.equal(redirectedRequests, 0);
+  } finally {
+    redirect.closeAllConnections(); target.closeAllConnections();
+    await Promise.all([new Promise(resolve => redirect.close(resolve)), new Promise(resolve => target.close(resolve))]);
+  }
 });
 
 test("Ollama probe rejects URL paths and credentials", async () => {

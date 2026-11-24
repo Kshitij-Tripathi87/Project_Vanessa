@@ -1,4 +1,5 @@
 import { VanessaEvent, ExecuteCommandPayload, ExecuteCommandResult, Task } from "@vanessa/shared";
+import type { LocalConversationLoadResult, LocalConversationMutationResult, PersistedConversationState } from "@vanessa/protocol/conversation";
 import type { DetailedHTMLProps, HTMLAttributes } from "react";
 
 declare module "react" {
@@ -29,6 +30,11 @@ declare global {
 
   interface Window {
     vanessa: {
+      loadConversationHistory?: () => Promise<LocalConversationLoadResult>;
+      saveConversationHistory?: (state: PersistedConversationState, revision: number) => Promise<LocalConversationMutationResult>;
+      clearConversationHistory?: (revision: number) => Promise<LocalConversationMutationResult>;
+      onHistoryFlushRequest?: (callback: () => Promise<boolean>) => () => void;
+      onHistoryFlushCancelled?: (callback: () => void) => () => void;
       executeCommand: (payload: ExecuteCommandPayload) => Promise<ExecuteCommandResult>;
       approveTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;
       rejectTask: (taskId: string) => Promise<{ success: boolean; task?: Task; error?: string }>;

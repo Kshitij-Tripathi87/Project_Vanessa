@@ -66,6 +66,45 @@ test("Sarvam chat fails closed on malformed/truncated SSE and keeps uncertain sp
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+test("provider redirects do not forward prompts or credentials", { timeout: 5000 }, async () => {
+  let redirected = 0;
+  const target = createServer((_req, res) => { redirected++; res.end(); });
+  target.listen(0, "127.0.0.1"); await once(target, "listening");
+  const targetAddress = target.address(); assert(targetAddress && typeof targetAddress !== "string");
+  const source = createServer((_req, res) => {
+    res.writeHead(307, { location: `http://127.0.0.1:${targetAddress.port}/stolen` });
+    res.end();
+  });
+  source.listen(0, "127.0.0.1"); await once(source, "listening");
+  const address = source.address(); assert(address && typeof address !== "string");
+  const client = new SarvamChatClient({ apiKey: "test-key", url: `http://127.0.0.1:${address.port}` });
+  try {
+    await assert.rejects(client.complete({ messages: [{ role: "user", content: "private prompt" }] }));
+    assert.equal(redirected, 0);
+  } finally {
+    source.closeAllConnections(); target.closeAllConnections();
+    await Promise.all([new Promise<void>(resolve => source.close(() => resolve())), new Promise<void>(resolve => target.close(() => resolve()))]);
+  }
+});
+
+test("provider HTTP errors do not expose echoed prompts or credentials", { timeout: 5000 }, async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(429, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "private prompt test-key" }));
+  });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  const client = new SarvamChatClient({ apiKey: "test-key", url: `http://127.0.0.1:${address.port}` });
+  try {
+    await assert.rejects(client.complete({ messages: [{ role: "user", content: "private prompt" }] }), (error: Error) => {
+      assert.match(error.message, /HTTP 429/);
+      assert(!error.message.includes("private prompt"));
+      assert(!error.message.includes("test-key"));
+      return true;
+    });
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test("already-cancelled chat never reaches provider, active cancellation is bounded", { timeout: 5000 }, async () => {
   let requests = 0;
   let arrived!: () => void;

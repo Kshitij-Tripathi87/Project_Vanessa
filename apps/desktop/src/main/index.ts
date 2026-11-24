@@ -1,6 +1,8 @@
-import { app, BrowserWindow, globalShortcut, screen } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, protocol, screen, type IpcMainEvent } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { configureSecurity } from "./security.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { loadUserEnvironment, startPackagedServices, stopPackagedServices } from "./runtimeServices.js";
@@ -8,10 +10,52 @@ import { RemotePcIdentityStore } from "./remotePcIdentityStore.js";
 import { ElectronPcIdentityEncryption } from "./electronRemoteIdentityStore.js";
 import { RemotePcSignerServer } from "./remotePcSignerServer.js";
 import { RemotePairingWindowController } from "./remotePairingWindowController.js";
+import { LocalConversationStore } from "./localConversationStore.js";
+import { DESKTOP_RENDERER_SCHEME, DESKTOP_RENDERER_URL, isPathWithin, isTrustedLocalRendererUrl, resolveDesktopRendererAsset } from "./trustedRenderer.js";
+import { waitForHistoryFlush } from "./historyShutdown.js";
+import { rendererContentSecurityPolicy } from "./securityPolicy.js";
+import { allowDevelopmentRenderer, restrictPackagedEnvironment } from "./developmentPolicy.js";
+
+// An inherited shell or stale user configuration cannot make an installed
+// app trust a local development server or enable development service origins.
+if (app.isPackaged) restrictPackagedEnvironment(process.env);
+
+// A fixed, secure application origin avoids handing stored history to whatever
+// process happens to be listening on a localhost development port.
+protocol.registerSchemesAsPrivileged([{
+  scheme: DESKTOP_RENDERER_SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+}]);
 
 let mainWindow: BrowserWindow | null = null;
 let remotePcSignerServer: RemotePcSignerServer | null = null;
 let remotePairingWindowController: RemotePairingWindowController | null = null;
+let localConversationStore: LocalConversationStore | null = null;
+let quitRequested = false;
+let quitFinalizing = false;
+let quitPermitted = false;
+
+function requestRendererHistoryFlush(window: BrowserWindow): Promise<boolean> {
+  return waitForHistoryFlush(randomUUID(), (listener) => {
+    const receive = (event: IpcMainEvent, nonce: unknown, ok: unknown) => {
+      if (window.isDestroyed() || event.sender !== window.webContents ||
+          !event.senderFrame || event.senderFrame !== window.webContents.mainFrame ||
+          !isTrustedLocalRendererUrl(event.senderFrame.url, path.join(__dirname, "../renderer/index.html"), allowDevelopmentRenderer(app.isPackaged, process.env))) return;
+      listener(nonce, ok);
+    };
+    ipcMain.on("vanessa:history-flush-result", receive);
+    return () => ipcMain.removeListener("vanessa:history-flush-result", receive);
+  }, (nonce) => window.webContents.send("vanessa:history-flush-request", nonce));
+}
+
+function finishQuit(): void {
+  if (quitFinalizing) return;
+  quitFinalizing = true;
+  void (localConversationStore?.close() ?? Promise.resolve()).catch(() => undefined).finally(() => {
+    quitPermitted = true;
+    app.quit();
+  });
+}
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -43,7 +87,47 @@ function createWindow() {
   });
 
   configureSecurity();
-  registerIpcHandlers(mainWindow);
+  localConversationStore ??= new LocalConversationStore(
+    path.join(app.getPath("userData"), "data", "conversation.sqlite"),
+    new ElectronPcIdentityEncryption(),
+  );
+  const ownedWindow = mainWindow;
+  const disposeIpc = registerIpcHandlers(ownedWindow, localConversationStore);
+  let closeAllowed = false;
+  let closePending = false;
+  ownedWindow.on("close", (event) => {
+    if (closeAllowed) return;
+    event.preventDefault();
+    if (closePending) return;
+    closePending = true;
+    void (async () => {
+      const flushed = await requestRendererHistoryFlush(ownedWindow);
+      if (ownedWindow.isDestroyed()) return;
+      if (!flushed) {
+        const choice = await dialog.showMessageBox(ownedWindow, {
+          type: "warning",
+          message: "Vanessa cannot finish saving this conversation yet.",
+          detail: "A voice turn, task, or history operation may still be active, or local storage may be unavailable. Keep Vanessa open and wait, or close without saving. Closing does not confirm task cancellation; later responses may be lost.",
+          buttons: ["Keep Vanessa open", "Close without saving"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (choice.response === 0) {
+          quitRequested = false;
+          closePending = false;
+          if (!ownedWindow.isDestroyed()) ownedWindow.webContents.send("vanessa:history-flush-cancelled");
+          return;
+        }
+      }
+      closeAllowed = true;
+      ownedWindow.close();
+    })().catch(() => {
+      quitRequested = false;
+      closePending = false;
+      if (!ownedWindow.isDestroyed()) ownedWindow.webContents.send("vanessa:history-flush-cancelled");
+    });
+  });
 
   mainWindow.webContents.on("console-message", (_event, level, message) => {
     console.log(`[Renderer Console] ${message}`);
@@ -59,16 +143,18 @@ function createWindow() {
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   const localRendererHtml = path.join(__dirname, "../renderer/index.html");
+  const allowDevelopment = allowDevelopmentRenderer(app.isPackaged, process.env);
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!isTrustedLocalRendererUrl(url, localRendererHtml, allowDevelopment)) event.preventDefault();
+  });
 
-  if (devServerUrl) {
-    console.log(`[Electron] Loading dev server: ${devServerUrl}`);
-    mainWindow.loadURL(devServerUrl);
-  } else if (fs.existsSync(localRendererHtml)) {
-    console.log(`[Electron] Loading static bundle: ${localRendererHtml}`);
-    mainWindow.loadFile(localRendererHtml);
+  if (allowDevelopment && devServerUrl && isTrustedLocalRendererUrl(devServerUrl, localRendererHtml, true)) {
+    console.log(`[Electron] Loading explicitly enabled development UI: ${devServerUrl}`);
+    void mainWindow.loadURL(devServerUrl);
   } else {
-    console.log(`[Electron] Falling back to default URL http://localhost:5173`);
-    mainWindow.loadURL("http://localhost:5173");
+    console.log("[Electron] Loading the built application renderer.");
+    void mainWindow.loadURL(DESKTOP_RENDERER_URL);
   }
 
   // Register push-to-talk and emergency kill-switch shortcuts
@@ -81,13 +167,50 @@ function createWindow() {
   });
 
   mainWindow.on("closed", () => {
-    mainWindow = null;
+    disposeIpc();
+    if (mainWindow === ownedWindow) mainWindow = null;
+    if (quitRequested) finishQuit();
   });
 }
 
 app.disableHardwareAcceleration();
 
+// The SQLite snapshot repository has one writer. Electron's OS-level lock is
+// released on process exit/crash, avoiding competing desktop instances.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
+  if (!isPrimaryInstance) return;
+  protocol.handle(DESKTOP_RENDERER_SCHEME, async (request) => {
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response("Not found", { status: 404 });
+    const rendererDirectory = path.join(__dirname, "../renderer");
+    const target = resolveDesktopRendererAsset(request.url, rendererDirectory);
+    if (!target) return new Response("Not found", { status: 404 });
+    try {
+      // Reject symlink escapes as well as lexical traversal. Only built UI
+      // assets can ever be served from the privileged application origin.
+      const realDirectory = fs.realpathSync(rendererDirectory);
+      const realTarget = fs.realpathSync(target);
+      if (!isPathWithin(realDirectory, realTarget) || !fs.statSync(realTarget).isFile()) return new Response("Not found", { status: 404 });
+      const response = await net.fetch(pathToFileURL(realTarget).toString(), { method: request.method });
+      const headers = new Headers(response.headers);
+      headers.set("Content-Security-Policy", rendererContentSecurityPolicy(false));
+      headers.set("X-Content-Type-Options", "nosniff");
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
   if (app.isPackaged && process.platform === "win32") {
     loadUserEnvironment();
     // Keep the long-lived PC identity inside Electron main. The orchestrator
@@ -152,6 +275,16 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", (event) => {
+  if (!isPrimaryInstance || quitPermitted) return;
+  event.preventDefault();
+  quitRequested = true;
+  // Closing the window first drains the renderer queue. Then the main-process
+  // store drains admitted operations and releases its key before quitting.
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  else finishQuit();
 });
 
 app.on("will-quit", () => {

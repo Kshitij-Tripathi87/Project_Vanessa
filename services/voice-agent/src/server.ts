@@ -3,19 +3,29 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import { VanessaVoiceSession } from "./session/voiceSession.js";
+import { normalizeLocalVoiceUrl } from "./asr/voiceAdapter.js";
 import { PcmFrameAccumulator } from "./audio/capture.js";
 import { safeProviderDetail } from "./diagnostics/providerDiagnostics.js";
 import { getVoiceUsageBudget } from "./usageBudget.js";
 import { checkDeviceQuota, reportUsage } from "./quotaGuard.js";
+import { denyHostedEgress, type HostedEgressPolicy } from "@vanessa/shared";
+import { assertVoiceProviderPermission } from "./hostedVoicePolicy.js";
 
 const PORT = parseInt(process.env.VOICE_AGENT_PORT || "4500", 10);
 const HOST = process.env.HOST || "127.0.0.1";
+// Development origins are trusted only when the launcher explicitly enables
+// them. Another local web server must not inherit desktop-origin privileges.
+function desktopOrigins(): string[] {
+  return process.env.VANESSA_DEV_MODE === "1"
+    ? ["vanessa://desktop", "http://localhost:5173", "http://127.0.0.1:5173"]
+    : ["vanessa://desktop"];
+}
 
-function getProviderReadiness() {
+function getProviderReadiness(policy: HostedEgressPolicy) {
   const fishKeyValid = (process.env.FISH_API_KEY || "").startsWith("sk-fish-");
   const sarvamKeyValid = Boolean(process.env.SARVAM_API_KEY && !/placeholder|replace[-_ ]with|your[_-].*(key|model|speaker)/i.test(process.env.SARVAM_API_KEY));
-  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
-  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
+  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "whisper").trim().toLowerCase();
+  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "browser").trim().toLowerCase();
   const asrFallbackConfigured = process.env.VOICE_ALLOW_FALLBACK === "true" && Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
   const ttsFallbackConfigured = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
   const asrConfigured = asrProvider === "fish"
@@ -25,7 +35,9 @@ function getProviderReadiness() {
       : asrProvider === "sarvam"
         ? sarvamKeyValid && Boolean(process.env.SARVAM_ASR_MODEL || "saaras:v3-realtime") && !/placeholder|your[_-].*model|replace[-_ ]with/i.test(process.env.SARVAM_ASR_MODEL || "")
       : Boolean(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505");
-  const ttsConfigured = ttsProvider === "fish"
+  const ttsConfigured = ttsProvider === "browser"
+    ? true // Actual availability is checked against local voices by the desktop.
+    : ttsProvider === "fish"
     ? (fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) || ttsFallbackConfigured
     : ttsProvider === "sarvam"
       ? sarvamKeyValid
@@ -37,8 +49,8 @@ function getProviderReadiness() {
   const fallbackActive = (asrProvider === "fish" && !fishKeyValid && asrFallbackConfigured)
     || (ttsProvider === "fish" && !(fishKeyValid && Boolean(process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID)) && ttsFallbackConfigured);
   return {
-    ready: asrConfigured && ttsConfigured && validateFishConfiguration().valid,
-    state: !asrConfigured || !ttsConfigured || !validateFishConfiguration().valid ? "unavailable" : fallbackActive ? "degraded" : "ready",
+    ready: asrConfigured && ttsConfigured && validateFishConfiguration(policy).valid,
+    state: !asrConfigured || !ttsConfigured || !validateFishConfiguration(policy).valid ? "unavailable" : fallbackActive ? "degraded" : "ready",
     providers: {
       asr: { requested: asrProvider, configured: asrConfigured, fallbackConfigured: asrFallbackConfigured },
       tts: { requested: ttsProvider, configured: ttsConfigured, fallbackConfigured: ttsFallbackConfigured },
@@ -47,7 +59,7 @@ function getProviderReadiness() {
 }
 
 // Fish configuration validation at startup
-function validateFishConfiguration(): { valid: boolean; errors: string[]; warnings: string[] } {
+function validateFishConfiguration(policy: HostedEgressPolicy = denyHostedEgress): { valid: boolean; errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -55,8 +67,8 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
   const fishAsrModel = process.env.FISH_ASR_MODEL || "transcribe-stream-1";
   const fishTtsModel = process.env.FISH_TTS_MODEL || "s2.1-pro-free";
   const fishTtsVoiceId = process.env.FISH_TTS_VOICE_ID || process.env.FISH_VANESSA_VOICE_ID || "";
-  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase();
-  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase();
+  const asrProvider = (process.env.VOICE_ASR_PROVIDER || "whisper").trim().toLowerCase();
+  const ttsProvider = (process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "browser").trim().toLowerCase();
   const allowFallback = process.env.VOICE_ALLOW_FALLBACK === "true";
   const ttsFallback = process.env.VOICE_TTS_FALLBACK_PROVIDER === "browser";
   const sarvamKey = process.env.SARVAM_API_KEY || "";
@@ -65,7 +77,15 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
   const sarvamTtsSpeaker = process.env.SARVAM_TTS_SPEAKER || "shubh_enhi_ads";
 
   if (!["fish", "sarvam", "voice", "whisper"].includes(asrProvider)) errors.push("Unsupported or unimplemented ASR provider.");
-  if (!["fish", "sarvam", "elevenlabs"].includes(ttsProvider)) errors.push("Unsupported TTS provider.");
+  if (!["browser", "fish", "sarvam", "elevenlabs"].includes(ttsProvider)) errors.push("Unsupported TTS provider.");
+  for (const [kind, provider] of [["asr", asrProvider], ["tts", ttsProvider]] as const) {
+    try { assertVoiceProviderPermission(kind, provider, policy); }
+    catch (error) { errors.push(error instanceof Error ? error.message : "Hosted voice permission is unavailable."); }
+  }
+  if (["voice", "whisper"].includes(asrProvider) || (asrProvider === "fish" && allowFallback)) {
+    try { normalizeLocalVoiceUrl(process.env.VOICE_URL || process.env.WHISPER_URL || "ws://127.0.0.1:4505"); }
+    catch { errors.push("Local Whisper requires a loopback WebSocket origin without credentials or a path."); }
+  }
   if (ttsProvider === "sarvam" && !["mp3", "wav"].includes(process.env.SARVAM_TTS_OUTPUT_CODEC || "mp3")) errors.push("Sarvam TTS codec must be mp3 or wav.");
   const capped = Number(process.env.VOICE_BUDGET_CAP_INR || 0) > 0 || Number(process.env.VOICE_BUDGET_PER_USER_CAP_INR || 0) > 0;
   for (const key of ["VOICE_BUDGET_CAP_INR", "VOICE_BUDGET_PER_USER_CAP_INR", "SARVAM_ASR_INR_PER_AUDIO_SECOND", "SARVAM_TTS_INR_PER_1K_CHARACTERS"]) {
@@ -141,11 +161,13 @@ function validateFishConfiguration(): { valid: boolean; errors: string[]; warnin
 // Export for testing
 export { validateFishConfiguration };
 
-export async function createVoiceAgentServer() {
+export async function createVoiceAgentServer(options: { hostedEgressPolicy?: HostedEgressPolicy } = {}) {
   const fastify = Fastify({ logger: false });
+  const allowedOrigins = desktopOrigins();
+  const hostedEgressPolicy = options.hostedEgressPolicy ?? denyHostedEgress;
 
   // Validate configuration at startup
-  const configValidation = validateFishConfiguration();
+  const configValidation = validateFishConfiguration(hostedEgressPolicy);
   if (configValidation.errors.length > 0) {
     console.error("========================================================");
     console.error("[Vanessa Voice Agent] CONFIGURATION ERRORS:");
@@ -163,14 +185,14 @@ export async function createVoiceAgentServer() {
   }
 
   await fastify.register(cors, {
-    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    origin: allowedOrigins,
   });
   await fastify.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // Health check
   fastify.get("/health", async () => {
-    const readiness = getProviderReadiness();
-    const configValidation = validateFishConfiguration();
+    const readiness = getProviderReadiness(hostedEgressPolicy);
+    const configValidation = validateFishConfiguration(hostedEgressPolicy);
     return {
       status: "online",
       service: "vanessa-voice-agent",
@@ -178,8 +200,8 @@ export async function createVoiceAgentServer() {
       sampleRate: 16000,
       chunkDurationMs: 20,
       chunkSamples: 320,
-      defaultAsr: process.env.VOICE_ASR_PROVIDER || "fish",
-      defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish",
+      defaultAsr: process.env.VOICE_ASR_PROVIDER || "whisper",
+      defaultTts: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "browser",
       readiness: readiness.state,
       providers: readiness.providers,
       configValidation: {
@@ -196,7 +218,7 @@ export async function createVoiceAgentServer() {
   });
 
   fastify.get("/ready", async (_request, reply) => {
-    const readiness = getProviderReadiness();
+    const readiness = getProviderReadiness(hostedEgressPolicy);
     if (!readiness.ready) reply.status(503);
     return { status: readiness.state, providers: readiness.providers, timestamp: Date.now() };
   });
@@ -204,7 +226,7 @@ export async function createVoiceAgentServer() {
   // WhisperFlow-compatible Real-time WebSocket streaming endpoint
   fastify.get("/ws", { websocket: true }, (socket, req) => {
     const origin = req.headers.origin;
-    if (origin && !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) {
+    if (origin && !allowedOrigins.includes(origin)) {
       socket.close(1008, "Origin not allowed");
       return;
     }
@@ -219,50 +241,58 @@ export async function createVoiceAgentServer() {
       : undefined;
     const sessionDeviceToken = sessionToken;
 
-    const session = new VanessaVoiceSession({
-      handlers: {
-        onError: (message) => sendJson(socket, { type: "voice_error", message }),
-        onStateChange: (state) => {
-          console.log(`[Voice] state=${state}`);
-          sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
+    let session: VanessaVoiceSession;
+    try {
+      session = new VanessaVoiceSession({
+        hostedEgressPolicy,
+        handlers: {
+          onError: (message) => sendJson(socket, { type: "voice_error", message }),
+          onStateChange: (state) => {
+            console.log(`[Voice] state=${state}`);
+            sendJson(socket, { type: "state_change", state, timestamp: Date.now() });
+          },
+          onPartialTranscript: (text) => {
+            sendJson(socket, { type: "transcript_partial", text });
+          },
+          onFinalTranscript: (text, requestId) => {
+            console.log(`[Voice] transcript committed request=${requestId} characters=${text.length}`);
+            // Report character usage back to the orchestrator so the per-device
+            // ledger stays accurate.  Fire-and-forget; the local UsageBudget
+            // remains the source of truth during local testing.
+            if (sessionDeviceToken) {
+              reportUsage(orchestratorUrl, sessionDeviceToken, text.length);
+            }
+            sendJson(socket, { type: "transcript_final", text, requestId });
+          },
+          onAudioChunkOut: (chunk) => {
+            sendJson(socket, { type: "tts_chunk", ...chunk });
+          },
+          onTtsUnavailable: (detail) => {
+            sendJson(socket, { type: "tts_unavailable", detail });
+          },
+          onHudUpdate: (hud) => {
+            sendJson(socket, { type: "hud_update", ...hud });
+          },
+          onProviderStatus: (providers) => {
+            for (const [kind, provider] of Object.entries(providers)) {
+              console.log(`[Voice Provider] ${kind} state=${provider.state} active=${provider.active} detail=${safeProviderDetail(provider.detail || "none")}`);
+            }
+            sendJson(socket, { type: "provider_status", providers });
+          },
         },
-        onPartialTranscript: (text) => {
-          sendJson(socket, { type: "transcript_partial", text });
-        },
-        onFinalTranscript: (text, requestId) => {
-          console.log(`[Voice] transcript committed request=${requestId} characters=${text.length}`);
-          // Report character usage back to the orchestrator so the per-device
-          // ledger stays accurate.  Fire-and-forget; the local UsageBudget
-          // remains the source of truth during local testing.
-          if (sessionDeviceToken) {
-            reportUsage(orchestratorUrl, sessionDeviceToken, text.length);
-          }
-          sendJson(socket, { type: "transcript_final", text, requestId });
-        },
-        onAudioChunkOut: (chunk) => {
-          sendJson(socket, { type: "tts_chunk", ...chunk });
-        },
-        onTtsUnavailable: (detail) => {
-          sendJson(socket, { type: "tts_unavailable", detail });
-        },
-        onHudUpdate: (hud) => {
-          sendJson(socket, { type: "hud_update", ...hud });
-        },
-        onProviderStatus: (providers) => {
-          for (const [kind, provider] of Object.entries(providers)) {
-            console.log(`[Voice Provider] ${kind} state=${provider.state} active=${provider.active} detail=${safeProviderDetail(provider.detail || "none")}`);
-          }
-          sendJson(socket, { type: "provider_status", providers });
-        },
-      },
-    });
+      });
+    } catch {
+      sendJson(socket, { type: "voice_error", message: "Voice configuration is invalid. Check the selected provider and local endpoint." });
+      socket.close(1011, "Invalid voice configuration");
+      return;
+    }
 
     session.start().catch((err) => {
       console.warn("[VoiceAgentServer] Session start error:", err.message);
     });
 
     // Ambient wake-word capture is only permitted for local Whisper ASR.
-    const selectedAsr = String(process.env.VOICE_ASR_PROVIDER || "fish").trim().toLowerCase();
+    const selectedAsr = String(process.env.VOICE_ASR_PROVIDER || "whisper").trim().toLowerCase();
     const wakeWordEnabled = process.env.VOICE_WAKE_WORD_ENABLED !== "false" && ["whisper", "voice"].includes(selectedAsr);
 
     // Session ready handshake
@@ -317,11 +347,16 @@ export async function createVoiceAgentServer() {
             } else {
               try {
                 await session.enableWakeWordMonitor();
-                sendJson(socket, { type: "wake_word_ready", enabled: true, mode: "local-whisper" });
+                if (session.isWakeWordMonitorActive()) sendJson(socket, { type: "wake_word_ready", enabled: true, mode: "local-whisper" });
               } catch (err: any) {
                 sendJson(socket, { type: "voice_error", message: `Local wake-word setup failed: ${safeProviderDetail(err.message)}` });
               }
             }
+          } else if (json.type === "pause_wake_word" && typeof json.requestId === "string" &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(json.requestId)) {
+            // Standby can be paused only when no voice turn or task is active;
+            // this control never calls the task cancellation endpoint.
+            sendJson(socket, { type: "wake_word_paused", requestId: json.requestId, ok: session.pauseWakeWordMonitor() });
           } else if (json.type === "finalize") {
             session.finalizeTurn();
           } else if (json.type === "deactivate") {

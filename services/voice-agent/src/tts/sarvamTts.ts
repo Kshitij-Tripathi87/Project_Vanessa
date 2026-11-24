@@ -146,6 +146,7 @@ export class SarvamTtsAdapter implements VoiceTtsAdapter {
         endpoint.searchParams.set("model", this.model);
         endpoint.searchParams.set("send_completion_event", "true");
         const socket = new WebSocket(endpoint, {
+          followRedirects: false,
           headers: { "Api-Subscription-Key": this.apiKey },
           handshakeTimeout: Math.min(this.timeoutMs, 10000),
         });

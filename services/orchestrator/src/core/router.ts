@@ -1,4 +1,4 @@
-import type { Plan } from "@vanessa/shared";
+import { assertHostedEgress, denyHostedEgress, type HostedEgressPolicy, type Plan } from "@vanessa/shared";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 // import { GeminiClient } from "./geminiClient.js";
@@ -22,6 +22,10 @@ export class ModelRouter {
   private nvidia?: NvidiaClient;
   private sarvam?: SarvamChatClient;
   private ollama?: OllamaClient;
+
+  // No production hosted-consent source is wired yet. Injecting a policy is
+  // reserved for a future trusted permission service and loopback fixtures.
+  constructor(private readonly hostedEgressPolicy: HostedEgressPolicy = denyHostedEgress) {}
 
   get activeProvider(): string {
     return (process.env.PLANNER_PROVIDER?.trim() || process.env.SARVAM_CHAT_PROVIDER?.trim() || "ollama").toLowerCase();
@@ -66,7 +70,9 @@ export class ModelRouter {
   private async generate(provider: string, prompt: string, systemPrompt: string, json: boolean, requestId?: string, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
     if (provider === "sarvam") {
-      const result = await this.sarvamClient().complete({
+      const client = this.sarvamClient();
+      assertHostedEgress(this.hostedEgressPolicy, "sarvam", json ? "planning" : "conversation", client.getEndpoint());
+      const result = await client.complete({
         signal,
         requestId: requestId || (json ? "planner-" : "conversation-") + globalThis.crypto.randomUUID(),
         messages: [
@@ -82,7 +88,9 @@ export class ModelRouter {
       throw new Error("Unsupported LLM provider '" + provider + "'. Set PLANNER_PROVIDER or CONVERSATION_PROVIDER to ollama, nvidia, or sarvam.");
     }
     // return this.gemini.generate(prompt, systemPrompt, json);
-    return (this.nvidia ??= new NvidiaClient()).generate(prompt, systemPrompt, json, requestId, signal);
+    const client = this.nvidia ??= new NvidiaClient();
+    assertHostedEgress(this.hostedEgressPolicy, "nvidia", json ? "planning" : "conversation", client.getEndpoint());
+    return client.generate(prompt, systemPrompt, json, requestId, signal);
   }
 
   async callConversationalLLM(query: string, context?: string, requestId?: string, signal?: AbortSignal): Promise<string | null> {

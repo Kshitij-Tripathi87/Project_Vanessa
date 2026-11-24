@@ -8,7 +8,7 @@ const root = process.cwd();
 test("readiness uses the same no-key local defaults as the launcher", () => {
   const config = buildReadinessConfig({}, root, () => false);
   assert.equal(config.asrProvider, "whisper");
-  assert.equal(config.ttsProvider, "fish");
+  assert.equal(config.ttsProvider, "browser");
   assert.equal(config.plannerProvider, "ollama");
   assert.equal(config.conversationProvider, "ollama");
   assert.equal(config.usesLocalAsr, true);

@@ -7,10 +7,17 @@ import { SarvamAsrAdapter } from "../asr/sarvamAdapter.js";
 import { VanessaVoiceSession } from "../session/voiceSession.js";
 import { SpeechAudioGate } from "../audio/speechGate.js";
 
-test("Sarvam audio, partials and final transcript reach POST /api/execute once per activation", { timeout: 5000 }, async () => {
+test("Sarvam audio, partials and final transcript reach POST /api/execute once per activation", { timeout: 5000 }, async (t) => {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  const originalAsrUrl = process.env.SARVAM_ASR_URL;
+  t.after(async () => {
+    if (originalAsrUrl === undefined) delete process.env.SARVAM_ASR_URL; else process.env.SARVAM_ASR_URL = originalAsrUrl;
+    for (const ws of server.clients) ws.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
   await once(server, "listening");
   const address = server.address(); assert(address && typeof address !== "string");
+  process.env.SARVAM_ASR_URL = `ws://127.0.0.1:${address.port}`;
   const events: string[] = [];
   const pcm = new Int16Array([100, -100, 0, 42]);
   server.on("connection", (ws, req) => {
@@ -34,9 +41,13 @@ test("Sarvam audio, partials and final transcript reach POST /api/execute once p
   });
   const adapter = new SarvamAsrAdapter({ apiKey: "test-key", url: `ws://127.0.0.1:${address.port}` });
   let partials = 0;
-  const session = new VanessaVoiceSession({ asrProvider: "sarvam", handlers: { onPartialTranscript: () => partials++ } });
-  (session as any).asr = adapter;
-  (session as any).tts = { streamSpeech: async () => {}, abort: () => {} };
+  const session = new VanessaVoiceSession({
+    asrProvider: "sarvam", ttsProvider: "browser", asr: adapter,
+    tts: { streamSpeech: async () => {}, abort: () => {} },
+    // Admit only this loopback fixture, never a real provider endpoint.
+    hostedEgressPolicy: { allows: ({ provider, purpose, origin }) => provider === "sarvam" && purpose === "speech_input" && origin === `ws://127.0.0.1:${address.port}` },
+    handlers: { onPartialTranscript: () => partials++ },
+  });
   const originalFetch = globalThis.fetch;
   const requests: any[] = [];
   globalThis.fetch = (async (url: any, init: any) => {
@@ -67,8 +78,6 @@ test("Sarvam audio, partials and final transcript reach POST /api/execute once p
     }
   } finally {
     session.stop(); globalThis.fetch = originalFetch;
-    for (const ws of server.clients) ws.terminate();
-    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
 

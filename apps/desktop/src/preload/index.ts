@@ -1,7 +1,28 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
+import type { PersistedConversationState } from "@vanessa/protocol/conversation";
 
 contextBridge.exposeInMainWorld("vanessa", {
+  loadConversationHistory: () => ipcRenderer.invoke("vanessa:conversation-load"),
+  saveConversationHistory: (state: PersistedConversationState, revision: number) =>
+    ipcRenderer.invoke("vanessa:conversation-save", state, revision),
+  clearConversationHistory: (revision: number) => ipcRenderer.invoke("vanessa:conversation-clear", revision),
+  onHistoryFlushRequest: (callback: () => Promise<boolean>) => {
+    const handler = async (_event: unknown, nonce: unknown) => {
+      if (typeof nonce !== "string" || !/^[0-9a-f-]{36}$/.test(nonce)) return;
+      let ok = false;
+      try { ok = await callback() === true; } catch { /* report an undrained session */ }
+      ipcRenderer.send("vanessa:history-flush-result", nonce, ok);
+    };
+    ipcRenderer.on("vanessa:history-flush-request", handler);
+    return () => ipcRenderer.removeListener("vanessa:history-flush-request", handler);
+  },
+  onHistoryFlushCancelled: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("vanessa:history-flush-cancelled", handler);
+    return () => ipcRenderer.removeListener("vanessa:history-flush-cancelled", handler);
+  },
+
   executeCommand: (payload: ExecuteCommandPayload) =>
     ipcRenderer.invoke("vanessa:execute-command", payload),
 

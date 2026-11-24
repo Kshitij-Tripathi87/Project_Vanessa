@@ -4,6 +4,7 @@ import { Check, ChevronDown, CircleStop, Ellipsis, Loader2, Mic, MicOff, ShieldC
 import type { Plan, Task } from "@vanessa/shared";
 import type { MicrophoneTestState, SpeechOutputTestState, ProviderStatus, VoiceProviderStatus } from "../hooks/useAudioCapture.js";
 import type { ConversationRecoveryItem, TaskStage, VoiceState } from "../stores/vanessaStore.js";
+import type { ConversationHistoryStatus } from "../conversation/localConversationHistory.js";
 import orbImage from "../assets/vanessa-orb.png";
 
 type DockCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -24,6 +25,8 @@ interface CompactAssistantProps {
   providerStatus: VoiceProviderStatus | null;
   voiceConnectionState: "connecting" | "connected" | "disconnected" | "disabled";
   wakeWordActive: boolean;
+  wakeWordPausePending: boolean;
+  onPauseWakeWord: () => void;
   microphoneTestState: MicrophoneTestState;
   microphoneTestMessage: string;
   onTestMicrophone: () => void;
@@ -36,6 +39,9 @@ interface CompactAssistantProps {
   currentTaskId: string | null;
   conversationState: ConversationState;
   conversationRecovery: ConversationRecoveryItem[];
+  conversationHistoryStatus: ConversationHistoryStatus;
+  appClosing: boolean;
+  onClearConversationHistory: () => void;
   onDismissConversationRecovery: (requestId: string) => void;
   onOrbClick: () => void;
   onExpand: () => void;
@@ -63,6 +69,15 @@ const stageLabels: Record<TaskStage, string> = {
   cancelled: "Stopped",
 };
 
+const historyLabels: Record<ConversationHistoryStatus, string> = {
+  loading: "Loading…",
+  saved: "Completed turns saved",
+  saving: "Saving…",
+  clearing: "Clearing…",
+  session_only: "Session only",
+  error: "Unavailable",
+};
+
 function providerLabel(provider: ProviderStatus | undefined) {
   if (!provider) return "Unknown";
   if (provider.state === "error") return "Unavailable";
@@ -86,6 +101,8 @@ export function CompactAssistant({
   providerStatus,
   voiceConnectionState,
   wakeWordActive,
+  wakeWordPausePending,
+  onPauseWakeWord,
   microphoneTestState,
   microphoneTestMessage,
   onTestMicrophone,
@@ -98,6 +115,9 @@ export function CompactAssistant({
   currentTaskId,
   conversationState,
   conversationRecovery,
+  conversationHistoryStatus,
+  appClosing,
+  onClearConversationHistory,
   onDismissConversationRecovery,
   onOrbClick,
   onExpand,
@@ -111,6 +131,7 @@ export function CompactAssistant({
   onReject,
 }: CompactAssistantProps) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [confirmHistoryClear, setConfirmHistoryClear] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
@@ -128,7 +149,7 @@ export function CompactAssistant({
   }, [conversationState.turns]);
   const taskBusy = taskStage !== "idle" && !["completed", "partial", "failed", "cancelled"].includes(taskStage);
   const voiceBusy = ["thinking", "executing", "responding", "speaking"].includes(voiceState);
-  const isBusy = taskBusy || voiceBusy;
+  const isBusy = taskBusy || voiceBusy || appClosing;
   const isListening = voiceState === "listening";
   const isSpeaking = voiceState === "speaking" || voiceState === "responding";
   const orbVoiceState = isListening
@@ -176,6 +197,7 @@ export function CompactAssistant({
         <button
           className={`orb-button no-drag orb-${taskStage} orb-${orbVoiceState} voice-${voiceState}`}
           onClick={onOrbClick}
+          disabled={appClosing}
           aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Start speaking to Vanessa"}
           style={{ transform: `scale(${orbScale})` }}
         >
@@ -213,6 +235,14 @@ export function CompactAssistant({
             <div className="menu-row"><span>Voice service</span><span className={`status-inline connection-${voiceConnectionState}`}><i />{voiceConnectionState === "connected" ? "Connected" : voiceConnectionState === "connecting" ? "Connecting…" : voiceConnectionState === "disabled" ? "Text-only mode" : "Offline"}</span></div>
             <div className="menu-row"><span>Speech recognition</span><span>{providerLabel(providerStatus?.asr)}</span></div>
             <div className="menu-row"><span>Speech output</span><span>{providerLabel(providerStatus?.tts)}</span></div>
+            {(wakeWordActive || wakeWordPausePending) && (
+              <>
+                <button className="menu-action" onClick={onPauseWakeWord} disabled={wakeWordPausePending || appClosing}>
+                  {wakeWordPausePending ? "Pausing wake word…" : "Pause wake-word listening"}
+                </button>
+                <p className="mic-test-message">Pause standby before clearing history. Push-to-talk stays available; restart to restore wake-word listening.</p>
+              </>
+            )}
             <div className="menu-divider" />
             <div className="menu-title">Microphone check</div>
             <div className="mic-test-row">
@@ -243,6 +273,29 @@ export function CompactAssistant({
             </button>
             {speechOutputTestMessage && <p className={`mic-test-message mic-test-${speechOutputTestState}`}>{speechOutputTestMessage}</p>}
             <div className="menu-divider" />
+            <div className="menu-title">Conversation history</div>
+            <div className="menu-row" role="status"><span>On this device</span><span>{historyLabels[conversationHistoryStatus]}</span></div>
+            <p className="mic-test-message">
+              {conversationHistoryStatus === "session_only"
+                ? "This session is not being saved. An inaccessible vault, if one exists, is unchanged."
+                : conversationHistoryStatus === "error"
+                  ? "History could not be accessed or saved. Existing data has not been overwritten."
+                  : "Completed turns are protected by the device account. Restored turns are not automatically sent to a model."}
+            </p>
+            {!confirmHistoryClear ? (
+              <button className="menu-action" onClick={() => setConfirmHistoryClear(true)} disabled={appClosing || ["loading", "clearing", "error"].includes(conversationHistoryStatus)}>
+                {conversationHistoryStatus === "session_only" ? "Clear current session…" : "Clear local conversation…"}
+              </button>
+            ) : (
+              <div role="group" aria-label="Confirm clearing conversation history">
+                <p className="mic-test-message">{conversationHistoryStatus === "session_only"
+                  ? "Clear the visible session? Saved history that cannot be accessed will not be deleted."
+                  : "Clear this device’s conversation? Task records, backups and storage remnants are not deleted."}</p>
+                <button className="menu-action" onClick={() => { setConfirmHistoryClear(false); onClearConversationHistory(); }}>Confirm clear</button>
+                <button className="menu-action" onClick={() => setConfirmHistoryClear(false)}>Keep conversation</button>
+              </div>
+            )}
+            <div className="menu-divider" />
             <div className="menu-title">Dock position</div>
             <div className="dock-options" role="group" aria-label="Dock Vanessa to a screen corner">
               {([
@@ -266,6 +319,11 @@ export function CompactAssistant({
       </header>
 
       <div className="assistant-content">
+        {(conversationHistoryStatus === "error" || conversationHistoryStatus === "session_only") && (
+          <div className="history-notice" role="status">
+            {conversationHistoryStatus === "error" ? "Local history unavailable; new conversation changes are not saved." : "Conversation is session-only; secure local history is unavailable."}
+          </div>
+        )}
         <div className={`assistant-status status-${taskStage}`}>
           <span className="status-kicker">{stageLabels[taskStage]}</span>
           <h1>{progressMessage}</h1>
@@ -299,8 +357,8 @@ export function CompactAssistant({
                   data-turn-id={turn.turnId}
                 >
                   <span className="conversation-speaker">{turn.role === "user" ? "You" : "Vanessa"}</span>
-                  <p>{turn.text || (turn.status === "responding" ? "Preparing a response…" : "No message content was returned.")}</p>
-                  {turn.status === "failed" && <span className="conversation-state">Response failed</span>}
+                  <p>{turn.text || (turn.status === "responding" ? "Preparing a response…" : turn.status === "interrupted" ? "Turn interrupted." : "No message content was returned.")}</p>
+                  {turn.status === "failed" && <span className="conversation-state">Turn failed</span>}
                 </article>
               ))}
             </div>
@@ -324,7 +382,7 @@ export function CompactAssistant({
           <section className="conversation-panel" aria-label="Responses awaiting history recovery">
             <div className="conversation-heading">
               <span>Response recovery</span>
-              <span>{conversationRecovery.length} saved</span>
+              <span>{conversationRecovery.length} session {conversationRecovery.length === 1 ? "copy" : "copies"}</span>
             </div>
             {conversationRecovery.map((item) => (
               <article className="conversation-message message-assistant message-failed" key={item.requestId}>
@@ -397,7 +455,7 @@ export function CompactAssistant({
 
       <footer className="assistant-footer no-drag">
         <div className="command-row">
-          <button className={`talk-button ${isListening ? "talking" : ""}`} onClick={onOrbClick} aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Talk to Vanessa"}>
+          <button className={`talk-button ${isListening ? "talking" : ""}`} onClick={onOrbClick} disabled={appClosing} aria-label={isListening ? "Finish speaking to Vanessa" : isSpeaking ? "Interrupt Vanessa and speak" : "Talk to Vanessa"}>
             {isListening ? <MicOff size={16} /> : <Mic size={16} />}
             <span>{isListening ? "Listening" : isSpeaking ? "Interrupt" : "Talk"}</span>
           </button>
@@ -414,7 +472,7 @@ export function CompactAssistant({
             ? <button className="stop-button" onClick={onStop} disabled={taskStage === "cancelling"}>
                 <CircleStop size={16} /> {taskStage === "cancelling" ? "Cancelling…" : taskStage === "termination_unconfirmed" ? "Retry cancel" : "Cancel task"}
               </button>
-            : <button className="send-button" onClick={onExecute} aria-label="Send request" disabled={voiceBusy}>Send</button>}
+            : <button className="send-button" onClick={onExecute} aria-label="Send request" disabled={voiceBusy || appClosing}>Send</button>}
         </div>
         <div className="footer-hint">
           <span>{voiceConnectionState === "disabled" ? "Text-only mode · typed commands available" : voiceConnectionState !== "connected" ? (voiceConnectionState === "connecting" ? "Connecting to voice service…" : "Voice service offline; reconnecting") : wakeWordActive ? "Wake-word listener active · say Hey Vanessa" : voiceState === "error" ? "Voice service needs attention" : "Alt + Space to talk"}</span>

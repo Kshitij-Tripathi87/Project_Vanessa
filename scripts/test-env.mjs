@@ -4,10 +4,15 @@ process.env.VANESSA_SKIP_DOTENV = "true";
 process.env.VANESSA_MEMORY_DB = ":memory:";
 process.env.VOICE_STRICT_CONFIG = "false";
 process.env.FAKE = "1";
-process.env.PLANNER_PROVIDER = "sarvam";
-process.env.SARVAM_CHAT_PROVIDER = "sarvam";
-process.env.VOICE_ASR_PROVIDER = "sarvam";
-process.env.VOICE_TTS_PROVIDER = "sarvam";
+// Tests start with the same deny-by-default local routing as the application.
+// A fixture that exercises hosted transport must inject its own explicit policy.
+process.env.PLANNER_PROVIDER = "ollama";
+process.env.CONVERSATION_PROVIDER = "ollama";
+delete process.env.SARVAM_CHAT_PROVIDER;
+process.env.VOICE_ASR_PROVIDER = "whisper";
+process.env.VOICE_TTS_PROVIDER = "browser";
+delete process.env.VOICE_PROVIDER;
+process.env.VOICE_URL = "ws://127.0.0.1:9";
 for (const key of Object.keys(process.env)) {
   if (/KEY|TOKEN|SECRET|PASSWORD/.test(key)) delete process.env[key];
 }

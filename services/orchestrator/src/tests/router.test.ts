@@ -7,7 +7,7 @@ process.env.VANESSA_SKIP_DOTENV = "true";
 const { ModelRouter } = await import("../core/router.js");
 
 async function fixture(t: any) {
-  const keys = ["PLANNER_PROVIDER", "SARVAM_CHAT_PROVIDER", "NVIDIA_API_KEY", "NVIDIA_BASE_URL", "NVIDIA_MODEL", "NVIDIA_TIMEOUT_MS", "SARVAM_API_KEY", "SARVAM_CHAT_URL", "SARVAM_CHAT_MODEL", "SARVAM_CHAT_PLANNER_MAX_OUTPUT_TOKENS", "SARVAM_CHAT_CONVERSATION_MAX_OUTPUT_TOKENS", "VOICE_BUDGET_CAP_INR", "VOICE_BUDGET_PER_USER_CAP_INR"];
+  const keys = ["PLANNER_PROVIDER", "CONVERSATION_PROVIDER", "SARVAM_CHAT_PROVIDER", "NVIDIA_API_KEY", "NVIDIA_BASE_URL", "NVIDIA_MODEL", "NVIDIA_TIMEOUT_MS", "SARVAM_API_KEY", "SARVAM_CHAT_URL", "SARVAM_CHAT_MODEL", "SARVAM_CHAT_PLANNER_MAX_OUTPUT_TOKENS", "SARVAM_CHAT_CONVERSATION_MAX_OUTPUT_TOKENS", "VOICE_BUDGET_CAP_INR", "VOICE_BUDGET_PER_USER_CAP_INR"];
   const before = new Map(keys.map(key => [key, process.env[key]]));
   const requests: Array<{ provider: string; body: any }> = [];
   let stall = false;
@@ -39,12 +39,13 @@ async function fixture(t: any) {
   const address = server.address(); assert(address && typeof address !== "string");
   const url = "http://127.0.0.1:" + address.port;
   Object.assign(process.env, {
-    NVIDIA_API_KEY: "router-test-key", NVIDIA_BASE_URL: url + "/nvidia", NVIDIA_MODEL: "nvidia/nemotron-router-test", NVIDIA_TIMEOUT_MS: "1000",
+    CONVERSATION_PROVIDER: "", NVIDIA_API_KEY: "router-test-key", NVIDIA_BASE_URL: url + "/nvidia", NVIDIA_MODEL: "nvidia/nemotron-router-test", NVIDIA_TIMEOUT_MS: "1000",
     SARVAM_API_KEY: "router-test-key", SARVAM_CHAT_URL: url + "/sarvam", SARVAM_CHAT_MODEL: "sarvam-router-test",
     SARVAM_CHAT_PLANNER_MAX_OUTPUT_TOKENS: "4096", SARVAM_CHAT_CONVERSATION_MAX_OUTPUT_TOKENS: "256",
     VOICE_BUDGET_CAP_INR: "0", VOICE_BUDGET_PER_USER_CAP_INR: "0",
   });
-  const router = new ModelRouter();
+  // The fake provider server is separately authorized for this test only.
+  const router = new ModelRouter({ allows: ({ origin }) => origin === url });
   t.after(async () => {
     router.close(); server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -75,13 +76,28 @@ for (const [planner, conversation] of [["nvidia", "sarvam"], ["sarvam", "nvidia"
 test("provider defaults, legacy Sarvam selector, and explicit invalid provider fail without fallback", { timeout: 5000 }, async t => {
   const f = await fixture(t);
   delete process.env.PLANNER_PROVIDER; delete process.env.SARVAM_CHAT_PROVIDER;
-  assert.equal(f.router.activeProvider, "nvidia");
+  assert.equal(f.router.activeProvider, "ollama");
+  assert.equal(f.requests.length, 0, "Selecting the local default must not call a hosted provider.");
   process.env.SARVAM_CHAT_PROVIDER = "sarvam";
   assert.equal(f.router.activeProvider, "sarvam");
   assert(JSON.parse((await f.router.callLLM("status", "system"))!).tasks);
   process.env.PLANNER_PROVIDER = "gemini";
   await assert.rejects(f.router.callLLM("status", "system"), /Unsupported LLM provider.*gemini/);
   assert.equal(f.requests.length, 1);
+});
+
+test("configured hosted model providers are blocked without separate permission", { timeout: 5000 }, async t => {
+  const f = await fixture(t);
+  const denied = new ModelRouter();
+  try {
+    for (const provider of ["nvidia", "sarvam"]) {
+      process.env.PLANNER_PROVIDER = provider;
+      process.env.CONVERSATION_PROVIDER = provider;
+      await assert.rejects(denied.callLLM("private prompt", "system"), /separate scoped user permission/);
+      await assert.rejects(denied.callConversationalLLM("private message"), /separate scoped user permission/);
+    }
+    assert.equal(f.requests.length, 0);
+  } finally { denied.close(); }
 });
 
 for (const provider of ["nvidia", "sarvam"]) {

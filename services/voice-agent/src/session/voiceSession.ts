@@ -13,8 +13,10 @@ import { VoiceTtsAdapter } from "../tts/types.js";
 import { ElevenLabsTtsAdapter } from "../tts/elevenlabsTts.js";
 import { FishTtsAdapter } from "../tts/fishTts.js";
 import { SarvamTtsAdapter } from "../tts/sarvamTts.js";
+import { BrowserTtsAdapter } from "../tts/browserTts.js";
 import { orchestratorClient } from "../orchestratorClient.js";
-import { ConversationTurn } from "@vanessa/shared";
+import { type ConversationTurn, type HostedEgressPolicy } from "@vanessa/shared";
+import { assertVoiceProviderPermission } from "../hostedVoicePolicy.js";
 import { createHash, randomUUID } from "node:crypto";
 import { safeProviderDetail } from "../diagnostics/providerDiagnostics.js";
 
@@ -119,16 +121,20 @@ export class VanessaVoiceSession {
 
   constructor(options?: {
     asrProvider?: "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
-    ttsProvider?: "elevenlabs" | "fish" | "sarvam";
+    ttsProvider?: "browser" | "elevenlabs" | "fish" | "sarvam";
     handlers?: VoiceSessionHandlers;
     asr?: AsrAdapter;
     tts?: VoiceTtsAdapter;
     client?: Pick<typeof orchestratorClient, "executeCommand" | "cancelRequest">;
+    /** Trusted runtime injection only; provider selection and keys are not grants. */
+    hostedEgressPolicy?: HostedEgressPolicy;
   }) {
     this.handlers = options?.handlers || {};
     this.client = options?.client || orchestratorClient;
 
-    const asrType = String(options?.asrProvider || process.env.VOICE_ASR_PROVIDER || "fish").toLowerCase() as "voice" | "whisper" | "fish" | "elevenlabs" | "sarvam";
+    const asrType = String(options?.asrProvider || process.env.VOICE_ASR_PROVIDER || "whisper").trim().toLowerCase();
+    if (!["voice", "whisper", "fish", "elevenlabs", "sarvam"].includes(asrType)) throw new Error("Unsupported speech recognition provider.");
+    assertVoiceProviderPermission("asr", asrType, options?.hostedEgressPolicy);
     if (asrType === "sarvam") {
       this.asr = new SarvamAsrAdapter();
     } else if (asrType === "fish") {
@@ -142,13 +148,18 @@ export class VanessaVoiceSession {
     if (!options?.ttsProvider && !process.env.VOICE_TTS_PROVIDER && process.env.VOICE_PROVIDER) {
       console.warn("[VanessaVoiceSession] VOICE_PROVIDER is deprecated; use VOICE_TTS_PROVIDER.");
     }
-    const ttsType = String(options?.ttsProvider || process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "fish").toLowerCase() as "elevenlabs" | "fish" | "sarvam";
-    if (ttsType === "fish") {
+    const ttsType = String(options?.ttsProvider || process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "browser").trim().toLowerCase();
+    assertVoiceProviderPermission("tts", ttsType, options?.hostedEgressPolicy);
+    if (ttsType === "browser") {
+      this.tts = new BrowserTtsAdapter();
+    } else if (ttsType === "fish") {
       this.tts = new FishTtsAdapter();
     } else if (ttsType === "sarvam") {
       this.tts = new SarvamTtsAdapter();
-    } else {
+    } else if (ttsType === "elevenlabs") {
       this.tts = new ElevenLabsTtsAdapter();
+    } else {
+      throw new Error("Unsupported speech output provider.");
     }
     console.log(`[VanessaVoiceSession] Initialized with ASR: "${this.asr.name || asrType}", TTS: "${ttsType}"`);
     this.asr = options?.asr || this.asr;
@@ -268,12 +279,19 @@ export class VanessaVoiceSession {
     this.wakeWordMonitorActive = true;
     this.captureAuthorized = false;
     this.wakeWord.resetSession();
+    const generation = this.sessionGeneration;
     try {
       await this.ensureAsrConnected();
+      if (generation !== this.sessionGeneration || !this.wakeWordMonitorActive) return;
       await this.asr.activateStream?.();
+      if (generation !== this.sessionGeneration || !this.wakeWordMonitorActive) {
+        if (!this.captureAuthorized && !this.wakeWordMonitorActive) this.asr.deactivateStream?.();
+        return;
+      }
       this.setState("idle");
       console.log("[VanessaVoiceSession] Local wake-word monitor enabled; ambient audio stays on this device.");
     } catch (error) {
+      if (generation !== this.sessionGeneration) return;
       this.wakeWordMonitorActive = false;
       this.asr.deactivateStream?.();
       throw error;
@@ -282,6 +300,20 @@ export class VanessaVoiceSession {
 
   isWakeWordMonitorActive(): boolean {
     return this.wakeWordMonitorActive;
+  }
+
+  /** Pause ambient listening only when idle; never cancel an orchestrator task. */
+  pauseWakeWordMonitor(): boolean {
+    if (this.isProcessing || this.isSpeaking || this.captureAuthorized || this.activeRequestId ||
+        this.queuedUtterances.length || this.isFinalizingTurn || this.state !== "idle") return false;
+    // Fence an in-flight standby activation before switching off local capture.
+    this.sessionGeneration++;
+    this.wakeWordMonitorActive = false;
+    this.partialTranscript = "";
+    this.wakeWord.resetSession();
+    this.turnDetector.reset();
+    this.asr.deactivateStream?.();
+    return true;
   }
 
   async deactivateSession(): Promise<void> {
@@ -587,13 +619,20 @@ export class VanessaVoiceSession {
 
   private async resumeWakeWordMonitor(): Promise<void> {
     if (!this.wakeWordMonitorActive || !(this.asr instanceof VoiceAdapter)) return;
+    const generation = this.sessionGeneration;
     this.captureAuthorized = false;
     this.wakeWord.resetSession();
     try {
       await this.ensureAsrConnected();
+      if (generation !== this.sessionGeneration || !this.wakeWordMonitorActive) return;
       await this.asr.activateStream?.();
+      if (generation !== this.sessionGeneration || !this.wakeWordMonitorActive) {
+        if (!this.captureAuthorized && !this.wakeWordMonitorActive) this.asr.deactivateStream?.();
+        return;
+      }
       this.setState("idle");
     } catch (error) {
+      if (generation !== this.sessionGeneration) return;
       this.wakeWordMonitorActive = false;
       this.asr.deactivateStream?.();
       this.handlers.onError?.(safeProviderDetail(error instanceof Error ? error.message : "Local wake-word monitor could not resume."));

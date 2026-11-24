@@ -107,6 +107,7 @@ export class FishTtsAdapter implements VoiceTtsAdapter {
     try {
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(this.url, {
+          followRedirects: false,
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
             model: this.model,
