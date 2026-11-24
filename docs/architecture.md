@@ -1,5 +1,7 @@
 # Vanessa Architecture Specification (Revision 0.3)
 
+> **Supporting architecture snapshot:** The [integrated Vanessa plan](engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is the current product planning authority. Diagrams below describe goals or older implementations; verify actual behavior and consult the [partial S0 baseline](engineering/S0_BASELINE.md) before claiming a feature is implemented or deployed.
+
 > **Core Principle**: Voice owns speech sessions; Planner owns work; Policy owns authorization; Target device owns execution; Verifier owns completion claims.
 
 ---

@@ -1,8 +1,8 @@
 # End-to-end acceptance
 
-**Baseline evidence:** PR #70 is merged and its emulator CI executed five navigation/basic-flow journeys. A standalone in-memory conversation controller now exists, but the app is not wired to it. The full voice → conversation journey and the real Android ↔ Windows PC journey remain unverified.
+**Baseline evidence at branch `1dd201b`:** PR #70's emulator CI executed five navigation/basic-flow journeys. PRs #85–#87 subsequently merged desktop and Android conversation/voice wiring. Android foundation and emulator QA passed at `e359680`, but real microphone/audio behavior and the physical Android ↔ Windows PC journey remain unverified. The [S0 baseline](S0_BASELINE.md) distinguishes these checks from release acceptance.
 
-This document distinguishes compilation, JVM tests, emulator navigation, integrated conversation behavior and physical-device acceptance. A green build must never be upgraded into a broader product claim.
+This document distinguishes compilation, JVM tests, emulator navigation, integrated conversation behavior and physical-device acceptance. iPhone/iOS is also in product scope, but no iOS app was found under `apps/` in the S0 audit; iOS build, simulator and physical-device evidence are not established here. A green build must never be upgraded into a broader product claim.
 
 ## What each signal proves
 
@@ -31,7 +31,7 @@ PR #70 verification recorded the following successful runs:
 
 The PR #70 description reports **5 instrumented tests executed, 0 failing, from 1 result XML**. The emulator job steps include AVD creation, boot, UI journey execution, report upload and instrumented-result reporting. The PR author also reports that the three applicable post-merge checks on main passed.
 
-The result is real emulator evidence, but it is scoped to the tests that were actually present. It does not mean the conversation reducer is wired into Android.
+The result is real emulator evidence, but it is scoped to the tests that were actually present at PR #70. Subsequent PR #87 wired the reducer into Android; the older five-test result alone is not proof of the later integrated or physical journey.
 
 ### What the five PR #70 instrumented tests covered
 
@@ -63,11 +63,11 @@ An infrastructure failure is not a code pass. A debug APK pass is not an emulato
 | 3 | Voice surface reach/dismiss | **PASS (emulator, navigation only)** | Fake-ASR event integration and physical microphone acceptance |
 | 4 | Settings reach/scroll | **PASS (emulator)** | Physical model import/load acceptance |
 | 5 | PC dashboard entry point | **PASS (emulator, navigation only)** | Authenticated pairing with a real Windows PC |
-| 6 | Live ASR partial → final user turn | **NOT YET PROVEN** | ConversationController wiring and instrumented fake-ASR journey |
-| 7 | Typed and voice input share one reducer | **NOT IMPLEMENTED** | PR C and PR E |
-| 8 | Completed prior turns become planner context from reducer state | **PARTIAL (standalone controller only)** | Connect the controller projection to the app planner |
-| 9 | Validated assistant response → reducer chunks → completion | **PARTIAL (standalone controller only)** | Connect validated output to the app; no token streaming claim |
-| 10 | Opt-in offline TTS playback lifecycle | **PARTIAL** | Existing one-string Read Aloud exists; progress queue and callback fencing remain |
+| 6 | Live ASR partial → final user turn | **WIRED, PHYSICAL JOURNEY UNVERIFIED** | Validate recognizer callbacks and microphone behavior on named devices |
+| 7 | Typed and voice input share one reducer | **WIRED BY PR #87** | Verify the integrated journey and lifecycle on supported devices |
+| 8 | Completed prior turns become planner context from reducer state | **WIRED BY PR #87** | Verify continuity, limits and restart behavior; controller remains in-memory |
+| 9 | Validated assistant response → reducer chunks → completion | **WIRED BY PR #87** | Validate the integrated journey; no model-token streaming claim |
+| 10 | Opt-in offline TTS playback lifecycle | **WIRED BY PR #87** | Validate installed offline voices and real playback/interruptions |
 | 11 | Conversation interruption while preserving task authority | **NOT PROVEN END TO END** | Controller and adapter lifecycle tests |
 | 12 | Remote PC pair → submit → approve → result | **NOT STARTED (physical end-to-end)** | Device + real PC + authenticated connection + recorded evidence |
 | 13 | Disconnect/process-death recovery | **PARTIAL** | Reducer/task-state tests exist; full socket/real-device recovery evidence remains |
@@ -88,7 +88,7 @@ For this milestone, the Android conversation journey can be considered complete 
 8. New deterministic fake-ASR/TTS and Compose instrumented journeys execute on emulator.
 9. All four required CI jobs pass on the final PR head.
 
-This milestone does not complete durable memory, clarification, task handoff, desktop integration, native token streaming or the real-PC physical acceptance journey.
+The merged integration does not complete durable memory, clarification, task handoff, native token streaming or the real-PC physical acceptance journey. Desktop typed and voice-bridge wiring was merged separately in PRs #85 and #86.
 
 ## Physical-device and remote-PC gates
 

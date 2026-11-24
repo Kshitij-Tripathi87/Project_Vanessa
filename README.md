@@ -1,5 +1,7 @@
 # Vanessa | Voice-first engineering and IT assistant
 
+> **Product plan:** The [integrated Vanessa plan](docs/engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is the current planning baseline; the [partial S0 audit](docs/engineering/S0_BASELINE.md) records verified results and gaps. Android and iPhone are both in product scope, but no iOS app was found under `apps/` in the audit. Build and test locally before any separately approved deployment. Examples and diagrams below are not proof that every listed action or mobile device is supported.
+
 > **"Hey Vanessa, my Wi-Fi isn't working—restart the adapter and open YouTube."**  
 > Vanessa restarts the Wi-Fi, verifies connectivity, opens YouTube, and reports back by voice.
 
@@ -13,7 +15,7 @@ Vanessa is a voice-first assistant for engineering and IT work. It helps investi
 Voice Command (Desktop Mic / Phone Door)
          │
          ▼
-  Vanessa Planner (GPT-4o-mini / Claude Sonnet / Heuristic Fallback)
+  Vanessa Planner (configured model router; local Ollama by default)
          │
          ▼
   Structured Plan JSON (Tasks + Dependencies)

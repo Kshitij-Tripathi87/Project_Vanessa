@@ -1,5 +1,7 @@
 # Vanessa — Revised Product & Engineering Plan
 
+> **Historical supporting plan:** The [integrated Vanessa plan](engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is the current product and delivery planning baseline. The branch, schedule and implementation claims below describe an older snapshot.
+
 Planning baseline: 25 October 2026 · Target branch: `Vanessa-Prototype-1-MAIN` · Scope: planning only; no repository changes made
 
 The recent work changes Vanessa's next milestone. The project has passed an important code-quality gate, so the priority should no longer be fixing TypeScript warnings or expanding the number of agents. The priority is to make Vanessa reliably complete a real task from voice input to verified result and spoken response.

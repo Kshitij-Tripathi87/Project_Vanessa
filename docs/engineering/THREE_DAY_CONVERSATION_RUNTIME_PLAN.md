@@ -1,10 +1,6 @@
 # Three-Day Conversation Runtime Completion Plan
 
-> **Planning snapshot:** The standalone controller is now present, but the app,
-> ASR, output and UI are not yet wired to it. For current implementation status,
-> see [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md). The separate
-> [PC-first architecture](AGENTIC_PC_FIRST_ARCHITECTURE.md) proposes a different
-> first execution milestone; the plans do not by themselves settle scheduling.
+> **Historical planning snapshot:** Subsequent PRs #85–#87 merged desktop and Android conversation/voice wiring. The dated three-day sequence below is not the current schedule or evidence of physical acceptance. The [integrated product plan](VANESSA_INTEGRATED_PRODUCTION_PLAN.md) takes precedence where plans conflict; see [CONVERSATION_RUNTIME.md](CONVERSATION_RUNTIME.md) and the [S0 baseline](S0_BASELINE.md) for current scope and limits.
 
 **Status:** Original execution specification — not evidence of a completed journey<br>
 **Baseline:** main at 22ba127ce9ebe8dfefb250a6fa97e9875fe163e3 (PR #70 merged)  

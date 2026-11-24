@@ -1,4 +1,7 @@
 # Vanessa Product & Engineering Blueprint
+
+> **Historical supporting blueprint:** The [integrated Vanessa plan](engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is the current product and delivery planning baseline. Recheck source-level claims and use that plan if assumptions conflict.
+
 **Target branch:** `Vanessa-Prototype-1-MAIN`  
 **Status:** Planning baseline from source inspection; not an implementation or test certification  
 **Product target:** Windows 11 first, voice-native, local-first, verifiable desktop agent
