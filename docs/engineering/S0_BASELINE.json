@@ -1,0 +1,325 @@
+{
+  "schema_version": "1.0",
+  "status": "partial_not_release_ready",
+  "session_date": null,
+  "session_date_note": "The audit date is not independently established; identify the recorded snapshot by the tested commit and linked CI runs.",
+  "source_plan": {
+    "label": "Vanessa_Integrated_Production_Plan_v1.0.md",
+    "sha256": "5554d5a0ecfea26312df8aa095ae629a60cd14638330951b7953bb7520406323",
+    "declared_prepared_date": "2026-11-22",
+    "date_status": "Declared preparation date retained as a source label; not independently verified."
+  },
+  "repository": {
+    "name": "Kshitij-Tripathi87/Project_Vanessa",
+    "active_branch": "arena/c1dd05d5-project-vanessa",
+    "tested_commit": "1dd201b40e762a1a210a318791a0f08d69d51aab",
+    "working_tree_before_documentation": "clean",
+    "remote_main_at_latest_check": "d7da0dc9c021cac8a825b94ba2155aed25cab5aa",
+    "remote_develop_at_latest_check": null,
+    "remote_main_difference": "Two commits ahead; comparison shows the PR #89 intelligence plan document only.",
+    "current_branch_updated_to_main": false
+  },
+  "pull_requests": [
+    {
+      "number": 88,
+      "state": "open_draft",
+      "head": "1a36ed12ef75b6bc8dc8e9b0b4aee4d484b00a53",
+      "base": "main"
+    },
+    {
+      "number": 89,
+      "state": "merged_to_main",
+      "merge_commit": "d7da0dc9c021cac8a825b94ba2155aed25cab5aa",
+      "on_tested_branch": false
+    },
+    {
+      "number": 90,
+      "state": "merged_to_integration_branch_not_main",
+      "merge_commit": "7a2bb34fccabf617446eba37ffc08dc842c5d0cd",
+      "base": "integration/intelligence-first-architecture",
+      "on_tested_branch": false
+    },
+    {
+      "number": 91,
+      "state": "merged_to_main",
+      "merge_commit": "1dd201b40e762a1a210a318791a0f08d69d51aab",
+      "on_tested_branch": true
+    }
+  ],
+  "environment": {
+    "os": "Linux x86_64 sandbox",
+    "node": "v22.22.3",
+    "pnpm": "11.24.0",
+    "lockfile_sha256": "84b17142a7a32ddc9d93dc66989b915199c34d3f96273d090f1887ceac5a0153",
+    "install_command": "corepack pnpm install --frozen-lockfile --ignore-scripts",
+    "install_result": "passed",
+    "lifecycle_scripts_disabled": true,
+    "credential_handling": "Tests were run in a sanitized environment; fake-provider tests used scripts/test-env.mjs.",
+    "limitations": [
+      "No physical Windows or Android device used.",
+      "No Android SDK, system JDK, adb, PowerShell or Windows installer runtime available in sandbox.",
+      "Electron/native install scripts were disabled; a successful workspace build does not prove installed Electron or native runtime behavior.",
+      "No iOS/macOS build or simulator environment or physical iPhone was available."
+    ]
+  },
+  "workspace_build": {
+    "command": "corepack pnpm -r run build",
+    "status": "passed",
+    "scope": "Isolated archive of tested commit; TypeScript and renderer build, lifecycle scripts disabled."
+  },
+  "test_suites": [
+    {
+      "name": "Canonical TypeScript protocol",
+      "command": "corepack pnpm --filter @vanessa/protocol test",
+      "tests": 187,
+      "pass": 187,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed"
+    },
+    {
+      "name": "Shared protocol",
+      "command": "corepack pnpm --filter @vanessa/shared test:protocol",
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed"
+    },
+    {
+      "name": "In-process usage meter",
+      "command": "corepack pnpm --filter @vanessa/shared test:usage",
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed"
+    },
+    {
+      "name": "Intelligence foundation",
+      "command": "corepack pnpm --filter @vanessa/orchestrator test:intelligence",
+      "tests": 27,
+      "pass": 27,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed"
+    },
+    {
+      "name": "Voice with fake providers",
+      "command": "corepack pnpm --filter @vanessa/voice-agent exec tsx --import ../../scripts/test-env.mjs --test src/tests/*.test.ts src/session/wakeWord.test.ts",
+      "tests": 41,
+      "pass": 41,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed",
+      "note": "Sanitized fake-provider environment and loopback fixtures; no paid provider calls."
+    },
+    {
+      "name": "Selected remote, filesystem and safety",
+      "command": "corepack pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/remotePairingRegistry.test.ts src/tests/remoteTaskService.test.ts src/tests/mobileTaskEngine.test.ts src/tests/remoteGatewayMode.test.ts src/remote/remoteV2Gateway.test.ts src/tests/fileAgent.test.ts src/tests/taskRunner.result.test.ts src/tests/agentCatalog.test.ts src/tests/emergencyStopAdmission.test.ts src/tests/killSwitchCompletion.test.ts",
+      "tests": 61,
+      "pass": 58,
+      "fail": 0,
+      "skipped": 3,
+      "status": "passed_with_skips",
+      "note": "Three platform-specific Windows cases skipped on Linux."
+    },
+    {
+      "name": "Broader regression sample",
+      "command": "corepack pnpm --filter @vanessa/orchestrator exec tsx --test src/tests/modelPlan.test.ts src/tests/plannerPrompt.test.ts src/tests/router.test.ts src/tests/trustworthyExecution.test.ts src/tests/voicePlanning.test.ts",
+      "tests": 42,
+      "pass": 36,
+      "fail": 6,
+      "skipped": 0,
+      "status": "failed",
+      "note": "Six failures reproduced on clean e359680 with the same lockfile; not treated as new PR #91 regressions."
+    },
+    {
+      "name": "Launcher and readiness",
+      "command": "corepack pnpm test:launcher",
+      "tests": 23,
+      "pass": 23,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed"
+    },
+    {
+      "name": "Desktop conversation",
+      "command": "corepack pnpm test:desktop:conversation",
+      "tests": 22,
+      "pass": 22,
+      "fail": 0,
+      "skipped": 0,
+      "status": "passed",
+      "note": "A temporary Corepack pnpm shim was added to the isolated snapshot PATH; the initial root script invocation failed before tests because pnpm was not on PATH."
+    }
+  ],
+  "test_totals": {
+    "tests": 410,
+    "pass": 401,
+    "fail": 6,
+    "skipped": 3
+  },
+  "failing_tests": [
+    "reviews required parameters for every selectable action across all ten agents",
+    "preserves Codex launch boundaries and action-specific validation",
+    "the minimal teaching example covers every selectable agent and normalizes into runnable task metadata",
+    "provider defaults, legacy Sarvam selector, and explicit invalid provider fail without fallback",
+    "FAKE mode can never report file creation, browser navigation, or Wi-Fi restart as real success",
+    "src/tests/voicePlanning.test.ts"
+  ],
+  "skipped_tests": [
+    "Windows PowerShell archive handler creates and verifies a real ZIP inside the approved destination",
+    "Tier 2 delete moves one disposable allowlisted file to the Recycle Bin",
+    "set_volume reads back the existing volume without changing the chosen level"
+  ],
+  "prior_regression_reproduction": {
+    "commit": "e3596802d52143b62b3433ba40501b440e61bcaa",
+    "lockfile_identical_to_tested_commit": true,
+    "tests": 42,
+    "pass": 36,
+    "fail": 6,
+    "skipped": 0,
+    "same_failure_names": true,
+    "status": "reproduced_with_clean_source_snapshot"
+  },
+  "generated_artifacts": {
+    "status": "matched_tested_commit",
+    "files": [
+      "packages/protocol/schema/conversation-v1.schema.json",
+      "apps/android/core/protocol/src/main/kotlin/com/vanessa/protocol/conversation/ConversationModels.kt",
+      "packages/protocol/schema/protocol-v1.schema.json",
+      "apps/android/core/protocol/src/main/kotlin/com/vanessa/mobile/protocol/ProtocolModels.kt",
+      "packages/shared/schema/protocol-v1.schema.json"
+    ],
+    "note": "These five artifacts matched; this is not a claim that every generated file was checked."
+  },
+  "other_checks": [
+    {
+      "name": "Android static UI source contract",
+      "status": "passed",
+      "command": "corepack pnpm test:android:ui-contract",
+      "note": "Static source check, not Gradle build or emulator test."
+    },
+    {
+      "name": "Canonical action catalogue count",
+      "status": "observed",
+      "agents": 12,
+      "actions": 62,
+      "selectable": 46,
+      "blocked": 16
+    }
+  ],
+  "github_evidence": [
+    {
+      "name": "Agent Workflow CI on tested commit",
+      "commit": "1dd201b40e762a1a210a318791a0f08d69d51aab",
+      "status": "success",
+      "url": "https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44985644034"
+    },
+    {
+      "name": "Agent Workflow CI on latest main",
+      "commit": "d7da0dc9c021cac8a825b94ba2155aed25cab5aa",
+      "status": "success",
+      "url": "https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/45029420309"
+    },
+    {
+      "name": "Android foundation on earlier main",
+      "commit": "e3596802d52143b62b3433ba40501b440e61bcaa",
+      "status": "success",
+      "url": "https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44932543189"
+    },
+    {
+      "name": "Android emulator QA on earlier main",
+      "commit": "e3596802d52143b62b3433ba40501b440e61bcaa",
+      "status": "success",
+      "url": "https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44932543198"
+    },
+    {
+      "name": "Windows installer on PR 91 head",
+      "commit": "e8ddef24ba2d9daa1a98436c1c74c13dbd89c876",
+      "status": "success",
+      "url": "https://github.com/Kshitij-Tripathi87/Project_Vanessa/actions/runs/44981782916"
+    }
+  ],
+  "security_alerts": {
+    "dependabot": "disabled_403",
+    "code_scanning": "inaccessible_403",
+    "secret_scanning": "inaccessible_403",
+    "open_issues_returned": 0,
+    "conclusion": "Alert inventory is incomplete; zero open issues is not proof of no security findings."
+  },
+  "risks_and_follow_up": [
+    {
+      "id": "S0-01",
+      "status": "open",
+      "summary": "Six broader regression failures reproduce on the prior commit; triage without weakening safety behavior."
+    },
+    {
+      "id": "S0-02",
+      "status": "open",
+      "summary": "Trustworthy Execution workflow triggers an older branch and is not an automatic main gate; main CI does not run the sampled failing suites."
+    },
+    {
+      "id": "S0-03",
+      "status": "needs_security_review",
+      "summary": "The legacy remote approval handler checks a paired token and passes a task ID to approve; v2 separately verifies an action-hash-bound proof. Do not infer full legacy digest-binding assurance."
+    },
+    {
+      "id": "S0-04",
+      "status": "open",
+      "summary": "Current usage reservations are in-process; a durable multi-user quota ledger and provider threshold enforcement are future work."
+    },
+    {
+      "id": "S0-05",
+      "status": "unverified",
+      "summary": "Android and iPhone/iOS are in product scope; actual compatibility is not established. Android minSdk is 26, optional native llama.cpp targets arm64-v8a and API 28, and no iOS app was found under apps/. iOS implementation, supported versions and physical devices remain open."
+    },
+    {
+      "id": "S0-06",
+      "status": "open",
+      "summary": "No domain, VPS, hosting or gateway chosen; this does not block local development and synthetic tests."
+    },
+    {
+      "id": "S0-07",
+      "status": "incomplete",
+      "summary": "Raw local logs were temporary and are not included; capture durable redacted evidence and full security, platform and acceptance results before an S0 exit or release decision."
+    }
+  ],
+  "provider_account_inventory": {
+    "providers_reported_by_owner": [
+      "Sarvam",
+      "Fish Audio",
+      "ElevenLabs"
+    ],
+    "account_specific_balances_persisted": false,
+    "balance_units_api_eligibility_scopes_and_resets": "unverified",
+    "spend_authorized": false,
+    "api_credentials_requested_or_recorded": false
+  },
+  "deployment": {
+    "domain_selected": false,
+    "hosting_selected": false,
+    "gateway_deployed": false,
+    "paid_provider_calls_performed": false,
+    "deployment_authorized": false
+  },
+  "evidence_retention": "Local test logs were captured temporarily but are not included in the repository; commands and summarized results are recorded for reproduction.",
+  "mobile_scope": {
+    "owner_confirmed_product_platforms": [
+      "Android",
+      "iPhone/iOS"
+    ],
+    "compatibility_goal": "Broad compatibility, with a tested OS/version/ABI/hardware/feature matrix and honest local degraded modes.",
+    "android_min_sdk": 26,
+    "android_optional_native_llama_cpp": {
+      "abi": "arm64-v8a",
+      "android_platform_api": 28,
+      "condition": "When the optional llamaCppDir native build is configured."
+    },
+    "ios_app_found_under_apps": false,
+    "ios_supported_versions_and_device_evidence": "unknown",
+    "narrower_release_requires_owner_approval": true,
+    "claim": "Product scope is not proof of an implemented or supported device."
+  }
+}

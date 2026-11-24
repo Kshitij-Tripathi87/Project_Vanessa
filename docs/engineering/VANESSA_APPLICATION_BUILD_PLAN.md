@@ -1,6 +1,8 @@
 # Vanessa application implementation and SDLC plan
 
-**Status:** Active implementation baseline  
+> **Supporting plan:** The [integrated product plan](VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is canonical where plans conflict. This file retains useful implementation and acceptance detail; its dated ordering and source-status claims must be rechecked against the [S0 baseline](S0_BASELINE.md) and current code.
+
+**Status:** Supporting implementation detail; milestones remain open<br>
 **Repository baseline:** main at 838b51f9cbaaf039451091b7ebede12127d50dc8 (21 November 2026)  
 **Delivery focus:** Windows PC execution first, followed by shared conversation and voice integration, then natural-language Android-to-PC execution.  
 **Release posture:** Local testing. Public distribution paperwork is deferred until explicitly requested.

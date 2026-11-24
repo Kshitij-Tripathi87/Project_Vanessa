@@ -6,7 +6,7 @@
 **Repository:** https://github.com/Kshitij-Tripathi87/Project_Vanessa  
 **Status:** Consolidated from the project updates shared in this conversation, previously prepared architecture plans, and a review of the public repository. Reported local test outcomes are marked as reported rather than independently executed.
 
-> **Truthfulness note:** This dossier is the single narrative source of project intent and current understanding. It is not an audited export of every commit or every local file. Where only an IDE/tool log was shared, the item is marked “reported.” Where a public repository observation was checked, it is marked “public repo observation as of 20 Oct 2026.” Verify the local working tree before applying commands because it may differ from GitHub `main`.
+> **Historical dossier:** This is a source of project history, not the current planning authority or an audited export of every commit. The [integrated Vanessa plan](docs/engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) takes precedence for product and delivery decisions. Recheck dated implementation claims and commands against the current tree and [S0 baseline](docs/engineering/S0_BASELINE.md).
 
 ## Contents
 

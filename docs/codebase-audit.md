@@ -1,5 +1,7 @@
 # Codebase audit
 
+> **Historical source review:** The findings below describe the inspected October snapshot, not a current security verdict. For example, current legacy remote command/approval handlers check paired-session tokens and unsafe Claude/terminal paths have been blocked. Those changes do not establish full security; use the [partial S0 baseline](engineering/S0_BASELINE.md) and a fresh review for current status.
+
 Reviewed on 2026-10-21. This pass covered the desktop app, orchestrator, voice agent, relay, permission checks, process launching, and repository layout. It was a source review and package build check, not a penetration test.
 
 ## Fixed in this pass

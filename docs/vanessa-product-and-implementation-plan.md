@@ -1,5 +1,7 @@
 # Vanessa — Product, Architecture, and Delivery Plan
 
+> **Historical supporting plan:** The [integrated Vanessa plan](engineering/VANESSA_INTEGRATED_PRODUCTION_PLAN.md) is the current product and delivery planning baseline. Preserve useful details below, but recheck dated source claims and use the integrated plan if assumptions conflict.
+
 **Status:** Architecture plan for implementation, based on source inspection  
 **Audit date:** 2026-10-25  
 **Target branch:** `Vanessa-Prototype-1-MAIN`  
