@@ -1,6 +1,6 @@
 import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
-import { formatLlmError, redactLlmDiagnostic } from "./llmDiagnostics.js";
+import { formatLlmError } from "./llmDiagnostics.js";
 
 export const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
 const DEFAULT_TIMEOUT_MS = 60000;
@@ -26,6 +26,10 @@ export class NvidiaClient {
     this.agent = new Agent({ keepAlive: true, maxSockets: 4, maxFreeSockets: 2 });
   }
 
+  getEndpoint(): string {
+    return this.options.baseUrl || process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+  }
+
   async generate(prompt: string, systemPrompt: string, json: boolean, requestId?: string, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
     const key = (this.options.apiKey ? this.options.apiKey() : process.env.NVIDIA_API_KEY)?.trim();
@@ -33,7 +37,7 @@ export class NvidiaClient {
       throw new NvidiaError("Set NVIDIA_API_KEY in the root .env file before using NVIDIA.");
     }
     const model = process.env.NVIDIA_MODEL?.trim() || DEFAULT_NVIDIA_MODEL;
-    const baseUrl = this.options.baseUrl || process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+    const baseUrl = this.getEndpoint();
     const url = new URL(`${baseUrl.replace(/\/+$/, "")}/chat/completions`);
     const configuredTimeout = Number(process.env.NVIDIA_TIMEOUT_MS);
     const timeoutMs = this.options.timeoutMs ?? (
@@ -44,9 +48,8 @@ export class NvidiaClient {
     let phase = "request";
     let httpStatus: number | undefined;
     let responseBytes = 0;
-    let providerRequestId = "";
     const fail = (error: Error): never => {
-      console.error(`[NVIDIA] failed ${context} phase=${phase} HTTP=${httpStatus ?? "none"} elapsedMs=${Date.now() - startedAt} timeoutMs=${timeoutMs} responseBytes=${responseBytes}${providerRequestId ? ` providerRequestId=${JSON.stringify(providerRequestId)}` : ""} error=${formatLlmError(error, [key])}`);
+      console.error(`[NVIDIA] failed ${context} phase=${phase} HTTP=${httpStatus ?? "none"} elapsedMs=${Date.now() - startedAt} timeoutMs=${timeoutMs} responseBytes=${responseBytes} error=${formatLlmError(error, [key])}`);
       throw error;
     };
     console.log(`[NVIDIA] request ${context} timeoutMs=${timeoutMs} keepAlive=true`);
@@ -78,7 +81,6 @@ export class NvidiaClient {
       }, (res) => {
         phase = "reading_response";
         httpStatus = res.statusCode;
-        providerRequestId = redactLlmDiagnostic(String(res.headers["x-request-id"] || res.headers["x-nvidia-request-id"] || ""), [key]);
         const chunks: Buffer[] = [];
         res.on("data", (chunk: Buffer) => {
           responseBytes += chunk.length;
@@ -92,28 +94,11 @@ export class NvidiaClient {
         res.on("end", () => {
           clearTimeout(timer);
           const responseBody = Buffer.concat(chunks).toString("utf8");
-          let readableResponse = responseBody;
-          try {
-            const parsed = JSON.parse(responseBody);
-            const message = parsed?.choices?.[0]?.message;
-            if (message) {
-              let content = message.content;
-              if (typeof content === "string") {
-                try { content = JSON.parse(content); } catch { /* Conversational replies remain plain text. */ }
-              }
-              readableResponse = JSON.stringify({ content, role: message.role }, null, 2);
-            } else {
-              readableResponse = JSON.stringify(parsed, null, 2);
-            }
-          } catch { /* Preserve malformed responses for debugging. */ }
-          console.log(`[NVIDIA] response ${context} HTTP=${res.statusCode ?? "unknown"}\n${redactLlmDiagnostic(readableResponse, [key], Number.POSITIVE_INFINITY)}`);
+          // Provider responses and error bodies can echo prompts, plans or
+          // personal data. Credential redaction alone is not content privacy.
+          console.log(`[NVIDIA] response ${context} HTTP=${res.statusCode ?? "unknown"} responseBytes=${responseBytes}`);
           if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-            let providerMessage = responseBody;
-            try {
-              const parsed = JSON.parse(responseBody);
-              providerMessage = JSON.stringify(parsed.error ?? parsed.detail ?? parsed.message ?? parsed);
-            } catch { /* Some gateways return plain-text or HTML errors. */ }
-            reject(new NvidiaError(`NVIDIA request failed (HTTP ${res.statusCode || "unknown"}): ${redactLlmDiagnostic(providerMessage, [key])}`, `HTTP_${res.statusCode || "UNKNOWN"}`));
+            reject(new NvidiaError(`NVIDIA request failed (HTTP ${res.statusCode || "unknown"}).`, `HTTP_${res.statusCode || "UNKNOWN"}`));
             return;
           }
           phase = "parsing_response";
@@ -138,10 +123,11 @@ export class NvidiaClient {
     phase = "validating_response";
     const choice = data.choices?.[0];
     if (choice?.finish_reason && choice.finish_reason !== "stop") {
-      fail(new NvidiaError(`NVIDIA did not return a complete response (finish_reason=${choice.finish_reason}). No fallback was used.`, "INCOMPLETE_RESPONSE"));
+      const reason = ["length", "content_filter"].includes(choice.finish_reason) ? choice.finish_reason : "other";
+      fail(new NvidiaError(`NVIDIA did not return a complete response (finish_reason=${reason}). No fallback was used.`, "INCOMPLETE_RESPONSE"));
     }
     const text = typeof choice?.message?.content === "string" ? choice.message.content.trim() : "";
-    if (!text) fail(new NvidiaError(`NVIDIA returned no usable text (refusal=${JSON.stringify(redactLlmDiagnostic(String(choice?.message?.refusal || "none"), [key]))}). No fallback was used.`, "EMPTY_RESPONSE"));
+    if (!text) fail(new NvidiaError("NVIDIA returned no usable text. No fallback was used.", "EMPTY_RESPONSE"));
     console.log(`[NVIDIA] complete ${context} HTTP=${httpStatus} elapsedMs=${Date.now() - startedAt} responseCharacters=${text.length}`);
     return text;
   }

@@ -18,6 +18,8 @@ export function App() {
     currentTaskId,
     conversationState,
     conversationRecovery,
+    conversationHistoryStatus,
+    appClosing,
     dismissConversationRecovery,
     activePlan,
     tasks,
@@ -46,8 +48,11 @@ export function App() {
     stopSpeaking,
     stopRecording,
     submitTextCommand,
+    clearConversationHistory,
     voiceConnectionState,
     wakeWordActive,
+    wakeWordPausePending,
+    pauseWakeWordListening,
     toggleRecording,
     resumeAudio,
   } = useAudioCapture();
@@ -201,6 +206,8 @@ export function App() {
       providerStatus={providerStatus}
       voiceConnectionState={voiceConnectionState}
       wakeWordActive={wakeWordActive}
+      wakeWordPausePending={wakeWordPausePending}
+      onPauseWakeWord={() => void pauseWakeWordListening()}
       microphoneTestState={microphoneTestState}
       microphoneTestMessage={microphoneTestMessage}
       onTestMicrophone={() => void testMicrophone()}
@@ -213,6 +220,9 @@ export function App() {
       currentTaskId={currentTaskId}
       conversationState={conversationState}
       conversationRecovery={conversationRecovery}
+      conversationHistoryStatus={conversationHistoryStatus}
+      appClosing={appClosing}
+      onClearConversationHistory={() => void clearConversationHistory()}
       onDismissConversationRecovery={dismissConversationRecovery}
       onOrbClick={handleOrbClick}
       onExpand={openPanel}

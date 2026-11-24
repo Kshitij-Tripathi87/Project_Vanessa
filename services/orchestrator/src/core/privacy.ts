@@ -101,21 +101,22 @@ export class PrivacyGuard {
 
     // 1. API Keys and Tokens
     const apiKeyPatterns = [
-      /\b(nvapi-[A-Za-z0-9_-]{20,})\b/g,
-      /\b(sk-[A-Za-z0-9]{20,})\b/g,
-      /\b(ghp_[A-Za-z0-9]{20,})\b/g,
-      /Bearer\s+([A-Za-z0-9._~+/-]{20,})/gi,
-      /(api[_-]?key\s*[:=]\s*["']?)([A-Za-z0-9_\-]{16,})(["']?)/gi,
+      { pattern: /\b(nvapi-[A-Za-z0-9_-]{20,})\b/g, preserveAssignment: false },
+      { pattern: /\b(sk-[A-Za-z0-9]{20,})\b/g, preserveAssignment: false },
+      { pattern: /\b(ghp_[A-Za-z0-9]{20,})\b/g, preserveAssignment: false },
+      { pattern: /Bearer\s+([A-Za-z0-9._~+/-]{20,})/gi, preserveAssignment: false },
+      { pattern: /(api[_-]?key\s*[:=]\s*["']?)([A-Za-z0-9_\-]{16,})(["']?)/gi, preserveAssignment: true },
     ];
 
-    for (const pat of apiKeyPatterns) {
-      if (pat.test(clean)) {
-        clean = clean.replace(pat, (_match, p1, p2) => {
-          redactedCount++;
-          if (!types.includes("API_KEY")) types.push("API_KEY");
-          return p2 ? `${p1}[REDACTED_API_KEY]` : "[REDACTED_API_KEY]";
-        });
-      }
+    for (const { pattern, preserveAssignment } of apiKeyPatterns) {
+      clean = clean.replace(pattern, (_match, prefix, _value, quote) => {
+        redactedCount++;
+        if (!types.includes("API_KEY")) types.push("API_KEY");
+        // Single-capture patterns pass a numeric offset as the next callback
+        // argument; it must never be mistaken for a second capture and cause
+        // the credential in the first capture to be retained.
+        return preserveAssignment ? `${prefix}[REDACTED_API_KEY]${quote}` : "[REDACTED_API_KEY]";
+      });
     }
 
     // 2. Passwords / Secrets
@@ -167,13 +168,18 @@ export class PrivacyGuard {
 
   getPrivacyStatus() {
     return {
-      localMemory: "active (SQLite/Rust 127.0.0.1)",
-      cloudVoice: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "Fish Audio",
-      folderPolicy: "only approved folders",
+      // These describe the current implementation, not an OS-wide privacy
+      // guarantee. Other execution tools and configured providers can connect
+      // to external services, and the memory database is not encrypted here.
+      localMemory: "SQLite on this device; application-level encryption is not enabled",
+      cloudVoice: process.env.VOICE_TTS_PROVIDER || process.env.VOICE_PROVIDER || "browser (on-device voice when available)",
+      folderPolicy: "allowlist applies to guarded file operations; other tools have separate permissions",
       allowedFolders: this.getAllowedFolders(),
       localRedactionActive: true,
+      redactionScope: "best effort for memory content and raw data; other fields and ledgers are not covered",
       orchestratorHost: "127.0.0.1",
-      networkBoundToLocal: true,
+      networkBoundToLocal: false,
+      networkNotice: "Local defaults do not prevent configured providers or tools from accessing the network.",
     };
   }
 }

@@ -210,7 +210,7 @@ export class SarvamAsrAdapter implements AsrAdapter {
       const attemptUrl = new URL(url.toString());
       let ws: WebSocket;
       try {
-        ws = new WebSocket(attemptUrl, { headers: { "Api-Subscription-Key": this.apiKey }, handshakeTimeout: this.connectionTimeoutMs });
+        ws = new WebSocket(attemptUrl, { headers: { "Api-Subscription-Key": this.apiKey }, handshakeTimeout: this.connectionTimeoutMs, followRedirects: false });
       } catch (error) {
         fail(undefined, new Error(providerTransportError(error as Error, [this.apiKey])));
         return;

@@ -207,3 +207,54 @@ test("in-flight requests are retained and block admission from evicting their us
   assert.ok(fixture.runtime.submitTyped("Next request"));
   assert.notEqual(fixture.state.turns[0].turnId, oldestTurnId);
 });
+
+test("clearing history is fenced during requests and never implies task cancellation", () => {
+  const fixture = makeRuntime();
+  const request = fixture.runtime.submitTyped("Inspect the current task");
+  assert.ok(request);
+  assert.equal(fixture.runtime.beginHistoryClear(), false, "An in-flight conversation must not be erased.");
+  assert.equal(fixture.runtime.completeAssistant(request, "The task remains active."), true);
+
+  const priorId = fixture.state.conversationId;
+  assert.equal(fixture.runtime.beginHistoryClear(), true);
+  assert.equal(fixture.runtime.submitTyped("Cannot start while clearing"), null);
+  fixture.runtime.finishHistoryClear(false);
+  assert.equal(fixture.state.conversationId, priorId, "A failed storage clear preserves the live history.");
+  assert.equal(fixture.state.turns.length, 2);
+
+  assert.equal(fixture.runtime.beginHistoryClear(), true);
+  fixture.runtime.finishHistoryClear(true);
+  assert.notEqual(fixture.state.conversationId, priorId);
+  assert.equal(fixture.state.turns.length, 0);
+  assert.equal(fixture.runtime.completeAssistant(request, "A late response"), false);
+  assert.ok(fixture.runtime.submitTyped("A new conversation"));
+});
+
+test("restored turns are display-only and never replayed or automatically added to model context", () => {
+  const original = makeRuntime();
+  const old = original.runtime.submitVoiceFinal("Private previous voice question", "77777777-7777-4777-8777-777777777777");
+  assert.ok(old);
+  const restored = new DesktopConversationRuntime(original.state, () => {}, ids(), () => 1_795_258_515_001);
+  assert.equal(restored.state.turns[0].text, "Private previous voice question");
+  assert.deepEqual(restored.plannerContext(), []);
+  assert.equal(restored.submitVoiceFinal("Private previous voice question", old.requestId), null, "Old final transcripts cannot reactivate a request.");
+  assert.equal(restored.completeAssistant(old, "A late response"), false);
+
+  const current = restored.submitTyped("Fresh question");
+  assert.ok(current);
+  assert.equal(restored.completeAssistant(current, "Fresh answer"), true);
+  assert.deepEqual(restored.plannerContext().map((turn) => turn.content), ["Fresh question", "Fresh answer"]);
+});
+
+test("pending request tracking remains busy until every admitted response is published", () => {
+  const { runtime } = makeRuntime();
+  assert.equal(runtime.hasPendingRequests, false);
+  const first = runtime.submitTyped("First");
+  const second = runtime.submitTyped("Second");
+  assert(first && second);
+  assert.equal(runtime.hasPendingRequests, true);
+  assert.equal(runtime.completeAssistant(first, "First response"), true);
+  assert.equal(runtime.hasPendingRequests, true);
+  assert.equal(runtime.failAssistant(second, "Second request failed."), true);
+  assert.equal(runtime.hasPendingRequests, false);
+});

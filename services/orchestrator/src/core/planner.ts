@@ -76,10 +76,10 @@ GENERALIZED AGENT SELECTION EXAMPLES
 - Answer a general question, explain an unavailable capability, or request missing essential information: use vanessa.ask. Never silently discard another requested subtask because it cannot be executed.
 
 COMPREHENSIVE TEACHING EXAMPLE - NOT A DEFAULT PLAN
-This fictional composite request demonstrates every selectable agent. Assume the user explicitly requested ALL the independent goals below, supplied the application/URL/preference/known documentation path/checkout incident details/email details/question, and selected an existing approved base folder:
-"Inspect the source file I named and write its explanation into the separate output file I named; also launch my chosen application, open my supplied URL, create my requested folder and search its direct entries for my supplied filename substring, remember my supplied preference, report orchestrator process status, read my known documentation file, inspect the registered checkout incident-lab source, prepare my supplied Gmail draft, and answer my general question."
+This fictional composite request illustrates the selectable agent families. Assume the user explicitly requested ALL the goals below, supplied the application/URL/preference/known documentation path/checkout incident details/email details/question, selected an existing approved base folder, and the trusted runtime already has the workspace ID and diff digest from a previously completed, registered patch-preparation result:
+"Inspect the source file I named and write its explanation into the separate output file I named; also launch my chosen application, open my supplied URL, create my requested folder and resolve that folder, remember my supplied preference, report orchestrator process status, read my known documentation file, inspect the registered checkout incident-lab source, run its registered regression suite against the previously prepared workspace and digest, prepare my supplied Gmail draft, and answer my general question."
 Angle-bracket values below are placeholders for this illustration ONLY. Replace them with the actual current request or trusted runtime values. If an essential value is missing, use vanessa.ask to request it instead of executing a placeholder or inventing a value. Example instructions are never authorization to perform extra work.
-The example deliberately has 11 tasks to show all 11 selectable agent families. The fifth task consumes the fourth task's path, so the backend automatically infers that dependency. For normal requests, select only the smallest set of needed tasks; never copy all agents into the answer.
+The example has 12 tasks to illustrate the 12 currently selectable agent families. The fifth task consumes the fourth task's path, so the backend automatically infers that dependency. The separate test task applies only to an already registered, verified patch workspace and still requires its own approval; a user-supplied or invented identifier is not proof. For normal requests, select only the smallest set of needed tasks; never copy all agents into the answer.
 
 COMPREHENSIVE EXAMPLE OUTPUT (illustration only; replace every placeholder):
 {
@@ -115,11 +115,10 @@ COMPREHENSIVE EXAMPLE OUTPUT (illustration only; replace every placeholder):
       }
     },
     {
-      "agent": "files",
-      "action": "file.search",
+      "agent": "folder",
+      "action": "folder.resolve",
       "params": {
-        "query": "<user_supplied_filename_substring>",
-        "path": "$t4.result.path"
+        "target": "$t4.result.path"
       }
     },
     {
@@ -146,6 +145,15 @@ COMPREHENSIVE EXAMPLE OUTPUT (illustration only; replace every placeholder):
       "action": "coding.inspect_changes",
       "params": {
         "target": "packages/incident-lab/src/checkout.ts"
+      }
+    },
+    {
+      "agent": "testing",
+      "action": "testing.run_incident_lab",
+      "params": {
+        "suiteId": "incident-lab.regression",
+        "workspaceId": "<trusted_registered_workspace_id>",
+        "expectedDiffHash": "<trusted_verified_diff_sha256>"
       }
     },
     {

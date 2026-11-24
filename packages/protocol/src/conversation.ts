@@ -226,6 +226,80 @@ export interface ConversationState {
   activeTurnId: string | null;
 }
 
+/**
+ * Local durable projection, not a remote wire contract. Only finalized turns
+ * are persisted: in-progress ASR drafts and partial assistant output stay in
+ * memory. Restoring a transcript never resumes or re-executes a task.
+ */
+export const PersistedConversationTurnSchema = z.object({
+  turnId: UuidSchema,
+  conversationId: UuidSchema,
+  requestId: UuidSchema,
+  role: ConversationTurnRoleSchema,
+  source: ConversationTurnSourceSchema,
+  text: z.string().max(MAX_TURN_CONTENT),
+  final: z.literal(true),
+  streaming: z.boolean(),
+  status: z.enum(["completed", "interrupted", "failed"]),
+  createdAt: EpochMsSchema,
+  interruptReason: InterruptReasonSchema.optional(),
+}).strict();
+
+export const PersistedConversationStateSchema = z.object({
+  conversationId: UuidSchema,
+  status: ConversationStatusSchema,
+  turns: z.array(PersistedConversationTurnSchema).max(MAX_CONVERSATION_TURNS),
+  activeTurnId: z.null(),
+}).strict().superRefine((state, context) => {
+  const turnIds = new Set<string>();
+  const requestRoles = new Set<string>();
+  for (const [index, turn] of state.turns.entries()) {
+    if (turn.conversationId !== state.conversationId) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["turns", index, "conversationId"], message: "Turn belongs to a different conversation." });
+    }
+    if (turnIds.has(turn.turnId)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["turns", index, "turnId"], message: "Duplicate turn ID." });
+    }
+    if (turn.status !== "completed" && (turn.text !== "" || turn.streaming)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["turns", index, "text"], message: "Incomplete content cannot be persisted." });
+    }
+    if (turn.status === "completed" && !turn.text) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["turns", index, "text"], message: "A completed turn must have content." });
+    }
+    const requestRole = `${turn.requestId}:${turn.role}`;
+    if (requestRoles.has(requestRole)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["turns", index, "requestId"], message: "Duplicate request role." });
+    }
+    turnIds.add(turn.turnId);
+    requestRoles.add(requestRole);
+  }
+});
+
+export type PersistedConversationState = z.infer<typeof PersistedConversationStateSchema>;
+
+/** Desktop IPC results for an OS-protected, device-local history only. */
+export type LocalConversationFailure = { ok: false; reason: "unavailable" | "conflict" | "invalid" | "storage" };
+export type LocalConversationLoadResult =
+  | { ok: true; state: PersistedConversationState | null; revision: number }
+  | LocalConversationFailure;
+export type LocalConversationMutationResult =
+  | { ok: true; revision: number }
+  | LocalConversationFailure;
+
+/** Produce a validated snapshot without live drafts or unfinished responses. */
+export function projectPersistedConversation(state: ConversationState): PersistedConversationState {
+  return PersistedConversationStateSchema.parse({
+    conversationId: state.conversationId,
+    status: state.status,
+    turns: state.turns.filter((turn) => isTerminalTurnStatus(turn.status)).map((turn) =>
+      // Interrupted or failed turns can still contain an ASR draft or response
+      // fragment. Keep their status, but never persist that unfinished text.
+      turn.status === "completed" ? turn : { ...turn, text: "", streaming: false },
+    ),
+    activeTurnId: null,
+  });
+}
+
 const TERMINAL: ReadonlySet<ConversationTurnStatus> = new Set(["completed", "interrupted", "failed"]);
 
 export function isTerminalTurnStatus(status: ConversationTurnStatus): boolean {

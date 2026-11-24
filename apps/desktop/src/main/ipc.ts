@@ -1,14 +1,18 @@
-import { ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
+import { app, ipcMain, BrowserWindow, IpcMainInvokeEvent, screen } from "electron";
+import path from "node:path";
 import WebSocket from "ws";
 import type { ExecuteCommandPayload, VanessaEvent } from "@vanessa/shared";
+import type { LocalConversationFailure } from "@vanessa/protocol/conversation";
 import { calculateDockPosition, type DockCorner } from "./windowLayout.js";
 import { resolveOrchestratorHttpUrl, resolveOrchestratorWebSocketUrl } from "./runtimeConfig.js";
+import { ConversationStoreError, type LocalConversationStore } from "./localConversationStore.js";
+import { isTrustedLocalRendererUrl } from "./trustedRenderer.js";
+import { allowDevelopmentRenderer } from "./developmentPolicy.js";
 
 // The Electron main build is CommonJS; load the ESM shared package once.
 const commandClient = import("@vanessa/shared");
 
 
-let wsClient: WebSocket | null = null;
 let lastEventSequence = 0;
 let lastEventStreamId: string | null = null;
 let dockedCorner: DockCorner = "bottom-right";
@@ -42,9 +46,58 @@ function assertTaskId(taskId: unknown): asserts taskId is string {
   }
 }
 
-export function registerIpcHandlers(mainWindow: BrowserWindow) {
+function assertTrustedHistoryRenderer(event: IpcMainInvokeEvent, mainWindow: BrowserWindow): void {
+  assertTrustedRenderer(event, mainWindow);
+  const frame = event.senderFrame;
+  if (!frame || frame !== mainWindow.webContents.mainFrame ||
+      !isTrustedLocalRendererUrl(frame.url, path.join(__dirname, "../renderer/index.html"), allowDevelopmentRenderer(app.isPackaged, process.env))) {
+    throw new Error("Untrusted local history sender.");
+  }
+}
+
+function historyFailure(error: unknown): LocalConversationFailure {
+  if (error instanceof ConversationStoreError) {
+    if (error.code === "encryption_unavailable") return { ok: false, reason: "unavailable" };
+    if (error.code === "conflict") return { ok: false, reason: "conflict" };
+    if (error.code === "invalid_snapshot") return { ok: false, reason: "invalid" };
+  }
+  return { ok: false, reason: "storage" };
+}
+
+export function registerIpcHandlers(mainWindow: BrowserWindow, conversationStore: LocalConversationStore): () => void {
+  const channels: string[] = [];
+  const handle = (channel: string, listener: Parameters<typeof ipcMain.handle>[1]) => {
+    ipcMain.handle(channel, listener);
+    channels.push(channel);
+  };
+  let wsClient: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  // The main process owns the path, key, validation and revision. The renderer
+  // can request only a bounded local snapshot, never a filesystem path or key.
+  handle("vanessa:conversation-load", async (event) => {
+    assertTrustedHistoryRenderer(event, mainWindow);
+    try {
+      return { ok: true as const, ...await conversationStore.load() };
+    } catch (error) { return historyFailure(error); }
+  });
+  handle("vanessa:conversation-save", async (event, state: unknown, revision: unknown) => {
+    assertTrustedHistoryRenderer(event, mainWindow);
+    try {
+      const next = await conversationStore.save(state, typeof revision === "number" ? revision : NaN);
+      return { ok: true as const, revision: next };
+    } catch (error) { return historyFailure(error); }
+  });
+  handle("vanessa:conversation-clear", async (event, revision: unknown) => {
+    assertTrustedHistoryRenderer(event, mainWindow);
+    try {
+      await conversationStore.clear(typeof revision === "number" ? revision : NaN);
+      return { ok: true as const, revision: 0 };
+    } catch (error) { return historyFailure(error); }
+  });
+
   // 1. Execute Command
-  ipcMain.handle("vanessa:execute-command", async (event, payload: ExecuteCommandPayload) => {
+  handle("vanessa:execute-command", async (event, payload: ExecuteCommandPayload) => {
     assertTrustedRenderer(event, mainWindow);
     if (!payload || typeof payload.command !== "string" || payload.command.trim().length === 0 || payload.command.length > 20_000) {
       return { status: "failed", spokenSummary: "That request is empty or too long." };
@@ -62,7 +115,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // 2. Approve Task
-  ipcMain.handle("vanessa:approve-task", async (event, taskId: string) => {
+  handle("vanessa:approve-task", async (event, taskId: string) => {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
@@ -77,7 +130,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
-  ipcMain.handle("vanessa:reject-task", async (event, taskId: string) => {
+  handle("vanessa:reject-task", async (event, taskId: string) => {
     assertTrustedRenderer(event, mainWindow);
     assertTaskId(taskId);
     try {
@@ -93,7 +146,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // 3. Cancel Task / Emergency Kill-Switch
-  ipcMain.handle("vanessa:cancel-task", async (event, taskId?: string) => {
+  handle("vanessa:cancel-task", async (event, taskId?: string) => {
     assertTrustedRenderer(event, mainWindow);
     if (taskId !== undefined) assertTaskId(taskId);
     try {
@@ -109,7 +162,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
-  ipcMain.handle("vanessa:get-mobile-audit", async (event, limit: unknown = 100) => {
+  handle("vanessa:get-mobile-audit", async (event, limit: unknown = 100) => {
     assertTrustedRenderer(event, mainWindow);
     const count = typeof limit === "number" && Number.isInteger(limit) ? Math.max(1, Math.min(100, limit)) : 100;
     try {
@@ -122,7 +175,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   // 4. Resize and dock the floating window. Reposition immediately after
   // resizing so the expanded panel stays visible on the selected display.
-  ipcMain.handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {
+  handle("vanessa:resize-window", (event, payload: { width: number; height: number }) => {
     assertTrustedRenderer(event, mainWindow);
     if (!payload || !Number.isInteger(payload.width) || !Number.isInteger(payload.height) || payload.width < 70 || payload.width > 900 || payload.height < 70 || payload.height > 900) {
       return { success: false };
@@ -133,7 +186,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { success: true, corner: dockedCorner, ...position };
   });
 
-  ipcMain.handle("vanessa:dock-corner", (event, corner: DockCorner) => {
+  handle("vanessa:dock-corner", (event, corner: DockCorner) => {
     assertTrustedRenderer(event, mainWindow);
     if (!["top-left", "top-right", "bottom-left", "bottom-right"].includes(corner)) return { success: false };
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
@@ -143,13 +196,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // 5. Window Controls
-  ipcMain.handle("vanessa:minimize-window", (event) => {
+  handle("vanessa:minimize-window", (event) => {
     assertTrustedRenderer(event, mainWindow);
     mainWindow?.minimize();
     return { success: true };
   });
 
-  ipcMain.handle("vanessa:close-window", (event) => {
+  handle("vanessa:close-window", (event) => {
     assertTrustedRenderer(event, mainWindow);
     mainWindow?.close();
     return { success: true };
@@ -157,13 +210,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   // Connect to WebSocket stream and forward to Renderer
   function initWebSocket() {
+    if (disposed || mainWindow.isDestroyed()) return;
     try {
       const eventsUrl = new URL(resolveOrchestratorWebSocketUrl(process.env));
       eventsUrl.searchParams.set("since", String(lastEventSequence));
       if (lastEventStreamId) eventsUrl.searchParams.set("streamId", lastEventStreamId);
-      wsClient = new WebSocket(eventsUrl.toString());
+      const socket = new WebSocket(eventsUrl.toString());
+      wsClient = socket;
 
-      wsClient.on("message", (data: any) => {
+      socket.on("message", (data: any) => {
         try {
            const parsed = JSON.parse(data.toString());
            if (parsed.type === "system:status" && typeof parsed.payload?.eventStreamId === "string") {
@@ -182,17 +237,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         }
       });
 
-      wsClient.on("close", () => {
-        setTimeout(initWebSocket, 2000);
+      socket.on("close", () => {
+        if (!disposed) reconnectTimer = setTimeout(initWebSocket, 2000);
       });
 
-      wsClient.on("error", () => {
-        wsClient?.close();
+      socket.on("error", () => {
+        socket.close();
       });
     } catch {
-      setTimeout(initWebSocket, 3000);
+      if (!disposed) reconnectTimer = setTimeout(initWebSocket, 3000);
     }
   }
 
   initWebSocket();
+  return () => {
+    disposed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    wsClient?.close();
+    wsClient = null;
+    for (const channel of channels) ipcMain.removeHandler(channel);
+  };
 }

@@ -52,7 +52,9 @@ async function runVoicePlanningTests() {
     assert.equal(receivedSystem, PLANNER_SYSTEM_PROMPT);
     assert.match(receivedSystem, /AGENT developer:/);
     assert.match(receivedSystem, /Action codex.open/);
-    assert(!receivedSystem.includes("AGENT coding:"));
+    assert.match(receivedSystem, /AGENT coding:/);
+    assert.match(receivedSystem, /Action coding\.inspect_changes \[selectable/);
+    assert.match(receivedSystem, /Action codex\.run_task \[UNAVAILABLE - do not plan/);
     assert.match(receivedPrompt, /Runtime context/);
 
     const projectPath = fs.realpathSync(resolvePlannerWorkspace());
@@ -99,8 +101,12 @@ async function runVoicePlanningTests() {
     assert.equal(permissionGuard.check(codingTask, false), "confirm");
     assert.notEqual((await planner.createPlan("Fix it")).tasks[0].id, codingTask.id);
 
+    modelRouter.callLLM = async () => JSON.stringify({ tasks: [{ agent: "coding", action: "coding.inspect_changes", params: {} }] });
+    const approvedInspection = await planner.createPlan("Inspect the registered checkout incident");
+    assert.equal(approvedInspection.tasks[0].action, "coding.inspect_changes");
+
     for (const task of [
-      { id: "t1", agent: "coding", action: "coding.inspect_changes", params: {} },
+      { id: "t1", agent: "developer", action: "codex.run_task", params: { projectPath, prompt: "edit the project" } },
       { id: "t1", agent: "files", action: "folder.invented", params: {} },
       { id: "t1", agent: "developer", action: "codex.open", params: { projectPath } },
       { id: "t1", agent: "cloud", action: "gmail.send", params: { to: "person", subject: "test" } },
@@ -166,8 +172,10 @@ async function runVoicePlanningTests() {
       assert.deepEqual(Object.keys(dispatch.params).sort(), ["projectPath", "prompt"]);
       assert.match(dispatch.params.prompt, /Fix the parser and run relevant checks/);
       assert(!dispatch.params.prompt.includes("Investigate checkout parser"));
-      assert.equal(approved?.status, "success");
-      assert.match(approved?.spokenSummary || "", /Coding completion is not yet reported/);
+      assert.equal(approved?.status, "partial", "An interactive handoff is not verified coding completion.");
+      assert.equal(approved?.verification?.verified, false);
+      assert.equal(approved?.verification?.outcome, "partial");
+      assert.match(approved?.spokenSummary || "", /not yet verified a code change or test result/);
     } finally { developerAgent.execute = executeBefore; }
 
     modelRouter.callLLM = async () => JSON.stringify({

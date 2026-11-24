@@ -53,3 +53,31 @@ test("Ollama rejects incomplete and empty results", async () => {
     await assert.rejects(client.generate("hello", "reply", false), /incomplete response|no usable response/i);
   }
 });
+
+test("Ollama local-only prompt is not followed across a redirect", async () => {
+  let redirectedRequests = 0;
+  await withServer((_request, response) => {
+    redirectedRequests++;
+    response.end(JSON.stringify({ message: { content: "unexpected" }, done: true }));
+  }, async target => {
+    await withServer((_request, response) => {
+      response.writeHead(307, { location: target + "/api/chat" });
+      response.end();
+    }, async source => {
+      await assert.rejects(new OllamaClient({ baseUrl: source }).generate("private prompt", "private context", false), /could not be reached/i);
+      assert.equal(redirectedRequests, 0);
+    });
+  });
+});
+
+test("Ollama pins the localhost alias to numeric loopback before requesting", async () => {
+  let requested = "";
+  let redirect: string | undefined;
+  const client = new OllamaClient({ baseUrl: "http://localhost:11434", fetchImpl: async (input, init) => {
+    requested = String(input); redirect = init?.redirect;
+    return new Response(JSON.stringify({ message: { content: "ok" }, done: true }), { status: 200 });
+  } });
+  assert.equal(await client.generate("hello", "reply", false), "ok");
+  assert.equal(requested, "http://127.0.0.1:11434/api/chat");
+  assert.equal(redirect, "error");
+});

@@ -61,20 +61,22 @@ test("uses NVIDIA chat completions for JSON plans and speech, reusing the connec
   }
 });
 
-test("logs the provider error and matching request ID while redacting credentials", async (t) => {
+test("logs the status and request ID without provider error content or credentials", async (t) => {
   const logs: string[] = [];
+  const responseLogs: string[] = [];
   t.mock.method(console, "error", (...args: unknown[]) => { logs.push(args.join(" ")); });
+  t.mock.method(console, "log", (...args: unknown[]) => { responseLogs.push(args.join(" ")); });
   let calls = 0;
   const f = await fixture((_req, res) => {
     calls++;
     res.statusCode = 429;
     res.setHeader("x-request-id", "provider-123");
-    res.end(JSON.stringify({ error: { message: "Rate limit exceeded", type: "rate_limit_error", api_key: "test-key" } }));
+    res.end(JSON.stringify({ error: { message: "Rate limit exceeded", type: "rate_limit_error", api_key: "test-key", prompt: "private request prompt" } }));
   });
   try {
     await assert.rejects(f.client.generate("private request prompt", "private system prompt", true, "request-123"), (error: any) => {
       assert.match(error.message, /HTTP 429/);
-      assert.match(error.message, /Rate limit exceeded/);
+      assert(!error.message.includes("Rate limit exceeded"));
       assert(!error.message.includes("test-key"));
       return true;
     });
@@ -82,17 +84,18 @@ test("logs the provider error and matching request ID while redacting credential
     assert.equal(logs.length, 1);
     assert.match(logs[0], /request=request-123/);
     assert.match(logs[0], /HTTP=429/);
-    assert.match(logs[0], /providerRequestId="provider-123"/);
-    assert.match(logs[0], /Rate limit exceeded/);
-    assert.match(logs[0], /rate_limit_error/);
-    assert.match(logs[0], /\[REDACTED\]/);
+    assert(!logs[0].includes("provider-123"));
+    assert(!logs[0].includes("Rate limit exceeded"));
+    assert(!logs[0].includes("rate_limit_error"));
     assert(!logs[0].includes("test-key"));
     assert(!logs[0].includes("private request prompt"));
     assert(!logs[0].includes("private system prompt"));
+    assert(!responseLogs.join("\n").includes("private request prompt"));
+    assert(!responseLogs.join("\n").includes("test-key"));
   } finally { await f.close(); }
 });
 
-test("prints indented assistant JSON with parsed content, without truncation or exposed credentials", async (t) => {
+test("logs response metadata without model output, user data or credentials", async (t) => {
   const logs: string[] = [];
   t.mock.method(console, "log", (...args: unknown[]) => { logs.push(args.join(" ")); });
   const plan = { intent: "single_task", tasks: [{ id: "t1", agent: "windows", action: "app.open", params: { name: "brave" } }], detail: "x".repeat(9000) + " END-OF-RESPONSE test-key" };
@@ -105,11 +108,12 @@ test("prints indented assistant JSON with parsed content, without truncation or 
     assert(responseLog);
     assert.match(responseLog, /request=response-request/);
     assert.match(responseLog, /HTTP=200/);
-    assert.equal(responseLog.slice(responseLog.indexOf("\n") + 1), JSON.stringify({ content: plan, role: "assistant" }, null, 2).replaceAll("test-key", "[REDACTED]"));
+    assert.match(responseLog, /responseBytes=/);
     assert(!responseLog.includes("chatcmpl-test"));
     assert(!responseLog.includes('"usage"'));
-    assert(responseLog.includes("END-OF-RESPONSE"));
+    assert(!responseLog.includes("END-OF-RESPONSE"));
     assert(!responseLog.includes("test-key"));
+    assert(!responseLog.includes("brave"));
   } finally { await f.close(); }
 });
 
@@ -123,6 +127,25 @@ test("rejects truncated, refused, empty, and malformed responses", async () => {
   const f = await fixture((_req, res) => { res.end(responses.shift()); });
   try {
     for (let i = 0; i < 4; i++) await assert.rejects(f.client.generate("request", "system", true));
+  } finally { await f.close(); }
+});
+
+test("does not expose untrusted finish reasons or refusal text", async (t) => {
+  const logs: string[] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => { logs.push(args.join(" ")); });
+  const responses = [
+    { choices: [{ finish_reason: "private finish reason", message: { content: "ignored" } }] },
+    { choices: [{ finish_reason: "stop", message: { content: "", refusal: "private refusal text" } }] },
+  ];
+  const f = await fixture((_req, res) => { res.end(JSON.stringify(responses.shift())); });
+  try {
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(f.client.generate("prompt", "system", true), (error: Error) => {
+        assert(!error.message.includes("private"));
+        return true;
+      });
+    }
+    assert(!logs.join("\n").includes("private"));
   } finally { await f.close(); }
 });
 

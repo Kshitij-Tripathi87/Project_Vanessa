@@ -16,7 +16,7 @@ test('full Sarvam stack needs no Gemini or Fish credentials and rejects placehol
 });
 
 test('Sarvam is switchable and validates its key independently of Fish TTS', () => {
-  const env = { NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', SARVAM_API_KEY: 'test', SARVAM_ASR_MODEL: 'saaras:v3-realtime', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
+  const env = { NVIDIA_API_KEY: 'test', VOICE_ASR_PROVIDER: 'sarvam', VOICE_TTS_PROVIDER: 'fish', SARVAM_API_KEY: 'test', SARVAM_ASR_MODEL: 'saaras:v3-realtime', VOICE_TTS_FALLBACK_PROVIDER: 'browser' };
   assert.deepEqual(config(env, ['--codex-test']).missing, []);
   assert.equal(config(env).localAsr, undefined);
   assert.throws(() => config({ ...env, SARVAM_API_KEY: '' }, ['--codex-test']), /SARVAM_API_KEY/);
@@ -28,7 +28,7 @@ test('default install uses local Whisper, Ollama and browser TTS with no provide
   const defaults = config();
   assert.deepEqual(defaults.missing, []);
   assert.equal(defaults.asr, 'whisper');
-  assert.equal(defaults.tts, 'fish');
+  assert.equal(defaults.tts, 'browser');
   assert.equal(defaults.ttsFallback, true);
   assert.equal(defaults.planner, 'ollama');
   assert.equal(defaults.conversation, 'ollama');
@@ -86,7 +86,8 @@ test('restores local server selection with current and legacy environment paths'
   const legacy = config(env, [], ['.venv-whisper/Scripts/python.exe', 'services/voice-agent/whisper_server.py']);
   assert(legacy.localAsr.script.endsWith('whisper_server.py'));
   assert(config({ VOICE_ALLOW_FALLBACK: 'true' }).localAsr);
-  assert.equal(config({ VOICE_ASR_PROVIDER: 'voice', VOICE_URL: 'ws://other-host:4505' }).localAsr.local, false);
+  assert.throws(() => config({ VOICE_ASR_PROVIDER: 'voice', VOICE_URL: 'ws://other-host:4505' }), /loopback/i);
+  assert.equal(config({ VOICE_ASR_PROVIDER: 'voice', VOICE_URL: 'ws://localhost:4505' }).localAsr.url, 'ws://127.0.0.1:4505/');
   assert.equal(config(env, ['--text-only']).localAsr, undefined);
 });
 test('options are explicit and real Codex tests reject simulation', () => {

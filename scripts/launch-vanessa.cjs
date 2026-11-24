@@ -5,6 +5,7 @@ const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
 const { launcherConfig } = require('./launcher-config.cjs');
+const { probeOllama } = require('./ollama-readiness.cjs');
 
 const root = path.resolve(__dirname, '..');
 const children = new Set();
@@ -63,6 +64,10 @@ function startService(stage, entry, args = [], executable = process.execPath, op
   child.once('close', (code) => {
     children.delete(child);
     if (stopping) return;
+    if (typeof options.expectedExit === 'function' && options.expectedExit()) {
+      log(stage, `Exited as requested (code ${code}).`);
+      return;
+    }
     if (fatalOnExit) shutdown(1, `${stage} stopped unexpectedly (exit ${code}).`);
     else log(`${stage} DEGRADED`, `Optional service stopped (exit ${code}); desktop and typed commands remain available. Voice can be repaired by restarting Vanessa.`);
   });
@@ -127,22 +132,10 @@ async function ensureService(stage, url, identity, port, reuse, start, strict = 
 
 async function assertOllamaReady(config) {
   if (![config.planner, config.conversation].includes('ollama')) return;
-  let parsed;
-  try { parsed = new URL(process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl); }
-  catch { throw new Error('OLLAMA_BASE_URL is invalid. Use http://127.0.0.1:11434 for local Ollama.'); }
-  const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
-  if (parsed.protocol !== 'http:' || !localHosts.has(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
-    throw new Error('OLLAMA_BASE_URL must be a local loopback HTTP origin, for example http://127.0.0.1:11434. Vanessa will not send local prompts to remote hosts.');
-  }
   const model = (process.env.OLLAMA_MODEL || config.ollamaModel || 'qwen2.5:3b').trim();
-  let response;
-  try { response = await fetch(parsed.origin + '/api/tags', { signal: AbortSignal.timeout(2500) }); }
-  catch { throw new Error('Local Ollama is not reachable at ' + parsed.origin + '. Run .\\\\scripts\\\\setup_windows.ps1 or start Ollama, then retry.'); }
-  if (!response.ok) throw new Error('Local Ollama returned HTTP ' + response.status + '. Restart Ollama and retry.');
-  let body;
-  try { body = await response.json(); } catch { throw new Error('Local Ollama returned an invalid model list. Restart Ollama and retry.'); }
-  const installed = Array.isArray(body.models) && body.models.some(item => item && item.name === model);
-  if (!installed) throw new Error('Local model "' + model + '" is not installed. Run .\\\\scripts\\\\setup_windows.ps1 or execute ollama pull ' + model + '.');
+  // Share the diagnostic's loopback normalization and redirect rejection.
+  const result = await probeOllama(process.env.OLLAMA_BASE_URL || config.ollamaBaseUrl, model);
+  if (!result.ok) throw new Error(result.message);
   log('OLLAMA', 'Local model ready: ' + model + '; no provider key required.');
 }
 
@@ -264,9 +257,10 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   process.env.ORCHESTRATOR_WS = `ws://127.0.0.1:${port}/events`;
   process.env.HOST = '127.0.0.1';
   if (config.strict) process.env.VOICE_STRICT_CONFIG = 'true';
-  // Serve the built UI from the local origin already allowed by voice sockets
-  // and microphone permissions. file:// pages have an opaque/null WS origin.
-  process.env.VITE_DEV_SERVER_URL = 'http://127.0.0.1:5173';
+  // Only explicit development uses a Vite server. The normal built app loads
+  // its assets from Electron's fixed application scheme, not an open port.
+  if (config.dev) process.env.VITE_DEV_SERVER_URL = 'http://127.0.0.1:5173';
+  else delete process.env.VITE_DEV_SERVER_URL;
   process.env.VANESSA_DEV_MODE = config.dev ? '1' : '0';
   process.env.VITE_VANESSA_VOICE_ENABLED = config.voice ? 'true' : 'false';
   delete process.env.ELECTRON_RUN_AS_NODE;
@@ -281,7 +275,7 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   const electron = require(require.resolve('electron', { paths: [path.join(root, 'apps/desktop')] }));
   if (!fs.existsSync(electron)) throw new Error('Electron executable is missing. Restore workspace dependencies.');
   const tsx = config.dev ? require.resolve('tsx/cli', { paths: [path.join(root, 'services/orchestrator')] }) : undefined;
-  if (!process.argv.includes('--build-only') && config.localAsr?.local && (!config.localAsr.python || !config.localAsr.script) && !config.reuse) throw new Error('Local Whisper selected but its Python environment/server is missing. Set VOICE_PYTHON or install .venv-voice; use --reuse-existing for an already running server, or --text-only for text work.');
+  if (!process.argv.includes('--build-only') && config.localAsr?.local && (!config.localAsr.python || !config.localAsr.script) && !config.reuse && !runtimeSmoke) throw new Error('Local Whisper selected but its Python environment/server is missing. Set VOICE_PYTHON or install .venv-voice; use --reuse-existing for an already running server, or --text-only for text work.');
   if (!process.argv.includes('--build-only')) await assertOllamaReady(config);
   if (process.argv.includes('--check')) {
     log('Launcher', 'Preflight passed. No services started; no provider credentials are needed for the local default profile.');
@@ -292,16 +286,16 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
       await assertPortFree(port);
       if (config.voice) await assertPortFree(4500);
     }
-    await assertPortFree(5173);
+    if (config.dev) await assertPortFree(5173);
   }
   if (installedMode) {
-    const requiredOutputs = ['packages/shared/dist/index.js','services/orchestrator/dist/server.js','services/voice-agent/dist/server.js','apps/desktop/dist/main/index.js','apps/desktop/dist/renderer/index.html'];
+    const requiredOutputs = ['packages/protocol/dist/conversation.js','packages/shared/dist/index.js','services/orchestrator/dist/server.js','services/voice-agent/dist/server.js','apps/desktop/dist/main/index.js','apps/desktop/dist/renderer/index.html'];
     const missingOutputs = requiredOutputs.filter((file) => !fs.existsSync(path.join(root, file)));
     if (missingOutputs.length) throw new Error(`Installed build output is missing (${missingOutputs.join(', ')}). Run Vanessa Setup/Repair from the install directory.`);
     log('2/5 BUILD', 'Installed application build is ready; using prebuilt assets.');
   } else {
     log('2/5 BUILD', 'Building shared contracts, orchestrator, voice service, and desktop.');
-    for (const project of ['packages/shared', 'services/orchestrator', 'services/voice-agent']) {
+    for (const project of ['packages/protocol', 'packages/shared', 'services/orchestrator', 'services/voice-agent']) {
       await run(`Build ${project}`, process.execPath, [tsc, '-p', path.join(project, 'tsconfig.json')]);
     }
     fs.copyFileSync(path.join(root, 'services/orchestrator/src/agents/codex-terminal.cjs'), path.join(root, 'services/orchestrator/dist/agents/codex-terminal.cjs'));
@@ -316,9 +310,11 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
   }
   if (config.localAsr) {
     try {
-      await ensureLocalAsr(config.localAsr, config.reuse, [port, 4500, 5173]);
+      // The isolated smoke harness supplies a loopback ASR fixture; it must
+      // not also reuse pre-existing orchestrator or voice-agent services.
+      await ensureLocalAsr(config.localAsr, config.reuse || runtimeSmoke, [port, 4500, 5173]);
     } catch (error) {
-      if (config.strict) throw error;
+      if (config.strict || runtimeSmoke) throw error;
       const detail = error instanceof Error ? error.message : 'unknown startup error';
       log('LOCAL ASR DEGRADED', `${detail} Speech input may be unavailable; the desktop and typed commands will continue. Run scripts\\setup_windows.ps1 to repair local speech.`);
     }
@@ -343,83 +339,93 @@ Close the desktop or press Ctrl+C to stop only processes owned by this launcher.
     }
   } else log('4/5 VOICE', 'Skipped (--text-only). Microphone is unavailable in this mode.');
   if (stopping) return;
-  startService('DESKTOP UI', vite, [...(config.dev ? [] : ['preview']), '--config', 'apps/desktop/vite.config.ts', '--host', '127.0.0.1', '--port', '5173', '--strictPort']);
-  let uiReady = false;
-  for (let attempt = 0; attempt < 100 && !stopping; attempt++) {
-    try {
-      const response = await fetch(process.env.VITE_DEV_SERVER_URL, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) { uiReady = true; break; }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  if (config.dev) {
+    startService('DESKTOP UI', vite, ['--config', 'apps/desktop/vite.config.ts', '--host', '127.0.0.1', '--port', '5173', '--strictPort']);
+    let uiReady = false;
+    for (let attempt = 0; attempt < 100 && !stopping; attempt++) {
+      try {
+        const response = await fetch(process.env.VITE_DEV_SERVER_URL, { signal: AbortSignal.timeout(1000) });
+        if (response.ok) { uiReady = true; break; }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (stopping) return;
+    if (!uiReady) throw new Error('Development desktop UI did not become available on port 5173.');
+    log('DESKTOP UI', 'Development renderer ready on loopback.');
+  } else {
+    if (!fs.existsSync(path.join(root, 'apps/desktop/dist/renderer/index.html'))) throw new Error('Built desktop renderer is missing.');
+    log('DESKTOP UI', 'Built renderer will load from the application origin.');
   }
-  if (stopping) return;
-  if (!uiReady) throw new Error('Built desktop UI did not become available on port 5173.');
-  log('DESKTOP UI', 'Built renderer ready on trusted local origin http://127.0.0.1:5173');
   if (runtimeSmoke) {
     const debugPort = Number(process.env.VANESSA_RUNTIME_SMOKE_DEBUG_PORT || 9222);
     if (!Number.isInteger(debugPort) || debugPort < 1024 || debugPort > 65535 || [port, 4500, 5173].includes(debugPort)) {
       throw new Error('Invalid VANESSA_RUNTIME_SMOKE_DEBUG_PORT.');
     }
     await assertPortFree(debugPort);
-
-    // Verify that this same launcher can bring up Electron after both backend
-    // services and the renderer are healthy. Providers use sandbox-only keys;
-    // this test never sends a user command or makes a provider request.
     const voiceReady = await fetch('http://127.0.0.1:4500/ready', { signal: AbortSignal.timeout(1500) });
     if (!voiceReady.ok) throw new Error('Voice agent /ready did not return HTTP 200.');
-
-    log('5/5 DESKTOP', 'Launching Electron for runtime smoke; DevTools is loopback-only.');
-    const desktop = startService(
-      'DESKTOP',
-      `--remote-debugging-port=${debugPort}`,
-      ['--disable-gpu', `--user-data-dir=${path.join(configHome, 'electron-profile')}`, '.'],
-      electron,
-      { cwd: path.join(root, 'apps/desktop') },
-    );
+    const { evaluateInRenderer, runHistoryProbe } = require('./desktop-runtime-smoke.cjs');
+    const smokeProfile = path.join(configHome, `electron-smoke-${process.pid}`);
     const debugUrl = `http://127.0.0.1:${debugPort}/json/list`;
-    const rendererDeadline = Date.now() + 25_000;
-    let rendererReady = false;
-    while (Date.now() < rendererDeadline && !stopping) {
-      if (desktop.exitCode !== null || desktop.signalCode !== null) {
-        throw new Error(`Electron exited before its renderer became ready (exit=${desktop.exitCode}, signal=${desktop.signalCode}).`);
+    let expectedClose = false;
+    const startDesktop = () => {
+      expectedClose = false;
+      return startService('DESKTOP', `--remote-debugging-port=${debugPort}`,
+        ['--disable-gpu', `--user-data-dir=${smokeProfile}`, '.'], electron,
+        { cwd: path.join(root, 'apps/desktop'), expectedExit: () => expectedClose });
+    };
+    async function waitForRenderer(desktop) {
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline && !stopping) {
+        if (desktop.exitCode !== null || desktop.signalCode !== null) throw new Error('Electron exited before its renderer became ready.');
+        try {
+          const response = await fetch(debugUrl, { signal: AbortSignal.timeout(800) });
+          if (response.ok) {
+            const pages = await response.json();
+            const page = Array.isArray(pages) && pages.find((candidate) =>
+              candidate && candidate.type === 'page' && typeof candidate.url === 'string' &&
+              typeof candidate.webSocketDebuggerUrl === 'string' &&
+              (config.dev ? new URL(candidate.url).origin === 'http://127.0.0.1:5173' : candidate.url === 'vanessa://desktop/index.html')
+            );
+            if (page) return page.webSocketDebuggerUrl;
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      try {
-        const response = await fetch(debugUrl, { signal: AbortSignal.timeout(800) });
-        if (response.ok) {
-          const pages = await response.json();
-          rendererReady = Array.isArray(pages) && pages.some((page) =>
-            page && page.type === 'page' &&
-            typeof page.url === 'string' &&
-            new URL(page.url).origin === 'http://127.0.0.1:5173'
-          );
-          if (rendererReady) break;
-        }
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      throw new Error('Electron stayed alive but its renderer did not load from the expected Vanessa origin.');
     }
-    if (!rendererReady) throw new Error('Electron stayed alive but its renderer did not load from the local Vanessa UI.');
+    async function closeDesktop(desktop, debuggerUrl) {
+      expectedClose = true;
+      const exited = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Electron did not close after history drain.')), 15000);
+        desktop.once('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('Electron exited with a nonzero status.')); });
+      });
+      const requested = await evaluateInRenderer(debuggerUrl, '(() => { setTimeout(() => { void window.vanessa.closeWindow().catch(() => {}); }, 100); return true; })()');
+      if (requested !== true) throw new Error('Could not request an orderly Electron close.');
+      await exited;
+    }
 
+    // Sandbox-only keys and a synthetic profile. No real task or provider call.
+    log('5/5 DESKTOP', 'Launching Electron for runtime smoke; DevTools is loopback-only.');
+    const first = startDesktop();
+    const firstPage = await waitForRenderer(first);
     const [orchestratorResponse, voiceResponse, voiceReadyResponse] = await Promise.all([
       fetch(`${orchestratorUrl}/health`, { signal: AbortSignal.timeout(1500) }),
       fetch('http://127.0.0.1:4500/health', { signal: AbortSignal.timeout(1500) }),
       fetch('http://127.0.0.1:4500/ready', { signal: AbortSignal.timeout(1500) }),
     ]);
-    const [orchestratorHealth, voiceHealth] = await Promise.all([
-      orchestratorResponse.json(),
-      voiceResponse.json(),
-    ]);
-    if (!orchestratorResponse.ok || orchestratorHealth.service !== 'vanessa-orchestrator') {
-      throw new Error('Orchestrator lost its health identity during the desktop smoke test.');
-    }
-    if (!voiceResponse.ok || voiceHealth.service !== 'vanessa-voice-agent' || voiceHealth.readiness !== 'ready' || !voiceReadyResponse.ok) {
-      throw new Error('Voice agent is not ready while the desktop is running. Inspect the voice-agent launcher logs.');
-    }
+    const [orchestratorHealth, voiceHealth] = await Promise.all([orchestratorResponse.json(), voiceResponse.json()]);
+    if (!orchestratorResponse.ok || orchestratorHealth.service !== 'vanessa-orchestrator') throw new Error('Orchestrator lost its health identity during the desktop smoke test.');
+    if (!voiceResponse.ok || voiceHealth.service !== 'vanessa-voice-agent' || voiceHealth.readiness !== 'ready' || !voiceReadyResponse.ok) throw new Error('Voice agent is not ready during the desktop smoke test.');
 
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    if (desktop.exitCode !== null || desktop.signalCode !== null) {
-      throw new Error('Electron exited during the post-start stability window.');
-    }
-    log('RUNTIME SMOKE PASS', 'Orchestrator, voice agent, local renderer and Electron stayed healthy together.');
+    await runHistoryProbe(firstPage, 'write', true, !config.dev);
+    await closeDesktop(first, firstPage);
+    const second = startDesktop();
+    const secondPage = await waitForRenderer(second);
+    await runHistoryProbe(secondPage, 'verify', true, !config.dev);
+    await closeDesktop(second, secondPage);
+    try { fs.rmSync(smokeProfile, { recursive: true, force: true }); } catch { log('RUNTIME SMOKE', 'Synthetic smoke profile could not be removed automatically.'); }
+    log('RUNTIME SMOKE PASS', 'Built UI, local voice connection, OS-protected history save/restart/clear and orderly shutdown passed.');
     shutdown(0, 'Runtime smoke passed. Stopping all sandbox-owned processes.');
     return;
   }

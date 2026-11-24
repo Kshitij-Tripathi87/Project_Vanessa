@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { explainMicrophoneFailure, hasMicrophoneSignal, measureMicrophoneSignal } from "./microphoneDiagnostics.js";
+import { waitForLocalSpeechVoice } from "./localSpeechVoice.js";
 import pcmCaptureWorkletUrl from "../audio/pcmCapture.worklet.ts?worker&url";
 import { useVanessaStore } from "../stores/vanessaStore.js";
 import { DesktopConversationRuntime } from "../conversation/conversationRuntime.js";
+import { conversationHistory } from "../conversation/conversationHistoryInstance.js";
+import { requestWakeWordPause } from "../conversation/wakeWordPause.js";
+import { conversationShutdownGate } from "../conversation/shutdownGate.js";
 import { DesktopVoiceConversationBridge } from "../conversation/voiceConversationBridge.js";
 
 export interface SentimentData {
@@ -86,6 +90,7 @@ export function useAudioCapture() {
   const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "disconnected" | "disabled">("connecting");
   const [wakeWordModeAvailable, setWakeWordModeAvailable] = useState(false);
   const [wakeWordActive, setWakeWordActive] = useState(false);
+  const [wakeWordPausePending, setWakeWordPausePending] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -95,7 +100,10 @@ export function useAudioCapture() {
   const activeTextOnlyRequestRef = useRef<string | null>(null);
   const conversationRuntimeRef = useRef<DesktopConversationRuntime | null>(null);
   if (!conversationRuntimeRef.current) {
-    conversationRuntimeRef.current = new DesktopConversationRuntime(conversationState, setConversationState);
+    conversationRuntimeRef.current = new DesktopConversationRuntime(conversationState, (state) => {
+      setConversationState(state);
+      conversationHistory.record(state);
+    });
   }
   const voiceConversationBridgeRef = useRef<DesktopVoiceConversationBridge | null>(null);
   if (!voiceConversationBridgeRef.current && conversationRuntimeRef.current) {
@@ -108,6 +116,9 @@ export function useAudioCapture() {
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
   const pttActiveRef = useRef(false);
+  const pttStartingRef = useRef(false);
+  const wakePausePendingRef = useRef(false);
+  const wakePauseUnconfirmedRef = useRef(false);
   const wakeWordModeRef = useRef(false);
   const wakeWordStartupAttemptedRef = useRef(false);
   const activatedSocketRef = useRef<WebSocket | null>(null);
@@ -197,9 +208,23 @@ export function useAudioCapture() {
       }
     }
 
-    // 2. Client-side SpeechSynthesis fallback with emotion-modulated rate & pitch
+    // 2. Never send text to an implicit or remote OS speech voice. When no
+    // locally marked voice exists, retain the written response instead.
     if (item.fallbackSpeech && "speechSynthesis" in window && item.text) {
+      const localVoice = await waitForLocalSpeechVoice(window.speechSynthesis, navigator.language);
+      if (playbackGeneration !== playbackGenerationRef.current || suppressSpeechOutputRef.current) return;
+      if (!localVoice) {
+        setMicError("No on-device speech voice is available. The response remains available as text.");
+        isPlayingQueueRef.current = false;
+        if (item.isFinal) {
+          setVoiceState("idle");
+          if (!pttActiveRef.current && !wakeWordModeRef.current) stopCaptureRef.current?.(true);
+        }
+        playNextInQueue();
+        return;
+      }
       const utterance = new SpeechSynthesisUtterance(item.text);
+      utterance.voice = localVoice;
       utterance.rate = item.speechRate || 1.05;
       utterance.pitch = item.speechPitch || 1.02;
 
@@ -235,7 +260,7 @@ export function useAudioCapture() {
 
   // Barge-In interrupt handler: cancels playback immediately and notifies server
   const triggerBargeIn = useCallback(() => {
-    if (pttActiveRef.current) return;
+    if (pttActiveRef.current || wakePausePendingRef.current || conversationRuntimeRef.current?.isHistoryClearPending || useVanessaStore.getState().appClosing) return;
     playbackGenerationRef.current += 1;
     audioQueueRef.current = [];
     isPlayingQueueRef.current = false;
@@ -259,7 +284,7 @@ export function useAudioCapture() {
   }, [setVoiceState]);
 
   const activateConnectedSocket = useCallback((socket: WebSocket) => {
-    if (pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
+    if (!useVanessaStore.getState().appClosing && pttActiveRef.current && socket.readyState === WebSocket.OPEN && activatedSocketRef.current !== socket) {
       bargeResumePendingRef.current = true;
       // Context arrives before capture activation, so the first recognized
       // utterance already has the same history as the typed composer.
@@ -478,6 +503,7 @@ export function useAudioCapture() {
 
 
   const submitTextCommand = useCallback((rawText: string, language = "en") => {
+    if (useVanessaStore.getState().appClosing) return false;
     const text = rawText.trim();
     if (!text || text.length > 4000) {
       setLastResponse(text ? "That request is too long." : "Enter a request first.");
@@ -670,7 +696,7 @@ export function useAudioCapture() {
 
   // Test the no-key browser/OS speech fallback. "Finished" means the browser
   // completed its utterance callback; the user still confirms they heard audio.
-  const testSpeechOutput = useCallback(() => {
+  const testSpeechOutput = useCallback(async () => {
     if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
       setSpeechOutputTestState("error");
       setSpeechOutputTestMessage("This runtime does not expose local speech synthesis. Typed responses remain available; check the Vanessa runtime.");
@@ -680,10 +706,18 @@ export function useAudioCapture() {
     try {
       window.speechSynthesis.cancel();
       setSpeechOutputTestState("testing");
-      setSpeechOutputTestMessage("Playing a short local test phrase. No speech provider API key is used.");
+      setSpeechOutputTestMessage("Looking for an on-device speech voice.");
+      const localVoice = await waitForLocalSpeechVoice(window.speechSynthesis, navigator.language);
+      if (!localVoice) {
+        setSpeechOutputTestState("error");
+        setSpeechOutputTestMessage("No on-device system voice is available. Written responses remain available.");
+        return;
+      }
+      setSpeechOutputTestMessage("Playing a short on-device test phrase.");
       const utterance = new SpeechSynthesisUtterance(
         "This is Vanessa's local speech output test. If you hear this, local speech playback is working."
       );
+      utterance.voice = localVoice;
       utterance.rate = 1;
       utterance.pitch = 1;
       utterance.onend = () => {
@@ -782,7 +816,7 @@ export function useAudioCapture() {
         }
         const audioFrame = pcmBuffer.buffer.slice(pcmBuffer.byteOffset, pcmBuffer.byteOffset + pcmBuffer.byteLength);
         const ambientWakeListening = wakeWordModeRef.current && !["thinking", "executing", "responding", "speaking"].includes(voiceStateRef.current);
-        if ((pttActiveRef.current || ambientWakeListening) && wsRef.current?.readyState === WebSocket.OPEN) {
+        if (!useVanessaStore.getState().appClosing && (pttActiveRef.current || ambientWakeListening) && wsRef.current?.readyState === WebSocket.OPEN) {
           if (bargeResumePendingRef.current) {
             pendingBargeAudioRef.current.push(audioFrame);
             if (pendingBargeAudioRef.current.length > 80) pendingBargeAudioRef.current.shift();
@@ -840,10 +874,15 @@ export function useAudioCapture() {
   }, [connectVoiceWs, setVoiceState, triggerBargeIn]);
 
   useEffect(() => {
-    if (!wakeWordModeAvailable || voiceConnectionState !== "connected" || wakeWordStartupAttemptedRef.current) return;
+    if (useVanessaStore.getState().appClosing || !wakeWordModeAvailable || voiceConnectionState !== "connected" || wakeWordStartupAttemptedRef.current) return;
     wakeWordStartupAttemptedRef.current = true;
     wakeWordModeRef.current = true;
     void startRecording().then(() => {
+      if (useVanessaStore.getState().appClosing) {
+        wakeWordModeRef.current = false;
+        stopCaptureRef.current?.();
+        return;
+      }
       const socket = wsRef.current;
       if (mediaStreamRef.current && socket?.readyState === WebSocket.OPEN) {
         const contextFrame = voiceConversationBridgeRef.current?.buildContextFrame();
@@ -940,6 +979,10 @@ export function useAudioCapture() {
   }, [setVoiceState]);
 
   const toggleRecording = useCallback(async () => {
+    if (useVanessaStore.getState().appClosing || conversationRuntimeRef.current?.isHistoryClearPending || pttStartingRef.current || wakePausePendingRef.current) {
+      setLastResponse("Wait for the conversation history operation to finish before starting voice input.");
+      return;
+    }
     if (pttActiveRef.current) {
       pttActiveRef.current = false;
       activatedSocketRef.current = null;
@@ -948,9 +991,15 @@ export function useAudioCapture() {
       // barge-in; PCM is sent to ASR only while PTT is active.
     } else {
       suppressSpeechOutputRef.current = false;
-      // Acquire the microphone only after an explicit PTT action.
-      await startRecording();
+      // Acquire the microphone only after an explicit PTT action. A pending
+      // permission prompt must not race a history clear.
+      pttStartingRef.current = true;
+      try { await startRecording(); } finally { pttStartingRef.current = false; }
       if (!mediaStreamRef.current) return;
+      if (useVanessaStore.getState().appClosing || conversationRuntimeRef.current?.isHistoryClearPending) {
+        if (!wakeWordModeRef.current) stopRecording();
+        return;
+      }
       if (voiceStateRef.current === "speaking") {
         triggerBargeIn();
         return;
@@ -963,7 +1012,91 @@ export function useAudioCapture() {
       setPartialTranscript("");
       if (wsRef.current) activateConnectedSocket(wsRef.current);
     }
-  }, [startRecording, setVoiceState, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
+  }, [startRecording, setVoiceState, setLastResponse, finalizeListening, stopRecording, activateConnectedSocket, triggerBargeIn]);
+
+  const pauseWakeWordListening = useCallback(async (forShutdown = false): Promise<boolean> => {
+    const current = useVanessaStore.getState();
+    const activeStages = ["accepted", "planning", "executing", "verifying", "cancelling", "termination_unconfirmed"];
+    const socket = wsRef.current;
+    if (!wakeWordModeRef.current || wakePausePendingRef.current || (current.appClosing && !forShutdown) || current.pendingApproval ||
+        activeStages.includes(current.taskStage) || !["idle", "error", "interrupted"].includes(current.voiceState) ||
+        pttActiveRef.current || pttStartingRef.current || conversationRuntimeRef.current?.isHistoryClearPending ||
+        !socket || socket.readyState !== WebSocket.OPEN) {
+      if (!forShutdown) setLastResponse("Finish the current voice turn and task before pausing wake-word listening. No task was cancelled.");
+      return false;
+    }
+    wakePausePendingRef.current = true;
+    setWakeWordPausePending(true);
+    // Stop sending ambient audio before requesting the server-side fence.
+    wakeWordModeRef.current = false;
+    const result = await requestWakeWordPause(socket, globalThis.crypto.randomUUID());
+    wakePausePendingRef.current = false;
+    setWakeWordPausePending(false);
+    if (result === "paused") {
+      wakePauseUnconfirmedRef.current = false;
+      setWakeWordActive(false);
+      stopRecording();
+      if (!forShutdown) setLastResponse("Wake-word listening is paused for this session. Push-to-talk still works; restart Vanessa to restore wake-word listening.");
+      return true;
+    } else if (result === "busy" && socket === wsRef.current) {
+      // The service did not pause. Restore the local mode so a cancelled close
+      // can resume without pretending that the active voice turn stopped.
+      wakeWordModeRef.current = true;
+      if (!forShutdown) setLastResponse("Wake-word listening could not pause while a voice turn is active. No task was cancelled.");
+    } else {
+      wakePauseUnconfirmedRef.current = true;
+      setWakeWordActive(false);
+      stopRecording();
+      setLastResponse("Wake-word pause could not be confirmed. Restart with wake-word disabled before clearing history; no task was cancelled.");
+    }
+    return false;
+  }, [setLastResponse, stopRecording]);
+
+  const clearConversationHistory = useCallback(async () => {
+    const current = useVanessaStore.getState();
+    const activeStages = ["accepted", "planning", "executing", "verifying", "cancelling", "termination_unconfirmed"];
+    const runtime = conversationRuntimeRef.current;
+    if (!runtime || current.appClosing || activeStages.includes(current.taskStage) || current.pendingApproval ||
+        !["idle", "error", "interrupted"].includes(current.voiceState) || pttActiveRef.current || pttStartingRef.current ||
+        wakeWordModeRef.current || wakePausePendingRef.current || wakePauseUnconfirmedRef.current || !runtime.beginHistoryClear()) {
+      setLastResponse("Finish the active conversation and task, and disable wake-word listening before clearing. No task was cancelled.");
+      return;
+    }
+    try {
+      const result = await conversationHistory.clear();
+      runtime.finishHistoryClear(result !== "failed");
+      if (result !== "failed") {
+        setPartialTranscript("");
+        useVanessaStore.getState().clearConversationRecovery();
+      }
+      setLastResponse(result === "cleared"
+        ? "Conversation history was cleared on this device. Task records and backups are unchanged."
+        : result === "session_only"
+          ? "The current conversation was cleared. Inaccessible saved history was not deleted."
+          : "Conversation history could not be cleared; the current conversation was kept.");
+    } catch {
+      runtime.finishHistoryClear(false);
+      setLastResponse("Conversation history could not be cleared; the current conversation was kept.");
+    }
+  }, [setLastResponse]);
+
+  useEffect(() => conversationShutdownGate.register(async () => {
+    const busy = () => {
+      const current = useVanessaStore.getState();
+      return !conversationRuntimeRef.current || conversationRuntimeRef.current.hasPendingRequests ||
+        pttActiveRef.current || pttStartingRef.current || bargeResumePendingRef.current ||
+        wakePausePendingRef.current || wakePauseUnconfirmedRef.current || current.pendingApproval !== null ||
+        current.conversationRecovery.length > 0 ||
+        ["accepted", "planning", "executing", "verifying", "cancelling", "termination_unconfirmed"].includes(current.taskStage) ||
+        ["listening", "thinking", "executing", "responding"].includes(current.voiceState);
+    };
+    if (busy()) return false;
+    // Ambient audio may have already reached the service. A correlated pause
+    // acknowledgement fences it before we seal the renderer's write queue.
+    if (wakeWordModeRef.current && !await pauseWakeWordListening(true)) return false;
+    // An in-flight final transcript or task event can arrive during the pause.
+    return !busy() && !wakeWordModeRef.current;
+  }), [pauseWakeWordListening]);
 
   useEffect(() => {
     if (import.meta.env.VITE_VANESSA_VOICE_ENABLED !== "false") connectVoiceWs();
@@ -997,7 +1130,10 @@ export function useAudioCapture() {
     testSpeechOutput,
     voiceConnectionState,
     wakeWordActive,
+    wakeWordPausePending,
+    pauseWakeWordListening,
     submitTextCommand,
+    clearConversationHistory,
     cancelVoice,
     stopSpeaking,
     startRecording,

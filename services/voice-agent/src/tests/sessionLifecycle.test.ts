@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { VanessaVoiceSession, voiceRequestIdForTurn } from "../session/voiceSession.js";
 import { SpeechAudioGate } from "../audio/speechGate.js";
 import type { AsrAdapter } from "../asr/types.js";
+import { VoiceAdapter } from "../asr/voiceAdapter.js";
 import type { ExecuteCommandResult } from "@vanessa/shared";
 
 function fixture() {
@@ -254,3 +255,67 @@ test("voice session rejects malformed shared conversation context", () => {
   session.stop();
 });
 
+
+test("pausing local wake-word standby drops late audio without cancelling a task", async () => {
+  const local = new VoiceAdapter();
+  const asr: AsrAdapter = local;
+  let handlers!: Parameters<AsrAdapter["connect"]>[0];
+  let deactivations = 0;
+  let submissions = 0;
+  let cancellations = 0;
+  asr.connect = (value) => { handlers = value; };
+  asr.activateStream = () => {};
+  asr.deactivateStream = () => { deactivations++; };
+  asr.close = () => {};
+  asr.setStatusHandler = () => {};
+  const session = new VanessaVoiceSession({
+    asr,
+    tts: { async streamSpeech() {}, abort() {} },
+    client: {
+      async executeCommand() { submissions++; return { status: "success", spokenSummary: "done" }; },
+      async cancelRequest() { cancellations++; },
+    },
+  });
+  await session.enableWakeWordMonitor();
+  assert.equal(session.isWakeWordMonitorActive(), true);
+  assert.equal(session.pauseWakeWordMonitor(), true);
+  assert.equal(session.isWakeWordMonitorActive(), false);
+  await handlers.onFinal({ text: "Hey Vanessa, run a task", language: "en", isFinal: true });
+  assert.equal(submissions, 0);
+  assert.equal(cancellations, 0);
+  assert.ok(deactivations >= 1);
+  session.stop();
+});
+
+test("wake-word pause refuses an active request without aborting or cancelling it", async () => {
+  const f = fixture();
+  await f.session.activateSession();
+  const active = f.session.handleFinalUtterance("do not cancel this", "en", "active");
+  assert.equal(f.session.pauseWakeWordMonitor(), false);
+  assert.equal(f.requests[0].signal?.aborted, false);
+  assert.deepEqual(f.cancelled, []);
+  f.requests[0].resolve({ status: "success", spokenSummary: "done" });
+  await active;
+  f.session.stop();
+});
+
+test("pausing during standby startup fences the delayed activation", async () => {
+  const local = new VoiceAdapter();
+  const asr: AsrAdapter = local;
+  let release!: () => void;
+  let activations = 0;
+  asr.connect = () => new Promise<void>((resolve) => { release = resolve; });
+  asr.activateStream = () => { activations++; };
+  asr.deactivateStream = () => {};
+  asr.close = () => {};
+  asr.setStatusHandler = () => {};
+  const session = new VanessaVoiceSession({ asr, tts: { async streamSpeech() {}, abort() {} } });
+  const startup = session.enableWakeWordMonitor();
+  await Promise.resolve();
+  assert.equal(session.pauseWakeWordMonitor(), true);
+  release();
+  await startup;
+  assert.equal(activations, 0);
+  assert.equal(session.isWakeWordMonitorActive(), false);
+  session.stop();
+});

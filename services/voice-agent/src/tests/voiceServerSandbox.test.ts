@@ -130,7 +130,14 @@ test("sandbox starts the real voice-agent server and completes ASR -> orchestrat
     // Import after test-only environment is installed: the service constructs
     // its orchestrator client and provider adapters from these values.
     const { createVoiceAgentServer } = await import("../server.js");
-    app = await createVoiceAgentServer();
+    // Test-only grant: the two fake Fish endpoints are loopback fixtures. A
+    // configured provider or API key alone does not grant production egress.
+    app = await createVoiceAgentServer({ hostedEgressPolicy: {
+      allows: ({ provider, purpose, origin }) => provider === "fish" && (
+        (purpose === "speech_input" && origin === `ws://127.0.0.1:${asrAddress.port}`) ||
+        (purpose === "speech_output" && origin === `ws://127.0.0.1:${ttsAddress.port}`)
+      ),
+    } });
     await app.listen({ port: 0, host: "127.0.0.1" });
     const appAddress = app.server.address() as AddressInfo;
     const baseUrl = "http://127.0.0.1:" + appAddress.port;
@@ -150,7 +157,7 @@ test("sandbox starts the real voice-agent server and completes ASR -> orchestrat
 
     const events: Array<Record<string, any>> = [];
     client = new WebSocket(baseUrl.replace("http", "ws") + "/ws", {
-      origin: "http://127.0.0.1:5173",
+      origin: "vanessa://desktop",
     });
     client.on("message", (raw) => {
       try { events.push(JSON.parse(raw.toString()) as Record<string, any>); }

@@ -141,7 +141,7 @@ export class FishAsrAdapter implements AsrAdapter {
     const connectionStarted = Date.now();
     console.log(`[Fish ASR] connecting endpoint=${new URL(this.url).origin}${new URL(this.url).pathname} model=${this.model} sampleRate=${this.sampleRate} fallback=${this.allowFallback}`);
     try {
-      ws = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.apiKey}` } });
+      ws = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.apiKey}` }, followRedirects: false });
     } catch (err: any) {
       const error = new Error(`Fish Audio could not be initialized: ${err.message}`);
       if (this.allowFallback) {

@@ -1,0 +1,138 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+
+/* Begin PBXBuildFile section */
+        A10000000000000000000001 /* VanessaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* VanessaApp.swift */; };
+        A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* ContentView.swift */; };
+        A10000000000000000000003 /* Conversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* Conversation.swift */; };
+        A10000000000000000000004 /* ConversationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* ConversationViewModel.swift */; };
+        A10000000000000000000005 /* SecureHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* SecureHistoryStore.swift */; };
+        A10000000000000000000006 /* OnDeviceSpeechInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* OnDeviceSpeechInput.swift */; };
+        A10000000000000000000007 /* OnDeviceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* OnDeviceModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+        B10000000000000000000001 /* VanessaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VanessaApp.swift; sourceTree = "<group>"; };
+        B10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+        B10000000000000000000003 /* Conversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/Conversation.swift; sourceTree = "<group>"; };
+        B10000000000000000000004 /* ConversationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModel.swift; sourceTree = "<group>"; };
+        B10000000000000000000005 /* SecureHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureHistoryStore.swift; sourceTree = "<group>"; };
+        B10000000000000000000006 /* OnDeviceSpeechInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeechInput.swift; sourceTree = "<group>"; };
+        B10000000000000000000007 /* OnDeviceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceModel.swift; sourceTree = "<group>"; };
+        B10000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+        B10000000000000000000009 /* Vanessa.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Vanessa.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+        C10000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+        D10000000000000000000001 = {isa = PBXGroup; children = (D10000000000000000000002 /* Vanessa */, D10000000000000000000003 /* Products */); sourceTree = "<group>"; };
+        D10000000000000000000002 /* Vanessa */ = {
+            isa = PBXGroup;
+            children = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000003, B10000000000000000000004, B10000000000000000000005, B10000000000000000000006, B10000000000000000000007, B10000000000000000000008);
+            path = Vanessa;
+            sourceTree = "<group>";
+        };
+        D10000000000000000000003 /* Products */ = {isa = PBXGroup; children = (B10000000000000000000009 /* Vanessa.app */); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+        E10000000000000000000001 /* Vanessa */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = F10000000000000000000002 /* Build configuration list for PBXNativeTarget */;
+            buildPhases = (C10000000000000000000002 /* Sources */, C10000000000000000000001 /* Frameworks */, C10000000000000000000003 /* Resources */);
+            buildRules = ();
+            dependencies = ();
+            name = Vanessa;
+            productName = Vanessa;
+            productReference = B10000000000000000000009 /* Vanessa.app */;
+            productType = "com.apple.product-type.application";
+        };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+        E10000000000000000000002 /* Project object */ = {
+            isa = PBXProject;
+            attributes = { BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = { E10000000000000000000001 = { CreatedOnToolsVersion = 16.0; }; }; };
+            buildConfigurationList = F10000000000000000000001 /* Build configuration list for PBXProject */;
+            compatibilityVersion = "Xcode 14.0";
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (en, Base);
+            mainGroup = D10000000000000000000001;
+            productRefGroup = D10000000000000000000003 /* Products */;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (E10000000000000000000001 /* Vanessa */);
+        };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+        C10000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+        C10000000000000000000002 /* Sources */ = {
+            isa = PBXSourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007);
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+        F10000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
+        F10000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Release; };
+        F10000000000000000000005 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                GENERATE_INFOPLIST_FILE = NO;
+                INFOPLIST_FILE = Vanessa/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+                MARKETING_VERSION = 0.1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = com.vanessa.ios;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SDKROOT = iphoneos;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+                SUPPORTS_MACCATALYST = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = 1;
+            };
+            name = Debug;
+        };
+        F10000000000000000000006 /* Release */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                GENERATE_INFOPLIST_FILE = NO;
+                INFOPLIST_FILE = Vanessa/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+                MARKETING_VERSION = 0.1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = com.vanessa.ios;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SDKROOT = iphoneos;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+                SUPPORTS_MACCATALYST = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = 1;
+            };
+            name = Release;
+        };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+        F10000000000000000000001 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (F10000000000000000000003, F10000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        F10000000000000000000002 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (F10000000000000000000005, F10000000000000000000006); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+    };
+    rootObject = E10000000000000000000002 /* Project object */;
+}

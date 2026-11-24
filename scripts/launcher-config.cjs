@@ -6,11 +6,11 @@ function launcherConfig(env, args, root, exists) {
   const voice = !args.includes('--text-only');
   const strict = args.includes('--codex-test');
   const asr = (env.VOICE_ASR_PROVIDER || 'whisper').trim().toLowerCase();
-  const tts = (env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'fish').trim().toLowerCase();
+  const tts = (env.VOICE_TTS_PROVIDER || env.VOICE_PROVIDER || 'browser').trim().toLowerCase();
   const planner = (env.PLANNER_PROVIDER || env.SARVAM_CHAT_PROVIDER || 'ollama').trim().toLowerCase();
   const conversation = (env.CONVERSATION_PROVIDER || env.SARVAM_CHAT_PROVIDER || env.PLANNER_PROVIDER || 'ollama').trim().toLowerCase();
   if (voice && !['fish', 'voice', 'whisper', 'elevenlabs', 'sarvam'].includes(asr)) throw new Error(`Unsupported VOICE_ASR_PROVIDER: ${asr}`);
-  if (voice && !['fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
+  if (voice && !['browser', 'fish', 'elevenlabs', 'sarvam'].includes(tts)) throw new Error(`Unsupported VOICE_TTS_PROVIDER: ${tts}`);
   const ttsFallback = (env.VOICE_TTS_FALLBACK_PROVIDER || 'browser') === 'browser';
   const ollamaBaseUrl = (env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').trim();
   const ollamaModel = (env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
@@ -48,16 +48,18 @@ function launcherConfig(env, args, root, exists) {
   if (strict && env.FAKE === '1') throw new Error('Disable FAKE=1 for a real Codex test.');
   let localAsr;
   if (voice && (['voice', 'whisper'].includes(asr) || (asr === 'fish' && env.VOICE_ALLOW_FALLBACK === 'true'))) {
-    const url = new URL(env.VOICE_URL || env.WHISPER_URL || 'ws://127.0.0.1:4505');
-    if (!['ws:', 'wss:'].includes(url.protocol)) throw new Error('VOICE_URL/WHISPER_URL must use ws:// or wss://.');
-    const local = ['127.0.0.1', 'localhost'].includes(url.hostname);
-    localAsr = { url: url.href, local, port: Number(url.port || (url.protocol === 'wss:' ? 443 : 80)) };
-    if (local) {
-      if (url.protocol !== 'ws:' || url.pathname !== '/' || url.search || url.username || url.password) throw new Error('Managed local Whisper requires ws://localhost:PORT or ws://127.0.0.1:PORT without a path or credentials.');
-      const choose = (candidates) => candidates.map((item) => path.resolve(root, item)).find(exists);
-      localAsr.python = choose([env.VOICE_PYTHON, '.venv-voice/Scripts/python.exe', '.venv-whisper/Scripts/python.exe'].filter(Boolean));
-      localAsr.script = choose(['services/voice-agent/voice_server.py', 'services/voice-agent/whisper_server.py']);
+    let url;
+    try { url = new URL(env.VOICE_URL || env.WHISPER_URL || 'ws://127.0.0.1:4505'); }
+    catch { throw new Error('Local Whisper requires a loopback WebSocket origin.'); }
+    if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname.toLowerCase()) ||
+        url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+      throw new Error('Local Whisper requires a loopback WebSocket origin without a path or credentials.');
     }
+    if (url.hostname.toLowerCase() === 'localhost') url.hostname = '127.0.0.1';
+    localAsr = { url: url.href, local: true, port: Number(url.port || 80) };
+    const choose = (candidates) => candidates.map((item) => path.resolve(root, item)).find(exists);
+    localAsr.python = choose([env.VOICE_PYTHON, '.venv-voice/Scripts/python.exe', '.venv-whisper/Scripts/python.exe'].filter(Boolean));
+    localAsr.script = choose(['services/voice-agent/voice_server.py', 'services/voice-agent/whisper_server.py']);
   }
   return { voice, strict, asr, tts, ttsFallback, planner, conversation, ollamaBaseUrl, ollamaModel, missing, localAsr, dev: args.includes('--dev'), reuse: args.includes('--reuse-existing') };
 }

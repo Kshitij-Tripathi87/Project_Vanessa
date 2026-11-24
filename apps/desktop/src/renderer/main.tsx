@@ -3,6 +3,11 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App.js";
 import "./index.css";
 import { submitCommandRequest } from "@vanessa/shared";
+import { conversationHistory } from "./conversation/conversationHistoryInstance.js";
+import { hydrateBeforeStartingConversation } from "./conversation/bootstrapHistory.js";
+import { conversationShutdownGate } from "./conversation/shutdownGate.js";
+import { HistoryShutdownCoordinator } from "./conversation/historyShutdownCoordinator.js";
+import { useVanessaStore } from "./stores/vanessaStore.js";
 
 // Polyfill window.vanessa for browser preview when not inside Electron
 if (typeof window !== "undefined" && !window.vanessa) {
@@ -76,11 +81,27 @@ if (typeof window !== "undefined" && !window.vanessa) {
   };
 }
 
+// Electron asks the renderer to finish its ordered queue before closing the
+// window. This is a history flush only; it does not cancel or replay tasks.
+const historyShutdown = new HistoryShutdownCoordinator(
+  conversationShutdownGate,
+  conversationHistory,
+  (closing) => useVanessaStore.getState().setAppClosing(closing),
+  () => useVanessaStore.getState().conversationState,
+);
+window.vanessa?.onHistoryFlushRequest?.(() => historyShutdown.request());
+window.vanessa?.onHistoryFlushCancelled?.(() => historyShutdown.cancel());
+
 const root = document.getElementById("root");
 if (root) {
-  ReactDOM.createRoot(root).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
+  const reactRoot = ReactDOM.createRoot(root);
+  reactRoot.render(<div className="history-loading" role="status">Loading local history…</div>);
+  // Restore before the conversation runtime is created, so a late load cannot
+  // overwrite a user turn or accidentally start work from stored text.
+  void hydrateBeforeStartingConversation(
+    conversationHistory,
+    (state) => useVanessaStore.getState().setConversationState(state),
+    () => reactRoot.render(<React.StrictMode><App /></React.StrictMode>),
+    () => useVanessaStore.getState().setConversationHistoryStatus("error"),
   );
 }

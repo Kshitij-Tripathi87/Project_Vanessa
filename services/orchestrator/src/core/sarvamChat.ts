@@ -84,6 +84,8 @@ export class SarvamChatClient {
     return this.model;
   }
 
+  getEndpoint(): string { return this.url; }
+
   getUsageSnapshot() {
     return this.budget.snapshot();
   }
@@ -133,11 +135,15 @@ export class SarvamChatClient {
           max_tokens: input.maxTokens || this.maxTokens,
         }),
         signal: controller.signal,
+        // A grant is scoped to one origin; do not forward prompts or keys via redirects.
+        redirect: "error",
       });
 
       if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Sarvam chat request failed (HTTP ${response.status}): ${safeProviderDetail(body, [this.apiKey])}`);
+        // Provider error bodies may echo the prompt or other private data.
+        // Report only the HTTP status, never the untrusted response content.
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`Sarvam chat request failed (HTTP ${response.status}).`);
       }
 
       const parsed = response.body && !response.headers.get("content-type")?.includes("application/json")

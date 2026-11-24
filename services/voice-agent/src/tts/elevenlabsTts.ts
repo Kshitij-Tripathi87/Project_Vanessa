@@ -61,6 +61,8 @@ export class ElevenLabsTtsAdapter implements VoiceTtsAdapter {
               model_id: "eleven_turbo_v2_5",
             }),
             signal: effectiveSignal,
+            // Hosted consent, when available, applies to the named origin only.
+            redirect: "error",
           });
           if (res.ok) {
             const buffer = await res.arrayBuffer();

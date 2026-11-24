@@ -75,6 +75,12 @@ local.properties
 *.iml
 .opencode/
 
+# Xcode / SwiftPM local state
+**/.build/
+**/DerivedData/
+**/xcuserdata/
+*.xcuserstate
+
 # The Gauntlet task packs intentionally use a build/ namespace; keep these
 # benchmark specifications/templates tracked while ignoring application build outputs.
 !evals/vanessa-gauntlet/packs/

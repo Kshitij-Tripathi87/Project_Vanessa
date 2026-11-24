@@ -41,6 +41,9 @@ const MAX_CONTEXT_CHARS = 1200;
 export class DesktopConversationRuntime {
   private currentState: ConversationState;
   private readonly activeRequests = new Set<string>();
+  // Restored history is visible locally, but is not silently sent to a model.
+  private readonly sessionRequestIds = new Set<string>();
+  private historyClearPending = false;
 
   constructor(
     initialState: ConversationState,
@@ -58,8 +61,40 @@ export class DesktopConversationRuntime {
     return this.currentState;
   }
 
+  get isHistoryClearPending(): boolean {
+    return this.historyClearPending;
+  }
+
+  /** In-flight responses must not be lost behind an acknowledged history flush. */
+  get hasPendingRequests(): boolean {
+    return this.activeRequests.size > 0;
+  }
+
+  /** Fence new conversation turns while an explicit history clear is in progress. */
+  beginHistoryClear(): boolean {
+    if (this.historyClearPending || this.activeRequests.size > 0 ||
+        this.currentState.turns.some((turn) => !isTerminalTurnStatus(turn.status))) return false;
+    this.historyClearPending = true;
+    return true;
+  }
+
+  /** Clearing conversation text never cancels or changes orchestrator task state. */
+  finishHistoryClear(clearSucceeded: boolean): void {
+    if (!this.historyClearPending) return;
+    try {
+      if (clearSucceeded) {
+        this.currentState = initialConversationState(this.nextId());
+        this.sessionRequestIds.clear();
+        this.onStateChange(this.currentState);
+      }
+    } finally {
+      this.historyClearPending = false;
+    }
+  }
+
   /** Creates one completed user turn for a typed request. */
   submitTyped(text: string): ConversationRequestHandle | null {
+    if (this.historyClearPending) return null;
     const content = text.trim();
     if (!content || content.length > MAX_TURN_CONTENT) return null;
     return this.createUserTurn(content, this.nextId(), "text");
@@ -73,6 +108,7 @@ export class DesktopConversationRuntime {
    * identical; it can never create a second transcript turn.
    */
   submitVoiceFinal(text: string, requestId: string): ConversationRequestHandle | null {
+    if (this.historyClearPending) return null;
     const content = text.trim();
     if (!content || content.length > MAX_TURN_CONTENT || !UUID.test(requestId)) return null;
 
@@ -80,7 +116,9 @@ export class DesktopConversationRuntime {
       turn.requestId === requestId && turn.role === "user" && turn.source === "voice"
     );
     if (existing) {
-      if (existing.text !== content) return null;
+      // A restored turn is display-only: a replay must not reactivate an old
+      // request or attach a late response after a restart.
+      if (!this.sessionRequestIds.has(requestId) || existing.text !== content) return null;
       return {
         conversationId: this.currentState.conversationId,
         requestId,
@@ -118,6 +156,11 @@ export class DesktopConversationRuntime {
     if (!finalized) return null;
 
     this.activeRequests.add(requestId);
+    this.sessionRequestIds.add(requestId);
+    if (this.sessionRequestIds.size > MAX_CONVERSATION_TURNS) {
+      const retained = new Set(this.currentState.turns.map((turn) => turn.requestId));
+      for (const id of this.sessionRequestIds) if (!retained.has(id) && !this.activeRequests.has(id)) this.sessionRequestIds.delete(id);
+    }
     return {
       conversationId: this.currentState.conversationId,
       requestId,
@@ -216,6 +259,7 @@ export class DesktopConversationRuntime {
   plannerContext(excludingRequestId?: string): PlannerConversationTurn[] {
     const completed = this.currentState.turns
       .filter((turn) => turn.status === "completed" && turn.text.trim())
+      .filter((turn) => this.sessionRequestIds.has(turn.requestId))
       .filter((turn) => !this.activeRequests.has(turn.requestId))
       .filter((turn) => !excludingRequestId || turn.requestId !== excludingRequestId)
       .slice(-MAX_CONTEXT_TURNS);
